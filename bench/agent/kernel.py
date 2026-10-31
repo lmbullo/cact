@@ -60,3 +60,122 @@ class Final(Exception):
     def __init__(self, value):
         self.value = value
 
+def final_answer(value):
+    raise Final(value)
+
+ns["final_answer"] = final_answer
+
+def emit(payload):
+    sys.__stdout__.write("@@K@@" + json.dumps(payload) + "\n")
+    sys.__stdout__.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        request = json.loads(line)
+        code = request["code"]
+        budget = float(request.get("timeout") or 15.0)
+    except Exception:
+        emit({"stdout": "", "stderr": "kernel: bad request", "result": None, "final": None, "timeout": False})
+        continue
+    out, err = io.StringIO(), io.StringIO()
+    result_repr = None
+    final = None
+    timed_out = False
+    if "_CELL_CHANGED" in ns:
+        ns["_CELL_CHANGED"] = []
+    saved_stdin = sys.stdin
+    _arm(budget)
+    try:
+        sys.stdin = io.StringIO("")
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            tree = ast.parse(code, "<cell>", "exec")
+            if tree.body and isinstance(tree.body[-1], ast.Expr):
+                head = ast.Module(tree.body[:-1], type_ignores=[])
+                exec(compile(head, "<cell>", "exec"), ns)
+                value = eval(compile(ast.Expression(tree.body[-1].value), "<cell>", "eval"), ns)
+                if value is not None:
+                    result_repr = repr(value)
+            else:
+                exec(compile(tree, "<cell>", "exec"), ns)
+    except Final as f:
+        final = f.value if isinstance(f.value, str) else repr(f.value)
+    except _CellTimeout:
+        timed_out = True
+        err.write(
+            "timeout: the cell exceeded %.0fs and was interrupted. "
+            "The namespace, imports and variables are intact.\n" % budget
+        )
+    except BaseException:
+        err.write(traceback.format_exc())
+    finally:
+        _disarm()
+        sys.stdin = saved_stdin
+    answer = ns.get("ANSWER")
+    _runs = ns.get("_RUN_LOG")
+    if isinstance(_runs, list):
+        emitted_runs = [str(x) for x in _runs]
+        _runs.clear()
+    else:
+        emitted_runs = []
+    _mutated = bool(ns.get("_MUT"))
+    ns["_MUT"] = False
+    _delta_fn = ns.get("_delta")
+    _delta = ""
+    if callable(_delta_fn):
+        try:
+            _delta = "\n".join(_delta_fn())[:12000]
+        except Exception:
+            _delta = ""
+    _changed_fn = ns.get("_changed")
+    if callable(_changed_fn):
+        try:
+            _changed = [rel for rel, _before, _after in _changed_fn()]
+        except Exception:
+            _changed = list(ns.get("_CELL_CHANGED") or [])
+    else:
+        _changed = list(ns.get("_CELL_CHANGED") or [])
+    _prev_changed = set(ns.get("_LAST_CHANGED") or [])
+    _mutated = _mutated or bool(set(_changed) - _prev_changed)
+    ns["_LAST_CHANGED"] = set(_changed)
+    _obs_log = ns.setdefault("_OBS", [])
+    _obs_log.append({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr})
+    emit({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
+          "runs": emitted_runs, "obs_index": len(_obs_log) - 1, "mutated": _mutated,
+          "changed": _changed, "delta": _delta, "timeout": timed_out,
+          "answer": None if answer is None else (answer if isinstance(answer, str) else repr(answer))})
+'''
+
+
+PRELUDE = r"""
+import difflib as _difflib, hashlib as _hashlib, os as _os, re as _re
+
+_ROOT = _os.getcwd()
+_MUT = False
+_JOURNAL = []
+_SNAP = {}
+_JSEQ = 0
+_CELL_CHANGED = []
+_open = open
+_SKIP_DIRS = {
+    "node_modules", ".git", "__pycache__", ".venv", "venv", "env",
+    "dist", "build", ".next", ".nuxt", "target", "vendor", ".cache",
+}
+_HINT = {
+    "cat": "read(path)", "head": "read(path, offset=1, limit=N)",
+    "tail": "read(path, offset=total-N)", "less": "read(path)",
+    "more": "read(path)", "wc": "read(path)['total_lines']",
+    "stat": "map(path)", "grep": "grep(pattern, path)",
+    "rg": "grep(pattern, path, regex=True)", "ag": "grep(pattern, path)",
+    "sed": "read(path) or edit(path, old, new)",
+    "awk": "read(path) with Python string slicing",
+    "find": "map(path)", "ls": "map(path)", "tree": "map(path)",
+    "du": "map(path)", "tee": "write(path, content)",
+    "touch": "write(path, '')", "cp": "read + write",
+    "mv": "write + os.remove", "rm": "os.remove",
+    "truncate": "write(path, '')",
+}
+
+
