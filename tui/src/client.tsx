@@ -154,3 +154,75 @@ function TaskRow(props: {
  * One event, one row. The full payload still reaches the model; this view only
  * truncates what fits on a terminal line so a run never dumps a wall of text.
  */
+function EventView({ event, width }: { event: TaskEvent; width: number }) {
+  const fit = Math.max(8, width - 2);
+  const kind = event.kind;
+
+  if (kind === "cell.start") {
+    // Just the marker and the arguments: no verb, no cell index, no counters.
+    const room = Math.max(2, fit - 2);
+    return (
+      <text>
+        <span fg={C.faint}>{"▸ "}</span>
+        <span fg={C.tool}>{clip(toolArgs(event.code ?? ""), room)}</span>
+      </text>
+    );
+  }
+
+  // Tool output is never rendered: the log shows the calls alone.
+  if (kind === "turn") return null;
+
+  if (kind === "final") {
+    const data = (event.data ?? {}) as Record<string, unknown>;
+    const status = String(data.status ?? "");
+    const color = status === "done" ? C.green : status === "partial" ? C.yellow : C.red;
+    const meta = [
+      data.stop ? `stop=${String(data.stop)}` : "",
+      data.steps !== undefined ? `${String(data.steps)} steps` : "",
+      data.calls !== undefined ? `${String(data.calls)} cells` : "",
+      data.errors !== undefined ? `${String(data.errors)} errors` : "",
+      data.wallMs !== undefined ? `${String(data.wallMs)}ms` : "",
+      (data.usage as Record<string, number> | undefined)?.total_tokens
+        ? `${String((data.usage as Record<string, number>).total_tokens)} tok`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const text = oneLine(event.text ?? "");
+    const tail = clip(meta, Math.max(6, fit - status.length - 3));
+    const summaryLength = 2 + status.length + 1 + tail.length;
+    const headText = text ? clip(`  = ${text}`, Math.max(0, fit - summaryLength)) : "";
+    return (
+      <text>
+        <span fg={color} attributes={TextAttributes.BOLD}>{`● ${status} `}</span>
+        <span fg={C.faint}>{tail}</span>
+        <span fg={color}>{headText}</span>
+      </text>
+    );
+  }
+
+  if (kind === "error") {
+    const text = event.text ?? "error";
+    const more = lineCount(text) > 1 ? ` (+${lineCount(text) - 1}L)` : "";
+    return (
+      <text fg={C.red} attributes={TextAttributes.BOLD}>
+        {clip(`✖ ${oneLine(text)}${more}`, width)}
+      </text>
+    );
+  }
+  if (kind === "stderr") {
+    const text = event.text ?? "";
+    const first = oneLine(text);
+    const more = lineCount(text) > 1 ? ` (+${lineCount(text) - 1}L)` : "";
+    return <text fg={C.red}>{clip(`! ${first}${more}`, width)}</text>;
+  }
+  if (kind === "log") {
+    return <text fg={C.dim}>{clip(`· ${oneLine(event.text ?? "")}`, width)}</text>;
+  }
+  if (kind === "started" || kind === "finished" || kind === "queued" || kind === "pid") {
+    return <text fg={C.faint}>{clip(`○ ${oneLine(event.text ?? kind)}`, width)}</text>;
+  }
+  // An unknown kind still gets one word, never the payload it carries.
+  return <text fg={C.faint}>{clip(`? ${kind}`, width)}</text>;
+}
+
