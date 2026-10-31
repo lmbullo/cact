@@ -58,3 +58,66 @@ process.chdir(workspace);
 const model = process.env.CODE_TUI_MODEL ?? "deepseek-flash";
 const effort = process.env.CODE_TUI_EFFORT ?? "low";
 const concurrency = Math.max(1, Math.min(8, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1));
+const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 120) || 120);
+const maxOutput = Math.max(1024, Number(process.env.CODE_TUI_MAX_OUTPUT ?? 393216) || 393216);
+const maxWall = Math.max(30, Number(process.env.CODE_TUI_MAX_WALL ?? 1800) || 1800);
+const cellTimeout = Math.max(5, Number(process.env.CODE_TUI_CELL_TIMEOUT ?? 120) || 120);
+const allowRun = process.env.CODE_TUI_ALLOW_RUN !== "0";
+const python = process.env.CODE_TUI_PYTHON ?? "python3";
+
+function detectCheck(root: string): string {
+  const explicit = process.env.CODE_TUI_CHECK;
+  if (explicit !== undefined) return explicit.trim();
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+    const scripts = pkg.scripts ?? {};
+    if (scripts.typecheck) return "bun run typecheck";
+    if (scripts.test) return "bun test";
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+const check = detectCheck(workspace);
+const initialKey = Boolean(process.env.DEEPSEEK_API_KEY);
+
+let server: any = null;
+let shuttingDown = false;
+let seqCounter = 0;
+let info: ServerInfo = {
+  workspace,
+  stateDir,
+  pid: process.pid,
+  port: 0,
+  version: VERSION,
+  startedAt: Date.now(),
+  model,
+  effort,
+  concurrency,
+  allowRun,
+  hasKey: initialKey,
+  python,
+  check,
+};
+
+const tasks: Task[] = [];
+const taskById = new Map<string, Task>();
+const running = new Map<string, { proc: ReturnType<typeof Bun.spawn>; lastStderr: string }>();
+
+function nextSeq(): number {
+  return Date.now() * 1000 + (seqCounter++ % 1000);
+}
+
+function taskFile(id: string): string {
+  return join(tasksDir, `${id}.json`);
+}
+
+function eventFile(id: string): string {
+  return join(eventsDir, `${id}.jsonl`);
+}
+
+function promptFile(id: string): string {
+  return join(promptsDir, `${id}.txt`);
+}
+
