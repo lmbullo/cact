@@ -67,3 +67,36 @@ def _failures(stdout: str, stderr: str, limit: int = 20) -> list[dict]:
     return hits
 
 
+def run_check(cmd: str, cwd: str, timeout: float = 600.0) -> Check:
+    started = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            cmd, shell=True, cwd=cwd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout, executable="/bin/bash",
+        )
+    except subprocess.TimeoutExpired as exc:
+        return Check(cmd=cmd, state="unrunnable", duration_ms=int((time.perf_counter() - started) * 1000),
+                     stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
+                     stderr=f"check timed out after {timeout:.0f}s")
+    except OSError as exc:
+        return Check(cmd=cmd, state="unrunnable", duration_ms=int((time.perf_counter() - started) * 1000),
+                     stderr=f"{type(exc).__name__}: {exc}")
+    duration = int((time.perf_counter() - started) * 1000)
+    if proc.returncode == 0:
+        return Check(cmd=cmd, state="passed", exit_code=0, duration_ms=duration,
+                     stdout=proc.stdout or "", stderr=proc.stderr or "")
+    return Check(cmd=cmd, state="failed", exit_code=proc.returncode, duration_ms=duration,
+                 stdout=proc.stdout or "", stderr=proc.stderr or "",
+                 failures=_failures(proc.stdout or "", proc.stderr or ""))
+
+
+def evaluate(goal: Any) -> tuple[bool, Check | None]:
+    if goal is None:
+        return True, None
+    try:
+        result = goal()
+    except Exception as exc:
+        return False, Check(cmd="<goal>", state="unrunnable", stderr=f"{type(exc).__name__}: {exc}")
+    if isinstance(result, Check):
+        return result.ok, result
+    return bool(result), None
