@@ -1,0 +1,70 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "M1_rename",
+      "mix": {},
+      "mode": "repl",
+      "shape": "rename symbol",
+      "ok": true,
+      "detail": "PAGE_SIZE=4096 leftover_PAGE=False",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2044,
+        "completion_tokens": 627,
+        "total_tokens": 2671,
+        "reasoning_tokens": 373
+      },
+      "wall_ms": 6909,
+      "final": "Renamed PAGE to PAGE_SIZE in lib.py and updated all workspace references; value remains 4096.",
+      "trace": "/home/lmbullo/code/bench/traces/M1_rename.repl.jsonl"
+    },
+    {
+      "task": "M2_add_fn",
+      "mix": {},
+      "mode": "repl",
+      "shape": "add function",
+      "ok": true,
+      "detail": "row_total=12.5 expected 12.5; checksum_intact=True",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2286,
+        "completion_tokens": 507,
+        "total_tokens": 2793,
+        "reasoning_tokens": 129
+      },
+      "wall_ms": 6424,
+      "final": "12.25",
+      "trace": "/home/lmbullo/code/bench/traces/M2_add_fn.repl.jsonl"
+    },
+    {
+      "task": "M3_branch",
+      "mix": {},
+      "mode": "repl",
+      "shape": "change control flow",
+      "ok": true,
+      "detail": "printed 13.75 expected 13.75",
+      "stop": "DONE",
+      "steps": 5,
+      "calls": 5,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4156,
+        "completion_tokens": 855,
+        "total_tokens": 5011,
+        "reasoning_tokens": 356
+      },
+      "wall_ms": 10165,
+      "final": "app.py now skips rows with account 'legal' (added a guard before adding row['amount']); output format unchanged, verified running `python3 app.py ledger.csv` -> 3768.20.",
+      "trace": "/home/lmbullo/code/bench/traces/M3_branch.repl.jsonl"
+    }
+  ]
+}
