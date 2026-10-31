@@ -1,0 +1,1 @@
+make the tool-call arguments render in blue instead of purple in the run log
