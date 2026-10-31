@@ -411,3 +411,68 @@ function startTask(task: Task): void {
   })();
 }
 
+function pump(): void {
+  if (shuttingDown) return;
+  const capacity = concurrency - running.size;
+  if (capacity <= 0) return;
+  const queued = tasks
+    .filter((task) => task.status === "queued")
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, capacity);
+  for (const task of queued) startTask(task);
+}
+
+function createTask(prompt: string): Task {
+  const id = `t-${Date.now().toString(36)}-${randomUUID().slice(0, 5)}`;
+  const task: Task = {
+    id,
+    prompt,
+    status: "queued",
+    createdAt: Date.now(),
+    model,
+    effort,
+  };
+  writeFileSync(promptFile(id), prompt);
+  tasks.push(task);
+  taskById.set(id, task);
+  saveTask(task);
+  appendEvent(task, { kind: "queued", text: "queued" });
+  broadcast({ type: "task", task });
+  pump();
+  return task;
+}
+
+function cancelTask(task: Task): void {
+  if (task.status === "queued") {
+    task.status = "cancelled";
+    task.finishedAt = Date.now();
+    task.cancelRequested = true;
+    saveTask(task);
+    appendEvent(task, { kind: "finished", text: "cancelled" });
+    broadcast({ type: "task", task });
+    pump();
+    return;
+  }
+  if (task.status !== "running") return;
+  task.cancelRequested = true;
+  saveTask(task);
+  appendEvent(task, { kind: "log", text: "cancellation requested" });
+  const runtime = running.get(task.id);
+  if (!runtime) return;
+  try {
+    runtime.proc.kill("SIGTERM");
+  } catch {
+    // already gone
+  }
+  setTimeout(() => {
+    if (running.has(task.id)) {
+      try {
+        runtime.proc.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+  }, 5000);
+  broadcast({ type: "task", task });
+}
+
