@@ -1,3 +1,25 @@
+"""Read a TUI task journal back: tasks/<id>.json + events/<id>.jsonl -> a summary.
+
+WHAT IT IS
+  Post-hoc analysis for one task in a TUI state directory
+  (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts which kernel verbs
+  the model used, which files it wrote, steps, tokens, stop reason.
+
+ENTRY POINTS
+  python3 bench/runs.py <state-dir> <task-id>
+  load(state_dir, task_id) -> (task, turns)
+  summarize(state_dir, task_id) -> dict
+
+INVARIANTS
+  - Read-only: it never writes into the state dir.
+  - `VERBS` is a regex list of `verb(` occurrences over the concatenated cell code, so it is
+    an approximation, not a parse. Keep it in sync when the kernel gains a verb.
+  - Malformed journal lines are skipped, not fatal: a killed worker leaves a partial file.
+
+WHERE TO CHANGE
+  New kernel verb ........ VERBS
+  New metric ............. summarize()
+"""
 from __future__ import annotations
 
 import json

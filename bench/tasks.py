@@ -1,3 +1,30 @@
+"""The read suite (T1-T5) and the mutation suite (M1-M3), with their graders.
+
+WHAT IT IS
+  `TASKS` are text-answer tasks over `bench/fixtures/`; `MUTATION_TASKS` are edits graded by
+  loading the resulting workspace and exercising it. `ALL_TASKS = TASKS + MUTATION_TASKS`.
+
+ENTRY POINTS
+  Task(id, prompt, grade, shape)        grade(answer, run) -> (ok, detail)
+  TASKS / MUTATION_TASKS / ALL_TASKS / by_id(task_id)
+  grade_count, grade_arg_expr, grade_checksum, grade_last_line, grade_todo   (read suite)
+  grade_rename, grade_row_total, grade_skip_legal                            (mutation suite)
+  answer_line(text), _has_int(text, n)  answer parsing helpers
+
+INVARIANTS
+  - Ground truth is computed at import time from the fixtures (`_ground_truth`). Editing a
+    file in bench/fixtures silently redefines the expected answers for every future run.
+  - Reads are string/number tolerant: `answer_line` pulls the ANSWER line and `_has_int`
+    accepts the number anywhere sane. Mutation graders instead *execute* the workspace
+    (`exec` lib.py, run app.py with a probe CSV) — they assert behaviour, not text.
+  - `run.workspace` is where the grader reads the tree; run.py sets it before grading.
+  - A grader must never raise: return (False, detail) instead, so a run still prints.
+
+WHERE TO CHANGE
+  New read task ....... a first-class function `grade_*` + a Task in TASKS (and any fixture
+  New mutation task ... a `grade_*` that loads/runs the workspace + a Task in MUTATION_TASKS
+  Answer tolerance .... answer_line / _has_int
+"""
 from __future__ import annotations
 
 import ast

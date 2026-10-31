@@ -4,7 +4,8 @@ shared with the tool loops.
 WHAT IT IS
   The model writes code, the code runs as a kernel cell, and stdout/stderr/result come back
   as an `[observation]`. Finishing is `final_answer(...)` inside the cell (stop="call") or an
-  `ANSWER: <value>` line (stop="answer"). Reply text is parsed by reply.compile_reply.
+  `ANSWER: <value>` line (the no-code path), or with stop="var" the `ANSWER` variable the
+  cell leaves behind. Reply text is parsed by reply.compile_reply.
 
 ENTRY POINTS
   REPL_RULES / BARE_RULES .... system prompts (BARE_RULES is the minimal variant)
@@ -12,7 +13,7 @@ ENTRY POINTS
                                interface" contract the model must obey
   observation(cell, cap) ..... one cell -> the text the model sees (the ToolLoop default)
   history_entry(action) ...... a parsed action -> the line kept in the transcript
-  ReplLoop(client, kernel, budget, rules, stop="call"|"answer", history="full"|"action"|
+  ReplLoop(client, kernel, budget, rules, stop="call"|"var", history="full"|"action"|
            "drop", obs_chars, goal, goal_label, goal_stops, wrap_up_at)
     .run(task_id, prompt, trace) -> RunResult
 

@@ -1,3 +1,28 @@
+"""Workspace snapshots: freeze a tree into a sha256 manifest, clone it, diff against it.
+
+WHAT IT IS
+  `freeze(src, dst)` copies a tree and writes `dst.manifest.json`; `diff(dst)` reports
+  added/modified/deleted relative to that manifest; `clone(src, dst)` copies without a
+  manifest for throwaway runs. `bench/ws/tui-base` and `tui-broken` are frozen this way.
+
+ENTRY POINTS
+  python3 -m bench.ws freeze SRC DST
+  python3 -m bench.ws diff DST
+  manifest(root, write=True) -> dict     {"root": ..., "files": {rel: sha256[:16]}}
+  freeze(src, dst) / clone(src, dst) / diff(root) -> dict
+
+INVARIANTS
+  - Hashes are truncated to 16 hex chars; the manifest is the reference state, so a frozen
+    workspace must never be edited in place — clone it first (`bench.ws.clone`).
+  - `IGNORE`/the parts filter skips node_modules, .git, dist, build, __pycache__, .cache,
+    .next, .bun, coverage. A new generated directory must be added in both places or every
+    diff will be noise.
+  - Symlinks are skipped: a symlinked fixture will not appear in the manifest.
+
+WHERE TO CHANGE
+  Ignore rules ......... IGNORE + the parts set in `_files`
+  Manifest format ...... `manifest`, `diff` (used by bench/live.py)
+"""
 from __future__ import annotations
 
 import hashlib

@@ -1,3 +1,33 @@
+"""End-to-end run through the real TUI worker: clone a frozen workspace, drive the agent,
+journal everything, then check and diff it.
+
+WHAT IT IS
+  The honest test. It clones `bench/ws/tui-base` to `bench/ws/runs/<tag>`, writes
+  `<tag>.prompt.txt`, spawns `tui/python/worker.py` against it, records `<tag>.events.jsonl`
+  (the worker's `@@TUI@@` lines), then runs the check itself and diffs the tree against the
+  base. `bench/runs.py` reads the result back.
+
+ENTRY POINTS
+  python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "..." \
+          --check "bun run typecheck" [--legacy r1|r3|both]
+  load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env}
+
+INVARIANTS
+  - `--tag` names a new directory under bench/ws/runs/. That tree and its journals are
+    append-only evidence: never reuse a tag, never rewrite an old run.
+  - Everything is driven through the worker's public interface (`@@TUI@@` JSON lines,
+    `VERBS` list), so this file doubles as the contract test for worker.py: if the worker
+    changes its messages, this breaks first.
+  - `--legacy` toggles the worker's legacy env flags (`CODE_TUI_LEGACY_TIMEOUT`,
+    `CODE_TUI_LEGACY_CHECK`) so old behaviour stays reproducible.
+  - The check runs twice by design: once inside the agent as its goal, once here as the
+    independent verdict printed in the summary.
+
+WHERE TO CHANGE
+  What a live run records ..... the events/summary writes in main()
+  How the worker is invoked ... the argv/env block in main()
+  Key discovery ............... load_key()
+"""
 from __future__ import annotations
 
 import argparse
