@@ -213,3 +213,64 @@ def _suite_ok(ws: Path, module: str, original: str) -> bool:
     return hashlib.sha256((ws / f"{module}.py").read_bytes()).hexdigest() == hashlib.sha256(original.encode()).hexdigest()
 
 
+def _suite(ws: Path, module: str, original: str) -> tuple[bool, str]:
+    probe = subprocess.run(
+        [sys.executable, "-m", "unittest", "-q", module],
+        cwd=ws, capture_output=True, text=True, timeout=180,
+    )
+    if probe.returncode != 0:
+        tail = (probe.stderr or probe.stdout).strip().splitlines()
+        return False, f"{module} fails: " + (tail[-1][:140] if tail else "no output")
+    current = (ws / f"{module}.py").read_bytes()
+    if hashlib.sha256(current).hexdigest() != hashlib.sha256(original.encode()).hexdigest():
+        return False, "tests were modified"
+    return True, "suite passes, tests untouched"
+
+
+def grade_tests(answer: str, run) -> tuple[bool, str]:
+    return _suite(Path(run.workspace), "test_core", TEST)
+
+
+def grade_tests2(answer: str, run) -> tuple[bool, str]:
+    return _suite(Path(run.workspace), "test_calc2", TEST2)
+
+
+def grade_checkpoint(answer: str, run) -> tuple[bool, str]:
+    return _has_int(answer, CHECKPOINT_SEQ), f"expected SEQ {CHECKPOINT_SEQ}; got {answer[:100]!r}"
+
+
+def grade_limit(answer: str, run) -> tuple[bool, str]:
+    numbers = [int(x) for x in re.findall(r"(?<![\d.])\d+(?![\d])", answer or "")]
+    ok = bool(numbers) and numbers[0] == LIMIT_RUNTIME
+    return ok, f"expected {LIMIT_RUNTIME}; got {answer[:100]!r}"
+
+
+def grade_cents(answer: str, run) -> tuple[bool, str]:
+    return _has_int(answer, TOTAL_CENTS), f"expected {TOTAL_CENTS}; got {answer[:100]!r}"
+
+
+def grade_join(answer: str, run) -> tuple[bool, str]:
+    ok = TOP_ID in answer and _has_int(answer, TOP_CHECKSUM)
+    return ok, f"expected {TOP_ID} + {TOP_CHECKSUM}; got {answer[:100]!r}"
+
+
+def grade_compound(answer: str, run) -> tuple[bool, str]:
+    missing = [
+        (oid, _checksum(oid)) for oid, amount in TOP3
+        if not (oid in answer and _has_int(answer, _checksum(oid)))
+    ]
+    return not missing, f"missing {missing}; got {answer[:120]!r}"
+
+
+def grade_records(answer: str, run) -> tuple[bool, str]:
+    return _has_int(answer, RECORDS), f"expected {RECORDS} records; got {answer[:100]!r}"
+
+
+def grade_indirect(answer: str, run) -> tuple[bool, str]:
+    return _has_int(answer, REVISION), f"expected {REVISION}; got {answer[:100]!r}"
+
+
+def grade_bytes(answer: str, run) -> tuple[bool, str]:
+    return _has_int(answer, LEGACY_LINES), f"expected {LEGACY_LINES} lines; got {answer[:100]!r}"
+
+
