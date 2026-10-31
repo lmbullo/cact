@@ -353,3 +353,8 @@ EDGE_TASKS: list[EdgeTask] = [
 ]
 
 
+def by_id(task_id: str) -> EdgeTask:
+    for task in EDGE_TASKS:
+        if task.id == task_id:
+            return task
+    raise KeyError(task_id)
