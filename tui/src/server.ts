@@ -581,3 +581,45 @@ console.log(`code-tui server ${VERSION} listening on 127.0.0.1:${server.port}`);
 console.log(`workspace ${workspace}`);
 console.log(`state     ${stateDir}`);
 
+const heartbeat = setInterval(() => broadcast({ type: "ping", ts: Date.now() }), 15000);
+
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`shutting down (${signal})`);
+  clearInterval(heartbeat);
+  for (const task of tasks) {
+    if (task.status === "running" || task.status === "queued") {
+      task.status = "failed";
+      task.finishedAt = Date.now();
+      task.error = "server stopped";
+      saveTask(task);
+    }
+  }
+  for (const { proc } of running.values()) {
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+  }
+  rmSync(serverFile, { force: true });
+  try {
+    server?.stop(true);
+  } catch {
+    // ignore
+  }
+  process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("uncaughtException", (error) => {
+  console.error("uncaught", error);
+  shutdown("uncaughtException");
+});
+process.on("unhandledRejection", (error) => {
+  console.error("unhandled rejection", error);
+});
+
+pump();
