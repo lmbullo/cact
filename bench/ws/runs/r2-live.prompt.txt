@@ -1,0 +1,1 @@
+create a file NOTES.md containing exactly three lines using pathlib.Path('NOTES.md').write_text (do not use the write helper). Then call diff() and changes() and report exactly what they list. Then call undo() and confirm NOTES.md is gone, then finish.
