@@ -812,3 +812,83 @@ EDIT_PARAMETERS = {
 }
 
 
+def _jail(root: Path, rel: str) -> tuple[Path | None, dict | None]:
+    target = root / rel
+    try:
+        resolved = target.resolve()
+    except OSError:
+        resolved = target.absolute()
+    if not (resolved == root or root in resolved.parents):
+        return None, err(
+            "outside_root",
+            f"'{rel}' resolves outside ROOT",
+            hint=f"ROOT is '{root.name}/'; pass a path relative to it",
+        )
+    return target, None
+
+
+def _closest_lines(text: str, needle: str, n: int = 3) -> list[dict]:
+    lines = text.splitlines()
+    first = (needle.splitlines() or [""])[0].strip()
+    scored = [(difflib.SequenceMatcher(None, first, line.strip()).ratio(), i, line)
+              for i, line in enumerate(lines, 1)]
+    scored.sort(reverse=True)
+    return [{"line": i, "text": line[:200]} for _, i, line in scored[:n]]
+
+
+def _diff(text: str, updated: str, limit: int = 40) -> list[dict]:
+    before = text.splitlines()
+    after = updated.splitlines()
+    head = 0
+    while head < min(len(before), len(after)) and before[head] == after[head]:
+        head += 1
+    tail = 0
+    while (tail < min(len(before), len(after) - head)
+           and before[len(before) - 1 - tail] == after[len(after) - 1 - tail]):
+        tail += 1
+    removed = before[head:len(before) - tail][:limit]
+    added = after[head:len(after) - tail][:limit]
+    out = [{"line": head + i + 1, "op": "-", "text": l[:200]} for i, l in enumerate(removed)]
+    out += [{"line": head + i + 1, "op": "+", "text": l[:200]} for i, l in enumerate(added)]
+    return out
+
+
+def make_write(root: Path) -> Tool:
+    root = root.resolve()
+
+    def write(path: str, content: str, overwrite: bool = False) -> dict:
+        rel, _ = _parse_path(path)
+        if not rel:
+            return err("bad_args", "path must name a file, not the root", hint="pass a relative file path")
+        target, problem = _jail(root, rel)
+        if problem:
+            return problem
+        assert target is not None
+        existed = target.exists()
+        if target.is_dir():
+            return err("bad_args", f"'{rel}' is a directory", hint="pass a file path")
+        if existed and not overwrite:
+            text = target.read_text(encoding="utf-8", errors="replace")
+            return {
+                "ok": True,
+                "kind": "conflict",
+                "path": rel,
+                "lines": len(text.splitlines()),
+                "bytes": target.stat().st_size,
+                "note": "file exists and was not written. Pass overwrite=true to replace it, or edit() to change part of it.",
+            }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return {
+            "ok": True,
+            "kind": "write",
+            "path": rel,
+            "created": not existed,
+            "lines": len(content.splitlines()),
+            "bytes": len(content.encode("utf-8")),
+            "sha": hashlib.sha256(content.encode("utf-8")).hexdigest()[:12],
+        }
+
+    return Tool("write", WRITE_DESCRIPTION, WRITE_PARAMETERS, write, mutates=True)
+
+
