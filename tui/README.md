@@ -1,12 +1,33 @@
 # FIRE//CODE
 
-A server-backed, fire-and-forget coding agent TUI for the REPL agent in `../bench`.
-The command is `code`; the package is `code-tui`.
+A server-backed, fire-and-forget coding agent TUI for the agent in `../bench` (the `state`
+loop by default; `CODE_TUI_MODE` switches it). The command is `code`; the package is
+`code-tui`.
 
 The TUI is a thin client. A small Bun server owns the task queue, persists every task
 under `~/.local/state/code-tui/` (or `$XDG_STATE_HOME/code-tui`), and keeps running
 after the TUI exits. Reopening `code` in the same directory reconnects to the same
 server and the same task board.
+
+### For coding agents
+
+Start at `../AGENTS.md`. Every file in `src/` and `python/` opens with a header stating what
+it is, its entry points, its invariants and where to change what. The source map:
+
+| File | Owns |
+|---|---|
+| `bin/code`, `bin/code-stop` | shell entry points; no logic |
+| `src/launcher.ts` | workspace hash, server discovery/reuse, detached spawn |
+| `src/server.ts` | task queue, concurrency, cancellation, HTTP + WebSocket, journals |
+| `src/client.tsx` | the board, the live log, the single prompt box, keys |
+| `src/list-model.ts` | pure ordering/rows/selection/scroll (the tested logic) |
+| `src/types.ts` | the wire contract shared by all of the above |
+| `src/stop.ts` | SIGTERM the workspace's server |
+| `python/worker.py` | one task = one worker = one agent loop; `@@TUI@@` streams to the server |
+| `tests/*.test.tsx` | rendering tests against a fake Bun server |
+
+Two contract tests live outside this directory: `python3 ../bench/smoke.py` (agent/kernel
+interface, no key needed) and `python3 ../bench/live.py` (a real end-to-end task).
 
 ```
   ─ running (1)
