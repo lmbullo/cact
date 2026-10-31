@@ -66,3 +66,211 @@ def digest(root: Path, budget: int = 60_000) -> str:
     return "\n\n".join(blocks)
 
 
+def build_tools(root: Path, read_chars: int = 16000, with_map: bool = False, mutate: bool = False):
+    registry = Registry()
+    registry.add(make_read(root, read_chars))
+    registry.add(make_find(root))
+    registry.add(make_calc())
+    if with_map:
+        registry.add(make_map(root))
+    if mutate:
+        registry.add(make_edit(root))
+        registry.add(make_write(root))
+    return registry
+
+
+def workspace(task) -> Path:
+    base = HERE / ".tmp"
+    base.mkdir(exist_ok=True)
+    dest = base / task.id / "fixtures"
+    if dest.parent.exists():
+        shutil.rmtree(dest.parent)
+    dest.parent.mkdir(parents=True)
+    shutil.copytree(getattr(task, "source", FIXTURES), dest)
+    return dest
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--key", default=os.environ.get("DEEPSEEK_API_KEY", ""))
+    ap.add_argument("--model", default="deepseek-flash")
+    ap.add_argument("--effort", default="low", choices=["low", "high", "max", "none"])
+    ap.add_argument("--mode", default="tools", choices=["tools", "repl", "tool", "state"])
+    ap.add_argument("--tasks", default="all")
+    ap.add_argument("--steps", type=int, default=200)
+    ap.add_argument("--wall", type=float, default=3600.0)
+    ap.add_argument("--max-output", type=int, default=393216)
+    ap.add_argument("--read-chars", type=int, default=16000)
+    ap.add_argument("--repl-rules", default="full", choices=["full", "bare", "none"])
+    ap.add_argument("--allow-run", default="on", choices=["off", "on"])
+    ap.add_argument("--cell-timeout", type=float, default=0.0)
+    ap.add_argument("--repl-stop", default="call", choices=["call", "var"])
+    ap.add_argument("--repl-history", default="full", choices=["full", "obs", "drop", "action"])
+    ap.add_argument("--suite", default="read", choices=["read", "mutation", "all", "edge"])
+    ap.add_argument("--repl-lib", default="off", choices=["off", "all", "mut"])
+    ap.add_argument("--obs-chars", type=int, default=4000)
+    ap.add_argument("--map", default="off", choices=["off", "tool", "inline"])
+    ap.add_argument("--context", default="map", choices=["map", "full"])
+    ap.add_argument("--context-chars", type=int, default=60_000)
+    ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--temperature", type=float, default=None)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--traces", action="store_true")
+    args = ap.parse_args()
+
+    if not args.key:
+        print("no api key (use --key or DEEPSEEK_API_KEY)", file=sys.stderr)
+        return 2
+
+    client = Client(
+        api_key=args.key,
+        model=args.model,
+        effort=None if args.effort == "none" else args.effort,
+        cache=not args.no_cache,
+        temperature=args.temperature,
+        seed=args.seed,
+    )
+    budget = Budget(max_steps=args.steps, max_wall_s=args.wall, max_output_tokens=args.max_output)
+
+    pool = {
+        "read": bench_tasks.TASKS,
+        "mutation": bench_tasks.MUTATION_TASKS,
+        "all": bench_tasks.ALL_TASKS,
+        "edge": bench_edge.EDGE_TASKS,
+    }[args.suite]
+    lookup = bench_edge.by_id if args.suite == "edge" else bench_tasks.by_id
+    selected = pool if args.tasks == "all" else [lookup(t) for t in args.tasks.split(",")]
+
+    TRACES.mkdir(parents=True, exist_ok=True)
+    rows = []
+    cache_turns = {1: [0, 0], "2+": [0, 0]}
+    print(f"model={args.model} effort={args.effort} mode={args.mode} root=fixtures/ steps<={args.steps}\n")
+    header = f"{'task':<12} {'ok':<3} {'stop':<12} {'steps':>5} {'llm':>5} {'cells':>5} {'err':>4} {'in':>7} {'out':>6} {'ms':>6}"
+    print(header)
+    print("-" * len(header))
+
+    for task in selected:
+        trace_path = TRACES / f"{task.id}.{args.mode}.jsonl"
+        ws = workspace(task)
+        mutate = task in bench_tasks.MUTATION_TASKS or getattr(task, "mutates", False)
+        if args.context == "full":
+            prefix = "WORKSPACE\n" + digest(ws, args.context_chars) + "\n\n"
+        else:
+            prefix = map_text(build_map(ws)) + "\n\n" if args.map == "inline" else ""
+        if args.mode == "tools":
+            loop = AgentLoop(
+                client,
+                build_tools(ws, args.read_chars, args.map != "off", mutate),
+                budget,
+                rules=(RULES + "\n" + prefix) if prefix else RULES,
+            )
+            result = loop.run(task.id, task.prompt, Trace(trace_path))
+        else:
+            allow_run = args.allow_run == "on"
+            timeout = args.cell_timeout or (120.0 if allow_run else 15.0)
+            kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=args.repl_lib,
+                            allow_run=allow_run)
+            try:
+                base = TOOL_RULES if args.mode in ("tool", "state") else {"full": REPL_RULES, "bare": BARE_RULES, "none": ""}[args.repl_rules]
+                rules = base
+                if args.repl_lib == "all":
+                    rules = rules + LIB_NOTE
+                elif args.repl_lib == "mut":
+                    rules = rules + LIB_MUT_NOTE
+                if allow_run and args.repl_rules != "none":
+                    rules = rules + (RUN_NOTE_MUT if args.repl_lib == "mut" else RUN_NOTE)
+                check = getattr(task, "check", None)
+                if args.mode in ("tool", "state"):
+                    loop = (StateLoop if args.mode == "state" else ToolLoop)(
+                        client, kernel, budget,
+                        rules=rules + prefix,
+                        goal=(lambda: check(ws)) if check else None,
+                        goal_stops=True,
+                        obs_chars=args.obs_chars,
+                    )
+                else:
+                    loop = ReplLoop(
+                        client, kernel, budget,
+                        rules=rules + prefix,
+                        stop=args.repl_stop,
+                        history=args.repl_history,
+                        obs_chars=args.obs_chars,
+                        goal=(lambda: check(ws)) if check else None,
+                        goal_stops=True,
+                    )
+                result = loop.run(task.id, task.prompt, Trace(trace_path))
+            finally:
+                kernel.stop()
+
+        for turn in result.turns:
+            c = turn.get("cache") or {}
+            bucket = 1 if turn.get("turn") == 1 else "2+"
+            cache_turns[bucket][0] += int(c.get("hit", 0))
+            cache_turns[bucket][1] += int(c.get("hit", 0)) + int(c.get("miss", 0))
+        result.workspace = str(ws)
+        ok, detail = task.grade(result.final, result)
+        usage = result.usage
+        print(
+            f"{task.id:<12} {'ok' if ok else 'FAIL':<3} {result.stop:<12} "
+            f"{result.steps:>5} {result.llm_calls:>5} {result.calls:>5} {result.errors:>4} "
+            f"{usage.get('prompt_tokens', 0):>7} {usage.get('completion_tokens', 0):>6} "
+            f"{result.wall_ms:>6.0f}"
+        )
+        if not ok:
+            print(f"    -> {detail}")
+        mix: dict = {}
+        for turn in result.turns:
+            for res in turn.get("results", []):
+                mix[res["name"]] = mix.get(res["name"], 0) + 1
+        rows.append({
+            "task": task.id,
+            "mix": mix,
+            "mode": args.mode,
+            "shape": task.shape,
+            "ok": ok,
+            "detail": detail,
+            "stop": result.stop,
+            "steps": result.steps,
+            "llm_calls": result.llm_calls,
+            "calls": result.calls,
+            "errors": result.errors,
+            "usage": usage,
+            "wall_ms": round(result.wall_ms),
+            "runs": [c for t in result.turns for c in (t.get("runs") or [])],
+            "final": result.final,
+            "trace": str(trace_path),
+        })
+        if args.traces:
+            print()
+            print(render(trace_path, reasoning_chars=300))
+            print()
+
+    passed = sum(1 for r in rows if r["ok"])
+    errors = sum(r["errors"] for r in rows)
+    tot = {k: sum(r["usage"].get(k, 0) for r in rows) for k in (
+        "total_tokens", "prompt_tokens", "completion_tokens",
+        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "local_hits")}
+    prompt = tot["prompt_tokens"] or 1
+    print(
+        f"\npass {passed}/{len(rows)} | cell errors {errors} | "
+        f"steps {sum(r['steps'] for r in rows)} | tokens {tot['total_tokens']}"
+    )
+    print(
+        f"cache: prompt {tot['prompt_tokens']} = hit {tot['prompt_cache_hit_tokens']} "
+        f"({100 * tot['prompt_cache_hit_tokens'] / prompt:.0f}%) + miss {tot['prompt_cache_miss_tokens']} | "
+        f"local hits {tot['local_hits']}/{sum(r['steps'] for r in rows)} calls"
+    )
+
+    for bucket in (1, "2+"):
+        hit, total = cache_turns[bucket]
+        share = 100 * hit / total if total else 0
+        print(f"  turn {str(bucket):<2} cache hit {share:>5.1f}%  ({hit}/{total} input tokens)")
+
+    (TRACES / f"summary.{args.mode}.json").write_text(
+        json.dumps({"model": args.model, "effort": args.effort, "mode": args.mode, "rows": rows}, indent=2)
+    )
+    return 0 if passed == len(rows) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
