@@ -1,0 +1,107 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mode": "repl",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 555,
+        "completion_tokens": 225,
+        "total_tokens": 780,
+        "reasoning_tokens": 62
+      },
+      "wall_ms": 2844,
+      "final": "15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.repl.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mode": "repl",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'The call is `parse_row(raw.strip())`, so the exact first argument expression is `raw.strip()`.'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 912,
+        "completion_tokens": 118,
+        "total_tokens": 1030,
+        "reasoning_tokens": 60
+      },
+      "wall_ms": 3985,
+      "final": "The call is `parse_row(raw.strip())`, so the exact first argument expression is `raw.strip()`.",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.repl.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mode": "repl",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got \"('/home/lmbullo/code/bench/fixtures/lib.py', 1401181143)\"",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 823,
+        "completion_tokens": 405,
+        "total_tokens": 1228,
+        "reasoning_tokens": 72
+      },
+      "wall_ms": 3893,
+      "final": "('/home/lmbullo/code/bench/fixtures/lib.py', 1401181143)",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.repl.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mode": "repl",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 5120,
+        "completion_tokens": 610,
+        "total_tokens": 5730,
+        "reasoning_tokens": 276
+      },
+      "wall_ms": 6037,
+      "final": "END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.repl.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mode": "repl",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 700,
+        "completion_tokens": 853,
+        "total_tokens": 1553,
+        "reasoning_tokens": 629
+      },
+      "wall_ms": 6858,
+      "final": "6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.repl.jsonl"
+    }
+  ]
+}

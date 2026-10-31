@@ -1,0 +1,107 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mode": "repl",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 573,
+        "completion_tokens": 94,
+        "total_tokens": 667,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 2582,
+      "final": "15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.repl.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mode": "repl",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 1052,
+        "completion_tokens": 183,
+        "total_tokens": 1235,
+        "reasoning_tokens": 93
+      },
+      "wall_ms": 3988,
+      "final": "raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.repl.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mode": "repl",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got 'lib.py defines checksum; checksum(7) returns 1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 1935,
+        "completion_tokens": 328,
+        "total_tokens": 2263,
+        "reasoning_tokens": 62
+      },
+      "wall_ms": 5633,
+      "final": "lib.py defines checksum; checksum(7) returns 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.repl.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mode": "repl",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 877,
+        "completion_tokens": 243,
+        "total_tokens": 1120,
+        "reasoning_tokens": 88
+      },
+      "wall_ms": 4483,
+      "final": "The last line of `./notes.md` is:\n\n```\nEND OF FILE: the retention window is 19 days.\n```\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.repl.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mode": "repl",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 1006,
+        "completion_tokens": 462,
+        "total_tokens": 1468,
+        "reasoning_tokens": 200
+      },
+      "wall_ms": 5837,
+      "final": "Counted occurrences of the byte string `TODO` in every file (including nested directories), case-sensitively:\n\n- `app.py` \u2014 1\n- `deep/nested/mod.py` \u2014 1\n- `lib.py` \u2014 1\n- `notes.md` \u2014 3\n\nTotal: **6**\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.repl.jsonl"
+    }
+  ]
+}
