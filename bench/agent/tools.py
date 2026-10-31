@@ -361,3 +361,189 @@ def validate(schema: dict, value: Any, path: str = "args") -> list[str]:
                 problems.extend(validate(sub, value[key], f"{path}.{key}"))
     return problems
 
+def _parse_path(raw: str) -> tuple[str, int | None]:
+    p = raw.strip().strip('"').strip("'").strip("`").strip()
+    p = p.replace("\\", "/")
+    line_no: int | None = None
+    m = re.match(r"^(.*?):(\d{1,9})$", p)
+    if m and m.group(1):
+        p, line_no = m.group(1), int(m.group(2))
+    if p.startswith("~"):
+        p = p[1:]
+    p = posixpath.normpath(p.lstrip("/") or ".")
+    if p == ".":
+        p = ""
+    return p, line_no
+
+def _entries(directory: Path, limit: int = MAX_ENTRIES) -> list[dict]:
+    try:
+        children = sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name))
+    except OSError:
+        return []
+    out = []
+    for child in children:
+        if child.name.startswith(".") or child.name in SKIP_DIRS:
+            continue
+        is_dir = child.is_dir()
+        out.append(
+            {
+                "name": child.name,
+                "type": "dir" if is_dir else "file",
+                "bytes": None if is_dir else child.stat().st_size,
+            }
+        )
+    return out[:limit]
+
+def _miss(root: Path, rel: str, tree: Callable[[], list[str]]) -> dict:
+
+    close = difflib.get_close_matches(rel or ".", tree(), n=3, cutoff=0.4)
+    near = rel
+    while near and not (root / near).exists():
+        near = posixpath.dirname(near)
+    near_path = root / near if near else root
+    nearby = {"path": near or ".", "entries": _entries(near_path, 50)} if near_path.is_dir() else None
+    if close:
+        hint = f"read(path='{close[0]}')"
+    elif nearby:
+        hint = f"read(path='{near or '.'}')"
+    else:
+        hint = "read(path='.')"
+    return {
+        "ok": True,
+        "kind": "miss",
+        "path": rel,
+        "did_you_mean": close,
+        "nearby": nearby,
+        "note": f"'{rel}' does not exist; this is information, not a fault. {hint} to continue.",
+    }
+
+def _is_binary(data: bytes) -> bool:
+    return b"\x00" in data[:8192]
+
+def make_read(root: Path, max_chars: int = MAX_CHARS) -> Tool:
+    root = root.resolve()
+    cache: list[str] | None = None
+
+    def tree() -> list[str]:
+        nonlocal cache
+        if cache is None:
+            items = []
+            for p in root.rglob("*"):
+                rel = p.relative_to(root)
+                if any(part.startswith(".") or part in SKIP_DIRS for part in rel.parts):
+                    continue
+                items.append(rel.as_posix())
+            cache = sorted(items)
+        return cache
+
+    def listing(rp: Path, rel: str) -> dict:
+        entries = _entries(rp)
+        truncated = len(entries) >= MAX_ENTRIES
+        base = rel or "."
+        prefix = "" if base == "." else base + "/"
+        return {
+            "ok": True,
+            "kind": "dir",
+            "path": base,
+            "count": len(entries),
+            "entries": entries,
+            "truncated": truncated,
+            "note": f"'{base}' is a directory. Descend with read(path='{prefix}<name>').",
+        }
+
+    def file(rp: Path, rel: str, offset: int, limit: int) -> dict:
+        raw = rp.read_bytes()
+        size = len(raw)
+        if _is_binary(raw):
+            return {
+                "ok": True,
+                "kind": "binary",
+                "path": rel,
+                "bytes": size,
+                "note": f"binary file ({size} bytes); not decoded.",
+            }
+        text = raw.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        total = len(lines)
+        offset = max(1, offset)
+        limit = max(1, min(limit, DEFAULT_LIMIT))
+        sha = hashlib.sha256(raw).hexdigest()[:12]
+
+        notes: list[str] = []
+        if total == 0:
+            return {
+                "ok": True,
+                "kind": "file",
+                "path": rel,
+                "total_lines": 0,
+                "shown": [0, 0],
+                "truncated": False,
+                "sha": sha,
+                "text": "",
+                "note": "file is empty",
+            }
+        if offset > total:
+            offset = max(1, total - limit + 1)
+            notes.append(f"offset past EOF; file has {total} lines, returned the tail from line {offset}")
+
+        end = min(total, offset + limit - 1)
+        body: list[str] = []
+        used = 0
+        i = offset
+        last = offset - 1
+        while i <= end:
+            rendered = f"{i:>6}| {lines[i - 1]}"
+            if used + len(rendered) + 1 > max_chars:
+                if not body:
+                    body.append(rendered[:max_chars])
+                    last = i
+                    notes.append("line exceeded the 16000 character budget and was cut")
+                else:
+                    notes.append(f"character budget reached before line {i}")
+                break
+            body.append(rendered)
+            used += len(rendered) + 1
+            last = i
+            i += 1
+
+        truncated = last < total
+        env: dict = {
+            "ok": True,
+            "kind": "file",
+            "path": rel,
+            "total_lines": total,
+            "shown": [offset, last],
+            "truncated": truncated,
+            "sha": sha,
+            "text": "\n".join(body),
+        }
+        if truncated:
+            env["next"] = {"offset": last + 1}
+        if notes:
+            env["note"] = "; ".join(notes)
+        return env
+
+    def read(path: str, offset: int = 1, limit: int = DEFAULT_LIMIT) -> dict:
+        rel, line_hint = _parse_path(path)
+        if line_hint is not None and offset == 1:
+            offset = line_hint
+
+        target = root / rel
+        try:
+            resolved = target.resolve()
+        except OSError:
+            resolved = target.absolute()
+        if not (resolved == root or root in resolved.parents):
+            return err(
+                "outside_root",
+                f"'{rel}' resolves outside ROOT",
+                hint=f"ROOT is '{root.name}/'; pass a path relative to it",
+            )
+        if not resolved.exists():
+            return _miss(root, rel, tree)
+        if resolved.is_dir():
+            return listing(resolved, rel)
+        return file(resolved, rel, offset, limit)
+
+    return Tool("read", READ_DESCRIPTION.replace("16000", str(max_chars)), READ_PARAMETERS, read)
+
