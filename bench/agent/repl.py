@@ -58,3 +58,296 @@ BARE_RULES = """Write Python in one ```python block. Cells share a kernel; varia
 """
 
 
+def history_entry(action: Action) -> str:
+    if action.kind == "code":
+        return f"```python\n{action.code}\n```"
+    if action.kind == "answer":
+        return f"ANSWER: {action.value}"
+    return ""
+
+
+def observation(cell: Cell, cap: int = 0) -> str:
+    parts = [f"[observation] exit={'raise' if cell.stderr else 'ok'} time={cell.duration_ms}ms"]
+    if cell.timeout:
+        parts.append("timeout: the cell was interrupted; the namespace and variables are intact")
+    if cell.result is not None:
+        parts.append(f"result: {cell.result}")
+    if cell.changed:
+        parts.append(f"changed: {', '.join(cell.changed)}")
+    if cell.stdout:
+        parts.append(f"stdout:\n{cell.stdout.rstrip()}")
+    if cell.stderr:
+        parts.append(f"stderr:\n{cell.stderr.rstrip()}")
+    body = "\n".join(parts)
+    if cap and len(body) > cap:
+        handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
+        head = body[: int(cap * 0.65)]
+        tail = body[-int(cap * 0.25):]
+        body = (f"{head}\n...[middle hidden: {len(body)} chars total; full output is {handle}"
+                f" -- print({handle}['stdout'])]...\n{tail}")
+    return body
+
+
+class ReplLoop:
+    def __init__(
+        self,
+        client: Client,
+        kernel: Kernel,
+        budget: Budget | None = None,
+        rules: str | None = REPL_RULES,
+        stop: str = "call",
+        history: str = "full",
+        obs_chars: int = 0,
+        goal: Any = None,
+        goal_label: str = "verified",
+        goal_stops: bool = True,
+        wrap_up_at: float | None = 0.8,
+    ) -> None:
+        self.client = client
+        self.kernel = kernel
+        self.budget = budget or Budget()
+        self.rules = rules
+        self.stop_mode = stop
+        self.history = history
+        self.obs_chars = obs_chars
+        self.goal = goal
+        self.goal_label = goal_label
+        self.goal_stops = goal_stops
+        self.wrap_up_at = wrap_up_at
+
+    def _goal_state(self):
+        return evaluate(self.goal)
+
+    def _reject(self, check, prefix: str) -> str:
+        if check is None:
+            return f"[observation] {prefix}: the goal check still fails. The task is not complete. Continue working."
+        return (f"[observation] {prefix}: the goal check says the task is not complete.\n"
+                f"{check.text()}\nKeep working and re-run the check when you believe it passes.")
+
+    def _push(self, messages: list[dict], usage: dict | None = None) -> str:
+        msgs = messages + [{
+            "role": "user",
+            "content": "[runtime] The cell budget is exhausted. Reply with the final answer as plain text and no code block.",
+        }]
+        try:
+            resp = self.client.complete(msgs, None, self.budget.max_output_tokens)
+        except LLMError:
+            return ""
+        if usage is not None:
+            _usage_add(usage, resp["usage"])
+        return (resp.get("content") or "").strip()
+
+    def run(self, task_id: str, prompt: str, trace: Any = None) -> RunResult:
+        b = self.budget
+        t0 = time.perf_counter()
+        messages: list[dict] = []
+        if self.rules:
+            messages.append({"role": "system", "content": self.rules})
+        messages.append({"role": "user", "content": prompt})
+        prefix_key = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
+        drift = 0
+        steps = calls = errors = repeats = 0
+        llm_calls = 0
+        seen: set[str] = set()
+        usage: dict = {}
+        turns: list[dict] = []
+        final = ""
+        stop = "STEP_LIMIT"
+        wrapped = False
+        last_turn = False
+
+        def push() -> str:
+            nonlocal llm_calls
+            llm_calls += 1
+            return self._push(messages, usage)
+
+        while True:
+            if steps >= b.max_steps:
+                final, stop = push(), "STEP_LIMIT"
+                break
+            if (time.perf_counter() - t0) > b.max_wall_s:
+                final, stop = push(), "WALL_LIMIT"
+                break
+
+            if not last_turn and steps >= max(1, b.max_steps - 1):
+                last_turn = True
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "[runtime] This is your last turn. Do not run more code or inspect more files. "
+                        "Reply with exactly one fenced ```python block that calls "
+                        "final_answer(<short summary>) and prints nothing."
+                    ),
+                })
+            elif self.wrap_up_at is not None and not wrapped:
+                threshold = max(1, int(b.max_steps * self.wrap_up_at))
+                if steps >= threshold and steps < max(1, b.max_steps - 1):
+                    wrapped = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[runtime] {b.max_steps - steps} steps left. Stop exploring. "
+                            "Make the smallest necessary change, verify it, and finish with "
+                            "final_answer(<short summary>). Do not start new investigations."
+                        ),
+                    })
+
+            steps += 1
+            llm_calls += 1
+            if hashlib.sha256(json.dumps(messages[:2], sort_keys=True).encode()).hexdigest() != prefix_key:
+                drift += 1
+            resp = self.client.complete(messages, None, b.max_output_tokens)
+            _usage_add(usage, resp["usage"])
+            cu = resp.get("usage") or {}
+            hit = int(cu.get("prompt_cache_hit_tokens") or 0)
+            miss = int(cu.get("prompt_cache_miss_tokens") or 0)
+            content = resp.get("content") or ""
+            action = compile_reply(content)
+            code = action.code if action.kind == "code" else None
+            rec: dict = {
+                "task": task_id,
+                "turn": steps,
+                "latency_ms": round(resp["latency_ms"]),
+                "content": content,
+                "reasoning": resp.get("reasoning") or "",
+                "code": code,
+                "observation": None,
+                "cache": {"hit": hit, "miss": miss},
+                "runs": [],
+            }
+
+            if code is None:
+                if action.kind == "answer":
+                    met, check = self._goal_state()
+                    if not met:
+                        if self.history != "drop":
+                            messages.append({"role": "assistant", "content": history_entry(action) or content})
+                        messages.append({"role": "user", "content": self._reject(check, "ANSWER rejected")})
+                        rec["stop"] = "GOAL_UNMET"
+                        turns.append(rec)
+                        if trace:
+                            trace.write(rec)
+                        continue
+                    final = action.value or ""
+                    stop = "DONE"
+                    rec["stop"] = stop
+                    turns.append(rec)
+                    if trace:
+                        trace.write(rec)
+                    break
+                if action.error:
+                    note = f"[observation] that reply did not produce code: {action.error}. Nothing ran."
+                    if action.detail:
+                        note += f"\n{action.detail}"
+                    if action.source == "markup":
+                        note += "\nThe call was understood but carried no runnable body. Reply with one ```python block."
+                else:
+                    note = "[observation] No ```python block and no line 'ANSWER: <value>' in that reply. The task is still open."
+                messages.append({"role": "user", "content": note})
+                rec["stop"] = "PROTOCOL"
+                rec["error"] = action.error
+                turns.append(rec)
+                if trace:
+                    trace.write(rec)
+                continue
+
+            if code in seen:
+                repeats += 1
+            else:
+                seen.add(code)
+            calls += 1
+            cell = self.kernel.run(code)
+            rec["runs"] = cell.runs or []
+            rec["observation"] = {
+                "exit": "raise" if cell.stderr else "ok",
+                "result": cell.result,
+                "stdout": cell.stdout,
+                "stderr": cell.stderr,
+                "restarted": cell.restarted,
+                "duration_ms": cell.duration_ms,
+            }
+            if cell.stderr:
+                errors += 1
+
+            terminal = cell.final if self.stop_mode == "call" else cell.answer
+            if terminal is not None and (cell.stdout.strip() or cell.stderr.strip()):
+                if self.history != "drop":
+                    kept = content if self.history == "full" else history_entry(action)
+                    messages.append({"role": "assistant", "content": kept})
+                messages.append({"role": "user", "content": observation(cell, self.obs_chars) + "\n[observation] final_answer was not accepted: this cell printed output, so you have not seen it yet. Read it, then call final_answer(<value>) in a cell that prints nothing."})
+                rec["stop"] = "UNREVIEWED"
+                turns.append(rec)
+                if trace:
+                    trace.write(rec)
+                continue
+            if terminal is not None:
+                met, check = self._goal_state()
+                if not met:
+                    if self.history != "drop":
+                        kept = content if self.history == "full" else history_entry(action)
+                        messages.append({"role": "assistant", "content": kept})
+                    messages.append({"role": "user", "content": self._reject(check, "final_answer rejected")})
+                    rec["stop"] = "GOAL_UNMET"
+                    turns.append(rec)
+                    if trace:
+                        trace.write(rec)
+                    continue
+                final = terminal.strip()
+                stop = "DONE"
+                rec["stop"] = stop
+                turns.append(rec)
+                if trace:
+                    trace.write(rec)
+                break
+
+            if self.goal_stops and self.goal is not None and cell.mutated and self._goal_state()[0]:
+                final = self.goal_label
+                stop = "VERIFIED"
+                rec["stop"] = stop
+                turns.append(rec)
+                if trace:
+                    trace.write(rec)
+                break
+
+            if self.history != "drop":
+                kept = content if self.history == "full" else history_entry(action)
+                messages.append({"role": "assistant", "content": kept})
+            messages.append({"role": "user", "content": observation(cell, self.obs_chars)})
+            turns.append(rec)
+            if trace:
+                trace.write(rec)
+
+        wall_ms = (time.perf_counter() - t0) * 1000.0
+        if trace:
+            trace.write({
+                "task": task_id,
+                "summary": True,
+                "stop": stop,
+                "steps": steps,
+                "calls": calls,
+                "llm_calls": llm_calls,
+                "errors": errors,
+                "misses": 0,
+                "repeats": repeats,
+                "drift": drift,
+                "usage": usage,
+                "wall_ms": round(wall_ms),
+                "final": final,
+            })
+            trace.close()
+
+        return RunResult(
+            task=task_id,
+            stop=stop,
+            final=final,
+            steps=steps,
+            calls=calls,
+            errors=errors,
+            misses=0,
+            repeats=repeats,
+            usage=usage,
+            wall_ms=wall_ms,
+            trace=getattr(trace, "path", None),
+            turns=turns,
+            llm_calls=llm_calls,
+        )
