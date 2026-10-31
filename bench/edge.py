@@ -274,3 +274,82 @@ def grade_bytes(answer: str, run) -> tuple[bool, str]:
     return _has_int(answer, LEGACY_LINES), f"expected {LEGACY_LINES} lines; got {answer[:100]!r}"
 
 
+@dataclass
+class EdgeTask:
+    id: str
+    prompt: str
+    grade: Callable[[str, object], tuple[bool, str]]
+    shape: str
+    source: Path = field(default=EDGE)
+    mutates: bool = False
+    check: Callable[[Path], bool] | None = None
+
+
+EDGE_TASKS: list[EdgeTask] = [
+    EdgeTask(
+        "E1_tests",
+        "The test suite in this project fails. Make it pass. Do not modify the tests; fix the code.",
+        grade_tests,
+        "multi-turn repair, verification",
+        mutates=True,
+        check=lambda ws: _suite_ok(ws, "test_core", TEST),
+    ),
+    EdgeTask(
+        "E2_log",
+        "events.log is append-only and records periodic checkpoints. Report the SEQ of the most recent checkpoint.",
+        grade_checkpoint,
+        "large artifact, offset",
+    ),
+    EdgeTask(
+        "E3_shadow",
+        "app.py prints the limit it uses. What number does it print?",
+        grade_limit,
+        "import graph, disambiguation",
+    ),
+    EdgeTask(
+        "E4_cents",
+        "Report the total of every amount in orders.csv, expressed as an integer number of cents.",
+        grade_cents,
+        "exact arithmetic",
+    ),
+    EdgeTask(
+        "E5_join",
+        "Which order in orders.csv has the largest amount, and what does ledger.checksum return for its id?",
+        grade_join,
+        "data + code join",
+    ),
+    EdgeTask(
+        "E6_repair",
+        "The test suite for calc2 fails. Make it pass. Do not modify the tests; fix the code.",
+        grade_tests2,
+        "batch repair, step budget",
+        mutates=True,
+        check=lambda ws: _suite_ok(ws, "test_calc2", TEST2),
+    ),
+    EdgeTask(
+        "E7_compound",
+        "Report the three largest amounts in orders.csv, each with the checksum of its order id.",
+        grade_compound,
+        "compound answer",
+    ),
+    EdgeTask(
+        "E8_records",
+        "How many records does data.csv contain?",
+        grade_records,
+        "quoted csv, naive vs exact",
+    ),
+    EdgeTask(
+        "E9_indirect",
+        "index.txt names the current revision file. Report the revision number stored there.",
+        grade_indirect,
+        "pointer hop",
+    ),
+    EdgeTask(
+        "E10_bytes",
+        "How many lines does legacy.txt contain?",
+        grade_bytes,
+        "invalid utf-8",
+    ),
+]
+
+
