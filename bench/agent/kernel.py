@@ -240,3 +240,73 @@ def _digest(text):
     return _hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:12]
 
 
+def _commit(target, rel, body, source):
+    global _MUT, _JSEQ
+    before = None
+    try:
+        if _os.path.isfile(target):
+            before = _read_text(target)
+    except OSError:
+        before = None
+    _os.makedirs(_os.path.dirname(target) or _ROOT, exist_ok=True)
+    with _open(target, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    _MUT = True
+    _JSEQ += 1
+    diff_text = "".join(_difflib.unified_diff(
+        (before or "").splitlines(True), body.splitlines(True),
+        fromfile=("/dev/null" if before is None else "a/" + rel), tofile="b/" + rel, n=3))
+    adds = sum(1 for line in diff_text.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    dels = sum(1 for line in diff_text.splitlines() if line.startswith("-") and not line.startswith("---"))
+    entry = {"seq": _JSEQ, "path": rel, "source": source, "created": before is None,
+             "before_lines": 0 if before is None else len(before.splitlines()),
+             "after_lines": len(body.splitlines()), "adds": adds, "dels": dels,
+             "before_hash": None if before is None else _digest(before),
+             "after_hash": _digest(body), "diff": diff_text}
+    _JOURNAL.append(entry)
+    _SNAP[entry["seq"]] = before
+    if len(_JOURNAL) > 200:
+        old = _JOURNAL.pop(0)
+        _SNAP.pop(old["seq"], None)
+    if rel not in _CELL_CHANGED:
+        _CELL_CHANGED.append(rel)
+    return entry
+
+
+_BASE = {}
+_BASE_READY = False
+_LAST_STATE = None
+
+
+def _snapshot():
+    global _BASE_READY, _LAST_STATE
+    if _BASE_READY:
+        return
+    for full in _walk(_ROOT):
+        rel = _os.path.relpath(full, _ROOT)
+        try:
+            if _os.path.getsize(full) > 2_000_000:
+                continue
+            body = _read_text(full)
+        except (OSError, UnicodeError):
+            continue
+        _BASE[rel] = {"hash": _digest(body), "text": body}
+    _BASE_READY = True
+    _LAST_STATE = {rel: row["text"] for rel, row in _BASE.items()}
+
+
+def _tree_state():
+    _snapshot()
+    now = {}
+    for full in _walk(_ROOT):
+        rel = _os.path.relpath(full, _ROOT)
+        try:
+            if _os.path.getsize(full) > 2_000_000:
+                continue
+            body = _read_text(full)
+        except (OSError, UnicodeError):
+            continue
+        now[rel] = {"hash": _digest(body), "text": body}
+    return now
+
+
