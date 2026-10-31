@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+import re
+import subprocess
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class Check:
+    cmd: str
+    state: str
+    exit_code: int | None = None
+    duration_ms: int = 0
+    stdout: str = ""
+    stderr: str = ""
+    failures: list[dict] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.state == "passed"
+
+    def text(self, limit: int = 3000) -> str:
+        if self.state == "passed":
+            return f"{self.cmd}: passed ({self.duration_ms}ms)"
+        if self.state == "unrunnable":
+            detail = (self.stderr or self.stdout or "").strip()[-limit:]
+            return f"{self.cmd}: could not run. This is not a failed test; the check itself is broken.\n{detail}"
+        head = f"{self.cmd}: failed (exit {self.exit_code}, {self.duration_ms}ms)"
+        if self.failures:
+            body = "\n".join(f"  - {hit['text']}" for hit in self.failures)
+            return f"{head}\n{body}"
+        detail = (self.stderr or self.stdout or "").strip()[-limit:]
+        return f"{head}\n{detail}"
+
+
+_PATTERNS = (
+    re.compile(r"^\s*\(fail\)\s*(.+)$"),
+    re.compile(r"^\s*FAILED\s+(.+)$"),
+    re.compile(r"^\s*([^\s:()]+\.\w+\(\d+,\d+\)):\s*(error\s+TS\d+:.*)$"),
+    re.compile(r"^\s*([^\s:()]+\.\w+:\d+:\d+):\s*(error:.*)$"),
+    re.compile(r"^\s*([^\s:()]+\.\w+:\d+):\s*(error:.*)$"),
+    re.compile(r"^\s*(?:AssertionError|Error|Exception):\s*(.+)$"),
+)
+
+
+def _failures(stdout: str, stderr: str, limit: int = 20) -> list[dict]:
+    hits: list[dict] = []
+    seen: set[str] = set()
+    for number, line in enumerate((stderr + "\n" + stdout).splitlines(), 1):
+        row = line.rstrip()
+        if not row:
+            continue
+        for pattern in _PATTERNS:
+            match = pattern.match(row)
+            if not match:
+                continue
+            text = " ".join(part for part in match.groups() if part).strip()
+            if "0 fail" in text.lower() or text in seen:
+                break
+            seen.add(text)
+            hits.append({"line": number, "text": text[:400]})
+            break
+        if len(hits) >= limit:
+            break
+    return hits
+
+
