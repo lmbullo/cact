@@ -143,3 +143,31 @@ async function ensureServer(): Promise<ServerInfo> {
 
 loadEnvFile();
 
+const workspaceArg = process.argv.find((value) => value.startsWith("--workspace="));
+const WORKSPACE = resolve(workspaceArg ? workspaceArg.slice("--workspace=".length) : process.cwd());
+const workspaceHash = createHash("sha256").update(WORKSPACE).digest("hex").slice(0, 16);
+const stateRoot = process.env.CODE_TUI_STATE_ROOT
+  ? resolve(process.env.CODE_TUI_STATE_ROOT)
+  : join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "code-tui");
+const STATE_DIR = resolve(join(stateRoot, "workspaces", workspaceHash));
+const SERVER_FILE = join(STATE_DIR, "server.json");
+
+process.chdir(WORKSPACE);
+mkdirSync(STATE_DIR, { recursive: true });
+
+try {
+  const info = await ensureServer();
+  if (!process.env.DEEPSEEK_API_KEY) {
+    console.error("code-tui: DEEPSEEK_API_KEY is not set; tasks will fail until it is configured.");
+    console.error(`code-tui: add it to ${join(homedir(), ".config", "code-tui", "env")} or export it.`);
+  }
+  process.env.CODE_TUI_URL = `http://127.0.0.1:${info.port}`;
+  process.env.CODE_TUI_WORKSPACE = WORKSPACE;
+  process.env.CODE_TUI_STATE = STATE_DIR;
+  process.env.CODE_TUI_VERSION = VERSION;
+  const client = await import("./client.tsx");
+  await client.main();
+} catch (error) {
+  console.error(`code-tui: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
