@@ -121,3 +121,74 @@ function promptFile(id: string): string {
   return join(promptsDir, `${id}.txt`);
 }
 
+function saveTask(task: Task): void {
+  const file = taskFile(task.id);
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(task, null, 2));
+  renameSync(tmp, file);
+}
+
+function capString(value: unknown, limit: number): unknown {
+  return typeof value === "string" && value.length > limit ? `${value.slice(0, limit)}\n… truncated` : value;
+}
+
+function capValue(value: any, depth = 0): any {
+  if (depth > 5) return "[depth]";
+  if (typeof value === "string") return capString(value, 8000);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, 40).map((item) => capValue(item, depth + 1));
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) out[key] = capValue(item, depth + 1);
+    return out;
+  }
+  return String(value);
+}
+
+function appendEvent(task: Task, partial: Omit<TaskEvent, "seq" | "ts">): TaskEvent {
+  const event: TaskEvent = { seq: nextSeq(), ts: Date.now(), ...partial };
+  try {
+    appendFileSync(eventFile(task.id), `${JSON.stringify(event)}\n`);
+  } catch (error) {
+    console.error("event write failed", error);
+  }
+  broadcast({ type: "event", taskId: task.id, event });
+  return event;
+}
+
+function broadcast(message: unknown): void {
+  if (!server) return;
+  try {
+    server.publish("tasks", JSON.stringify(message));
+  } catch {
+    // server is shutting down
+  }
+}
+
+function snapshot(): Snapshot {
+  return {
+    type: "snapshot",
+    server: { ...info, hasKey: Boolean(process.env.DEEPSEEK_API_KEY) },
+    tasks: tasks.map((task) => ({ ...task })),
+  };
+}
+
+function readTaskEvents(taskId: string, limit = 600): TaskEvent[] {
+  const file = eventFile(taskId);
+  if (!existsSync(file)) return [];
+  try {
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-Math.max(1, Math.min(limit, 2000)));
+    return lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as TaskEvent;
+        } catch {
+          return null;
+        }
+      })
+      .filter((event): event is TaskEvent => event !== null);
+  } catch {
+    return [];
+  }
+}
+
