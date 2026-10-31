@@ -1,0 +1,8 @@
+**/node_modules
+**/node_modules/
+tui/node_modules/
+**/__pycache__/
+*.pyc
+bench/.cache/
+bench/.tmp/
+tmp8_w_n1sf/
