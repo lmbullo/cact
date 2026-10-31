@@ -476,3 +476,108 @@ function cancelTask(task: Task): void {
   broadcast({ type: "task", task });
 }
 
+function loadTasks(): void {
+  for (const file of readdirSync(tasksDir).filter((name) => name.endsWith(".json"))) {
+    try {
+      const task = JSON.parse(readFileSync(join(tasksDir, file), "utf8")) as Task;
+      if (!task.id || !task.prompt) continue;
+      tasks.push(task);
+      taskById.set(task.id, task);
+    } catch (error) {
+      console.error("cannot load task", file, error);
+    }
+  }
+  tasks.sort((a, b) => a.createdAt - b.createdAt);
+  for (const task of tasks) {
+    if (task.status === "running") {
+      task.status = "failed";
+      task.finishedAt = Date.now();
+      task.error = "server restarted while this task was running";
+      saveTask(task);
+      appendEvent(task, { kind: "error", text: task.error });
+      appendEvent(task, { kind: "finished", text: "failed" });
+    }
+  }
+  pump();
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+loadTasks();
+
+server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  fetch(req: Request, srv: any) {
+    const url = new URL(req.url);
+    if (url.pathname === "/ws") {
+      if (srv.upgrade(req, { data: { id: randomUUID() } })) return;
+      return new Response("websocket upgrade failed", { status: 400 });
+    }
+    if (url.pathname === "/health") {
+      return json({ ok: true, ...info, hasKey: Boolean(process.env.DEEPSEEK_API_KEY) });
+    }
+    if (url.pathname === "/api/snapshot") return json(snapshot());
+    if (url.pathname === "/api/tasks" && req.method === "POST") {
+      return (async () => {
+        try {
+          const body = (await req.json()) as { prompt?: unknown };
+          const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+          if (!prompt) return json({ error: "prompt is empty" }, 400);
+          if (prompt.length > 20000) return json({ error: "prompt is too long (20000 char max)" }, 400);
+          return json({ task: createTask(prompt) }, 201);
+        } catch (error) {
+          return json({ error: String(error) }, 400);
+        }
+      })();
+    }
+    const match = url.pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(events|cancel))?$/);
+    if (match) {
+      const task = taskById.get(decodeURIComponent(match[1]!));
+      if (!task) return json({ error: "task not found" }, 404);
+      if (!match[2] && req.method === "GET") return json({ task });
+      if (match[2] === "events" && req.method === "GET") {
+        const limit = Number(url.searchParams.get("limit") ?? 600) || 600;
+        return json({ events: readTaskEvents(task.id, limit) });
+      }
+      if (match[2] === "cancel" && req.method === "POST") {
+        cancelTask(task);
+        return json({ task });
+      }
+    }
+    if (url.pathname === "/") {
+      return new Response(
+        [
+          `code-tui ${VERSION}`,
+          `workspace: ${workspace}`,
+          `state:     ${stateDir}`,
+          `port:      ${info.port}`,
+          `model:     ${model} (${effort})`,
+          `key:       ${process.env.DEEPSEEK_API_KEY ? "set" : "missing"}`,
+        ].join("\n"),
+        { headers: { "content-type": "text/plain; charset=utf-8" } },
+      );
+    }
+    return json({ error: "not found" }, 404);
+  },
+  websocket: {
+    open(ws: any) {
+      ws.subscribe("tasks");
+      ws.send(JSON.stringify(snapshot()));
+    },
+    message() {},
+    close() {},
+  },
+});
+
+info = { ...info, port: server.port };
+writeFileSync(serverFile, JSON.stringify(info, null, 2));
+console.log(`code-tui server ${VERSION} listening on 127.0.0.1:${server.port}`);
+console.log(`workspace ${workspace}`);
+console.log(`state     ${stateDir}`);
+
