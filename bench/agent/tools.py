@@ -648,3 +648,167 @@ def make_find(root: Path) -> Tool:
 
     return Tool("find", FIND_DESCRIPTION, FIND_PARAMETERS, find)
 
+def make_calc() -> Tool:
+    def calc(expression: str) -> dict:
+        try:
+            tree = ast.parse(expression, mode="eval")
+            value = _eval_calc(tree.body)
+        except CalcError as exc:
+            return err(
+                "bad_expr",
+                str(exc),
+                hint="use numbers, + - * / // % **, comparisons, list comprehensions, abs/min/max/round/sum/len",
+            )
+        except ZeroDivisionError:
+            return err("bad_expr", "division by zero", hint="change the divisor")
+        except (SyntaxError, ValueError, TypeError, OverflowError) as exc:
+            return err(
+                "bad_expr",
+                f"{type(exc).__name__}: {exc}",
+                hint="send one expression, e.g. '7 * 2654435761 % 2**32'",
+            )
+        if isinstance(value, float) and not math.isfinite(value):
+            return err("bad_expr", "result is not finite", hint="reduce the magnitude")
+        return {
+            "ok": True,
+            "kind": "value",
+            "expression": expression,
+            "value": value,
+            "repr": repr(value),
+            "type": type(value).__name__,
+        }
+
+    return Tool("calc", CALC_DESCRIPTION, CALC_PARAMETERS, calc)
+
+class Registry:
+    def __init__(self) -> None:
+        self.tools: dict[str, Tool] = {}
+
+    def add(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def specs(self) -> list[dict]:
+        return [tool.spec() for tool in self.tools.values()]
+
+    def prepare(self, name: str, raw_arguments: Any) -> tuple[Tool | None, dict | None, dict | None]:
+        tool = self.tools.get(name)
+        if tool is None:
+            return None, None, err(
+                "unknown_tool",
+                f"no tool named '{name}'",
+                hint=f"available tools: {', '.join(self.tools)}",
+            )
+        if isinstance(raw_arguments, dict):
+            args = raw_arguments
+        else:
+            try:
+                args = json.loads(raw_arguments or "{}")
+            except json.JSONDecodeError as exc:
+                return None, None, err(
+                    "bad_json",
+                    f"arguments are not valid JSON: {exc.msg} at char {exc.pos}",
+                    hint=f"send an object matching {json.dumps(tool.parameters)}",
+                )
+        if not isinstance(args, dict):
+            return None, None, err(
+                "bad_args",
+                f"arguments must be an object, got {type(args).__name__}",
+                hint=f"send an object matching {json.dumps(tool.parameters)}",
+            )
+        args = coerce(tool.parameters, args)
+        problems = validate(tool.parameters, args)
+        if problems:
+            props = tool.parameters.get("properties", {})
+            return None, None, err(
+                "bad_args",
+                "; ".join(problems),
+                hint=f"required: {tool.parameters.get('required', [])}; allowed: {', '.join(props)}",
+            )
+        return tool, args, None
+
+    def execute(self, tool: Tool, args: dict) -> dict:
+        try:
+            env = tool.fn(**args)
+        except Exception as exc:
+            return err(
+                "tool_crashed",
+                f"{type(exc).__name__}: {exc}",
+                hint="retry with a different path or pattern",
+            )
+        if not isinstance(env, dict):
+            env = {"ok": True, "value": env}
+        env.setdefault("tool", tool.name)
+        return env
+
+
+WRITE_DESCRIPTION = """Create or replace a text file under ROOT. Use edit for a targeted change; use write to create a new file or replace a whole one.
+
+CALL
+  write(path, content, overwrite=false)
+
+ARGS
+  path       File path relative to ROOT. Parent directories are created.
+  content    Full file content. Line endings are written as given.
+  overwrite  false (default) refuses to replace an existing file and returns kind:"conflict" with its size. Pass true to replace.
+
+RETURNS ok:true, kind:"write"
+  path, created, lines, bytes, sha
+
+RETURNS ok:true, kind:"conflict"
+  path, lines, bytes, note. Nothing was written. Pass overwrite=true to replace, or edit() to change part of it.
+
+FAILS ok:false
+  bad_args | outside_root | tool_crashed
+"""
+
+WRITE_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string", "description": "File path relative to ROOT."},
+        "content": {"type": "string", "description": "Full file content."},
+        "overwrite": {"type": "boolean", "description": "Replace an existing file. Default false."},
+    },
+    "required": ["path", "content"],
+    "additionalProperties": False,
+}
+
+EDIT_DESCRIPTION = """Replace an exact substring in a text file. This is the only mutation that cannot silently hit the wrong place: it reports ambiguity instead of guessing.
+
+CALL
+  edit(path, old, new, all=false)
+
+ARGS
+  path   File path relative to ROOT.
+  old    Exact substring to replace, including indentation and line breaks. Must be non-empty.
+  new    Replacement text. Empty string deletes old.
+  all    false (default) requires exactly one occurrence. true replaces every occurrence.
+
+RETURNS ok:true, kind:"edit"
+  path, replaced, lines, diff:[{line, op:"-"/"+", text}]
+  diff is bounded to 40 lines around the first change.
+
+RETURNS ok:true, kind:"ambiguous"
+  path, count, matches:[{line, text}]
+  Nothing was written. Extend old until it is unique, or pass all=true.
+
+RETURNS ok:true, kind:"no_change"
+  path, closest:[{line, text}]
+  old was not found. Nothing was written. closest holds the most similar lines; old must match byte for byte.
+
+FAILS ok:false
+  bad_args | outside_root | tool_crashed
+"""
+
+EDIT_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string", "description": "File path relative to ROOT."},
+        "old": {"type": "string", "minLength": 1, "description": "Exact substring to replace."},
+        "new": {"type": "string", "description": "Replacement text; empty deletes."},
+        "all": {"type": "boolean", "description": "Replace every occurrence. Default false."},
+    },
+    "required": ["path", "old", "new"],
+    "additionalProperties": False,
+}
+
+
