@@ -179,3 +179,64 @@ _HINT = {
 }
 
 
+class _Writer:
+    def __init__(self, target, rel, base):
+        self.target = target
+        self.rel = rel
+        self._parts = [base]
+        self.closed = False
+
+    def write(self, text):
+        self._parts.append(text)
+        return len(text)
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    def flush(self):
+        return None
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        _commit(self.target, self.rel, "".join(self._parts), "open()")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def open(file, mode="r", *args, **kwargs):
+    if any(ch in mode for ch in "wax+") and "b" not in mode and "r" not in mode:
+        target, rel = _resolve(file)
+        if target is not None:
+            base = ""
+            if "a" in mode and _os.path.isfile(target):
+                base = _read_text(target)
+            return _Writer(target, rel, base)
+    if "b" not in mode and "errors" not in kwargs:
+        kwargs["errors"] = "replace"
+    return _open(file, mode, *args, **kwargs)
+
+
+def _resolve(path):
+    raw = str(path).strip() or "."
+    target = _os.path.normpath(raw if _os.path.isabs(raw) else _os.path.join(_ROOT, raw))
+    if target != _ROOT and not target.startswith(_ROOT + _os.sep):
+        return None, raw
+    return target, _os.path.relpath(target, _ROOT)
+
+
+def _read_text(path):
+    with _open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def _digest(text):
+    return _hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:12]
+
+
