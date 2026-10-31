@@ -58,3 +58,11 @@ export function selectedRowIndex(rows: ListRow[], selected: string | null): numb
 }
 
 /** First visible row so the selected task stays on screen. */
+export function scrollWindow(rowCount: number, budget: number, focus: number): { start: number; size: number } {
+  const size = Math.max(1, Math.min(rowCount, budget));
+  let start = Math.max(0, rowCount - size);
+  if (focus >= 0 && (focus < start || focus >= start + size)) {
+    start = Math.max(0, Math.min(focus - Math.floor(size / 2), rowCount - size));
+  }
+  return { start, size };
+}
