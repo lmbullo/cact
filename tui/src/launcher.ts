@@ -63,3 +63,83 @@ async function waitForServer(timeoutMs: number): Promise<ServerInfo | null> {
   return null;
 }
 
+function launchDetachedServer(logPath: string): void {
+  const command = [
+    "nohup",
+    shq(process.execPath),
+    shq(join(ROOT, "src", "server.ts")),
+    "--workspace",
+    shq(WORKSPACE),
+    "--state",
+    shq(STATE_DIR),
+    ">>",
+    shq(logPath),
+    "2>&1",
+    "</dev/null",
+    "&",
+  ].join(" ");
+  const result = Bun.spawnSync({
+    cmd: ["bash", "-lc", command],
+    cwd: WORKSPACE,
+    env: process.env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    const err = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(`could not start server: ${err || `exit ${result.exitCode}`}`);
+  }
+}
+
+async function ensureServer(): Promise<ServerInfo> {
+  let info = await existingServer();
+  if (info) return info;
+
+  mkdirSync(STATE_DIR, { recursive: true });
+  const lock = join(STATE_DIR, "launch.lock");
+  let locked = false;
+
+  for (let attempt = 0; attempt < 2 && !locked; attempt++) {
+    try {
+      mkdirSync(lock);
+      locked = true;
+    } catch {
+      // Another TUI is already starting the server. Wait for it first.
+      info = await waitForServer(8000);
+      if (info) return info;
+      try {
+        const age = Date.now() - statSync(lock).mtimeMs;
+        if (age > 15000) rmSync(lock, { recursive: true, force: true });
+      } catch {
+        // lock disappeared
+      }
+    }
+  }
+
+  if (!locked) {
+    throw new Error(`launch lock is busy: ${lock}`);
+  }
+
+  try {
+    info = await existingServer();
+    if (info) return info;
+    const logPath = join(STATE_DIR, "server.log");
+    launchDetachedServer(logPath);
+    info = await waitForServer(12000);
+    if (!info) {
+      let tail = "";
+      try {
+        tail = readFileSync(logPath, "utf8").trim().split("\n").slice(-12).join("\n");
+      } catch {
+        // no log
+      }
+      throw new Error(`server did not become healthy. log: ${logPath}\n${tail}`);
+    }
+    return info;
+  } finally {
+    if (locked) rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+loadEnvFile();
+
