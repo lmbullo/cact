@@ -280,3 +280,134 @@ function handleWorkerLine(task: Task, raw: string): void {
   }
 }
 
+function startTask(task: Task): void {
+  if (task.status !== "queued" || running.has(task.id) || shuttingDown) return;
+  task.status = "running";
+  task.startedAt = Date.now();
+  task.model = model;
+  task.effort = effort;
+  saveTask(task);
+  appendEvent(task, { kind: "started", text: `agent started (${model}, effort=${effort})` });
+  broadcast({ type: "task", task });
+
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn({
+      cmd: [
+        python,
+        WORKER,
+        "--workspace",
+        workspace,
+        "--prompt-file",
+        promptFile(task.id),
+        "--model",
+        model,
+        "--effort",
+        effort,
+        "--max-steps",
+        String(maxSteps),
+        "--max-wall",
+        String(maxWall),
+        "--max-output",
+        String(maxOutput),
+        "--cell-timeout",
+        String(cellTimeout),
+        "--allow-run",
+        allowRun ? "1" : "0",
+        "--check",
+        check,
+      ],
+      cwd: workspace,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        CODE_TUI_WORKSPACE: workspace,
+        CODE_TUI_STATE: stateDir,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (error) {
+    task.status = "failed";
+    task.finishedAt = Date.now();
+    task.error = `failed to start worker: ${String(error)}`;
+    saveTask(task);
+    appendEvent(task, { kind: "error", text: task.error });
+    appendEvent(task, { kind: "finished", text: "failed" });
+    broadcast({ type: "task", task });
+    pump();
+    return;
+  }
+
+  task.pid = proc.pid;
+  saveTask(task);
+  appendEvent(task, { kind: "pid", text: `worker pid ${proc.pid}` });
+  broadcast({ type: "task", task });
+
+  const runtime = { proc, lastStderr: "" };
+  running.set(task.id, runtime);
+  let finalStatus: "done" | "partial" | "failed" | undefined;
+  const handle = (line: string) => {
+    if (line.startsWith(EVENT_PREFIX)) {
+      try {
+        const msg = JSON.parse(line.slice(EVENT_PREFIX.length)) as WorkerMessage;
+        if (msg.kind === "final") finalStatus = msg.status;
+      } catch {
+        // handleWorkerLine will report it as a log line
+      }
+    }
+    handleWorkerLine(task, line);
+  };
+  const handleStderr = (line: string) => {
+    const text = line.trim();
+    if (!text) return;
+    runtime.lastStderr = text.slice(-2000);
+    appendEvent(task, { kind: "stderr", text: capString(text, 4000) as string });
+  };
+
+  const outStream = typeof proc.stdout === "object" ? (proc.stdout as ReadableStream<Uint8Array>) : null;
+  const errStream = typeof proc.stderr === "object" ? (proc.stderr as ReadableStream<Uint8Array>) : null;
+  const outDone = outStream ? readWorkerStream(outStream, handle) : Promise.resolve();
+  const errDone = errStream ? readWorkerStream(errStream, handleStderr) : Promise.resolve();
+
+  void (async () => {
+    const exitCode = await proc.exited;
+    await Promise.all([outDone, errDone]);
+    running.delete(task.id);
+    task.exitCode = exitCode;
+    task.finishedAt = Date.now();
+    const isPartial = Boolean(task.final) && (
+      finalStatus === "partial" ||
+      (finalStatus === "failed" && (task.stop === "STEP_LIMIT" || task.stop === "WALL_LIMIT"))
+    );
+    if (task.cancelRequested) {
+      task.status = "cancelled";
+      appendEvent(task, { kind: "finished", text: "cancelled" });
+    } else if (finalStatus === "done" && task.final) {
+      task.status = "done";
+      appendEvent(task, { kind: "finished", text: "done" });
+    } else if (isPartial) {
+      task.status = "partial";
+      task.error = `agent reached ${task.stop ?? "the budget"} after ${task.steps ?? "?"} steps; partial summary saved`;
+      appendEvent(task, { kind: "log", text: task.error });
+      appendEvent(task, { kind: "finished", text: "partial" });
+    } else {
+      task.status = "failed";
+      if (!task.error) {
+        const reason = task.final
+          ? `agent stopped (${task.stop ?? "unknown"}) after ${task.steps ?? "?"} steps; see final output`
+          : runtime.lastStderr
+            ? runtime.lastStderr.slice(0, 2000)
+            : `agent exited with code ${exitCode} without a final answer`;
+        task.error = reason;
+        appendEvent(task, { kind: "error", text: task.error });
+      }
+      appendEvent(task, { kind: "finished", text: "failed" });
+    }
+    saveTask(task);
+    broadcast({ type: "task", task });
+    pump();
+  })();
+}
+
