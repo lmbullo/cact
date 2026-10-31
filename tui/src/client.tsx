@@ -764,3 +764,19 @@ export function App({ httpUrl, workspace }: { httpUrl: string; workspace: string
   );
 }
 /** Entry point used by `bin/code` (via the launcher) — not run when the module is imported. */
+export async function main(): Promise<void> {
+  const httpUrl = process.env.CODE_TUI_URL;
+  const workspace = process.env.CODE_TUI_WORKSPACE ?? process.cwd();
+  if (!httpUrl) {
+    console.error("code-tui: CODE_TUI_URL is missing; launch through tui/bin/code");
+    process.exit(1);
+  }
+
+  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  const root = createRoot(renderer);
+  root.render(<App httpUrl={httpUrl} workspace={workspace} />);
+  await renderer.closed;
+  renderer.destroy();
+}
+
+if (import.meta.main) void main();
