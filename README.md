@@ -52,7 +52,7 @@ cact/
 │       ├── kernel.py        subprocess driver (DRIVER, RUN_PRELUDE) + in-child PRELUDE helpers
 │       ├── llm.py           DeepSeek chat client, retries, on-disk response cache
 │       ├── loop.py          AgentLoop (JSON tool calling), Budget, RunResult, usage accounting
-│       ├── repl.py          ReplLoop (one fenced ```python block per turn), observations
+│       ├── repl.py          ReplLoop (one fenced python block per turn), observations
 │       ├── tool_loop.py     ToolLoop (a single `python` tool), goal checks, stop reasons
 │       ├── state_loop.py    StateLoop = ToolLoop + state cards, output digest, compaction
 │       ├── reply.py         parse model text into an Action (markup repair, fences, ANSWER:)
@@ -120,7 +120,7 @@ Selected by `--mode` in `run.py`, by `CODE_TUI_MODE` in production (default `sta
 | mode | Loop | Action space | Rules constant |
 |---|---|---|---|
 | `tools` | `AgentLoop` | JSON tool calls: `read`, `find`, `calc`, optionally `map`, `edit`, `write` (`tools.py`) | `loop.RULES` |
-| `repl` | `ReplLoop` | one fenced ```python block per reply, run as a kernel cell | `repl.REPL_RULES` / `BARE_RULES` |
+| `repl` | `ReplLoop` | one fenced python block per reply, run as a kernel cell | `repl.REPL_RULES` / `BARE_RULES` |
 | `tool` | `ToolLoop` | one function: `python` | `tool_loop.TOOL_RULES` |
 | `state` | `StateLoop` | same as `tool`, observations rendered as state cards | `state_loop.STATE_RULES` |
 
