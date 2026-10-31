@@ -661,3 +661,159 @@ MAX_OUTPUT = 0
 CELL_TIMEOUT = 15.0
 
 
+@dataclass
+class Cell:
+    stdout: str
+    stderr: str
+    result: str | None
+    final: str | None
+    duration_ms: int
+    restarted: bool = False
+    answer: str | None = None
+    runs: list[str] | None = None
+    obs_index: int | None = None
+    mutated: bool = False
+    changed: list[str] = field(default_factory=list)
+    delta: str = ""
+    timeout: bool = False
+
+
+def _cap(text: str, limit: int = MAX_OUTPUT) -> str:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]"
+
+
+class Kernel:
+    def __init__(self, root: Path, timeout: float = CELL_TIMEOUT, writable: bool = False,
+                 prelude: str = "off", allow_run: bool = False, supervise: bool = True) -> None:
+        self.root = Path(root).resolve()
+        self.timeout = timeout
+        self.writable = writable
+        self.prelude = prelude
+        self.allow_run = allow_run
+        self.supervise = supervise
+        self.proc: subprocess.Popen | None = None
+        self._python = shutil.which("python3") or "/usr/bin/python3"
+
+    def _argv(self) -> list[str]:
+        if self.allow_run:
+            return [self._python, "-u", "-c", DRIVER]
+        return [
+            "bwrap",
+            "--die-with-parent",
+            "--unshare-all",
+            "--ro-bind", "/", "/",
+            *(["--bind", str(self.root), str(self.root)] if self.writable else []),
+            "--tmpfs", "/tmp",
+            "--proc", "/proc",
+            "--dev", "/dev",
+            "--chdir", str(self.root),
+            self._python, "-u", "-c", DRIVER,
+        ]
+
+    def start(self) -> None:
+        self.proc = subprocess.Popen(
+            self._argv(),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+            cwd=str(self.root),
+            start_new_session=True,
+            env={
+                "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "PYTHONIOENCODING": "utf-8",
+                "KERNEL_SUPERVISE": "1" if self.supervise else "0",
+                **({"KERNEL_ALLOW_RUN": "1", "KERNEL_RUN_PRELUDE": RUN_PRELUDE} if self.allow_run else {}),
+                **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude}
+                   if self.prelude != "off" else {}),
+            },
+        )
+
+    def stop(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            self._kill_group()
+            try:
+                self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+        self.proc = None
+
+    def _kill_group(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+            except OSError:
+                self.proc.kill()
+
+    def _restart(self) -> None:
+        self.stop()
+        self.start()
+
+    def run(self, code: str) -> Cell:
+        if self.proc is None:
+            self.start()
+        assert self.proc is not None and self.proc.stdin and self.proc.stdout
+        if len(code) > MAX_CODE:
+            return Cell("", "kernel: code exceeds 20000 characters", None, None, 0)
+
+        started = time.perf_counter()
+        try:
+            self.proc.stdin.write(json.dumps({"code": code, "timeout": float(self.timeout)}) + "\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            self._restart()
+            return Cell("", "kernel died; restarted with an empty namespace", None, None, 0, True)
+
+        sel = selectors.DefaultSelector()
+        sel.register(self.proc.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + self.timeout + 5.0
+        payload = None
+        try:
+            while payload is None:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    self._kill_group()
+                    self._restart()
+                    return Cell(
+                        "",
+                        f"kernel did not answer within {self.timeout:.0f}s; killed and restarted with an empty namespace",
+                        None, None,
+                        int((time.perf_counter() - started) * 1000),
+                        True, timeout=True,
+                    )
+                if not sel.select(remain):
+                    continue
+                line = self.proc.stdout.readline()
+                if not line:
+                    self._restart()
+                    return Cell("", "kernel died; restarted with an empty namespace", None, None, 0, True)
+                if not line.startswith(MARKER):
+                    self._restart()
+                    return Cell("", "kernel protocol desync; restarted with an empty namespace", None, None, 0, True)
+                message = json.loads(line[len(MARKER):])
+                if "extend" in message:
+                    deadline = time.monotonic() + float(message["extend"]) + 30.0
+                    continue
+                payload = message
+        finally:
+            sel.close()
+
+        return Cell(
+            _cap(payload.get("stdout") or ""),
+            _cap(payload.get("stderr") or ""),
+            payload.get("result"),
+            payload.get("final"),
+            int((time.perf_counter() - started) * 1000),
+            False,
+            payload.get("answer"),
+            payload.get("runs") or [],
+            payload.get("obs_index"),
+            bool(payload.get("mutated")),
+            payload.get("changed") or [],
+            payload.get("delta") or "",
+            bool(payload.get("timeout")),
+        )
