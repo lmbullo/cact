@@ -547,3 +547,104 @@ def make_read(root: Path, max_chars: int = MAX_CHARS) -> Tool:
 
     return Tool("read", READ_DESCRIPTION.replace("16000", str(max_chars)), READ_PARAMETERS, read)
 
+def make_find(root: Path) -> Tool:
+    root = root.resolve()
+
+    def find(pattern: str, path: str = ".", max_results: int = 50, regex: bool = False) -> dict:
+        rel, _ = _parse_path(path)
+        target = root / rel
+        try:
+            resolved = target.resolve()
+        except OSError:
+            resolved = target.absolute()
+        if not (resolved == root or root in resolved.parents):
+            return err(
+                "outside_root",
+                f"'{rel}' resolves outside ROOT",
+                hint=f"ROOT is '{root.name}/'; pass a path relative to it",
+            )
+        if not resolved.exists():
+            return _miss(root, rel, lambda: sorted(p.relative_to(root).as_posix() for p in root.rglob("*")))
+
+        max_results = max(1, min(max_results, MAX_MATCHES))
+        notes: list[str] = []
+
+        matcher: Callable[[str], bool]
+        if regex:
+            try:
+                compiled = re.compile(pattern)
+                matcher = lambda line: compiled.search(line) is not None
+            except re.error as exc:
+                notes.append(f"invalid regex ({exc.msg}); searched the literal string instead")
+                matcher = lambda line: pattern in line
+        else:
+            matcher = lambda line: pattern in line
+
+        if resolved.is_file():
+            files = [resolved]
+        else:
+            files = [
+                p
+                for p in sorted(resolved.rglob("*"))
+                if p.is_file()
+                and not any(part.startswith(".") or part in SKIP_DIRS for part in p.relative_to(root).parts)
+            ]
+
+        compiled_rx = compiled if regex and "compiled" in dir() else None
+        matches: list[dict] = []
+        occurrences = 0
+        searched = 0
+        skipped_binary = 0
+        truncated = False
+        for fp in files:
+            if truncated:
+                break
+            try:
+                data = fp.read_bytes()
+            except OSError:
+                continue
+            if _is_binary(data):
+                skipped_binary += 1
+                continue
+            searched += 1
+            text = data.decode("utf-8", "replace")
+            occurrences += len(compiled_rx.findall(text)) if compiled_rx else text.count(pattern)
+            for n, line in enumerate(text.splitlines(), 1):
+                if matcher(line):
+                    matches.append(
+                        {
+                            "path": fp.relative_to(root).as_posix(),
+                            "line": n,
+                            "text": line.strip()[:MAX_SNIPPET],
+                        }
+                    )
+                    if len(matches) >= max_results:
+                        truncated = True
+                        break
+
+        env: dict = {
+            "ok": True,
+            "kind": "matches",
+            "pattern": pattern,
+            "path": rel or ".",
+            "regex": bool(regex),
+            "files_searched": searched,
+            "lines_matched": len(matches),
+            "occurrences": None if truncated else occurrences,
+            "matches": matches,
+            "truncated": truncated,
+        }
+        if skipped_binary:
+            notes.append(f"{skipped_binary} binary files skipped")
+        if truncated:
+            notes.append("more matches exist; narrow the pattern or raise max_results")
+        if not matches:
+            notes.append(f"0 matches for {pattern!r} across {searched} text files")
+        elif not truncated:
+            notes.append(f"{occurrences} occurrence(s) on {len(matches)} line(s) across {searched} files")
+        if notes:
+            env["note"] = "; ".join(notes)
+        return env
+
+    return Tool("find", FIND_DESCRIPTION, FIND_PARAMETERS, find)
+
