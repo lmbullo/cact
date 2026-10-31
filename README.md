@@ -208,9 +208,11 @@ imports `bench.agent` from this repo, so the checkout path matters.
    fixtures. Editing a fixture silently redefines the expected answers.
 6. **`bench/traces/` and `bench/ws/runs/` are append-only evidence.** Add new runs; never
    rewrite recorded journals. The `sweep/` files are batch summaries.
-7. **Generated directories are not source:** `bench/.tmp/`, `bench/.cache/`,
-   `bench/edge_fixtures/` (rebuilt by `edge.build()`), `tui/node_modules/`,
-   `tmp8_w_n1sf/`, and the TUI state root `~/.local/state/code-tui/`.
+7. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
+   `bench/.cache/` (LLM replies), `tui/node_modules/`, `tmp8_w_n1sf/`, and the TUI state
+   root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is recreated
+   by `edge.build()` whenever it is missing — if you add an edge task, add its fixture
+   there (or extend `build()`).
 
 ---
 
