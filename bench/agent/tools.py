@@ -171,3 +171,107 @@ CALC_PARAMETERS = {
     "additionalProperties": False,
 }
 
+class CalcError(ValueError):
+    pass
+
+_BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+
+def _calc_sum(*items):
+    if len(items) == 1 and isinstance(items[0], (list, tuple)):
+        return sum(items[0])
+    return sum(items)
+
+_CALC_FUNCS = {
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "round": round,
+    "sum": _calc_sum,
+    "len": len,
+}
+
+_CMP = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+}
+
+def _eval_calc(node: ast.AST, env: dict | None = None):
+
+    env = env or {}
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            raise CalcError(f"constant {node.value!r} is not numeric")
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id not in env:
+            raise CalcError(f"unknown name {node.id!r}; only comprehension targets are allowed")
+        return env[node.id]
+    if isinstance(node, ast.BinOp) and type(node.op) in _BINOPS:
+        left = _eval_calc(node.left, env)
+        right = _eval_calc(node.right, env)
+        if isinstance(node.op, ast.Pow) and abs(right) > 10_000:
+            raise CalcError("exponent above 10000 refused")
+        return _BINOPS[type(node.op)](left, right)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub, ast.Not)):
+        value = _eval_calc(node.operand, env)
+        if isinstance(node.op, ast.Not):
+            return not value
+        return value if isinstance(node.op, ast.UAdd) else -value
+    if isinstance(node, ast.Compare):
+        left = _eval_calc(node.left, env)
+        for op, comparator in zip(node.ops, node.comparators):
+            right = _eval_calc(comparator, env)
+            if type(op) not in _CMP:
+                raise CalcError(f"unsupported comparison: {type(op).__name__}")
+            if not _CMP[type(op)](left, right):
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.BoolOp):
+        values = [_eval_calc(v, env) for v in node.values]
+        return all(values) if isinstance(node.op, ast.And) else any(values)
+    if isinstance(node, ast.IfExp):
+        return _eval_calc(node.body if _eval_calc(node.test, env) else node.orelse, env)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return [_eval_calc(e, env) for e in node.elts]
+    if isinstance(node, ast.ListComp):
+        if len(node.generators) != 1:
+            raise CalcError("use one for-clause per comprehension")
+        gen = node.generators[0]
+        if gen.is_async or not isinstance(gen.target, ast.Name):
+            raise CalcError("comprehension target must be a plain name")
+        source = _eval_calc(gen.iter, env)
+        if not isinstance(source, (list, tuple)):
+            raise CalcError("comprehension source must be a list literal")
+        out = []
+        for item in source:
+            inner = dict(env)
+            inner[gen.target.id] = item
+            if all(_eval_calc(cond, inner) for cond in gen.ifs):
+                out.append(_eval_calc(node.elt, inner))
+        return out
+    if isinstance(node, ast.GeneratorExp):
+        raise CalcError("use a list literal in brackets: sum([... for ...])")
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _CALC_FUNCS
+        and not node.keywords
+    ):
+        return _CALC_FUNCS[node.func.id](*[_eval_calc(arg, env) for arg in node.args])
+    raise CalcError(f"unsupported expression element: {type(node).__name__}")
+
+
+
