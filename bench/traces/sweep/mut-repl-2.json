@@ -1,0 +1,70 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "M1_rename",
+      "mix": {},
+      "mode": "repl",
+      "shape": "rename symbol",
+      "ok": false,
+      "detail": "PAGE_SIZE=None leftover_PAGE=True",
+      "stop": "DONE",
+      "steps": 5,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8903,
+        "completion_tokens": 1712,
+        "total_tokens": 10615,
+        "reasoning_tokens": 142
+      },
+      "wall_ms": 12226,
+      "final": "[cell executed; state persists]",
+      "trace": "/home/lmbullo/code/bench/traces/M1_rename.repl.jsonl"
+    },
+    {
+      "task": "M2_add_fn",
+      "mix": {},
+      "mode": "repl",
+      "shape": "add function",
+      "ok": true,
+      "detail": "row_total=12.5 expected 12.5; checksum_intact=True",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2240,
+        "completion_tokens": 702,
+        "total_tokens": 2942,
+        "reasoning_tokens": 326
+      },
+      "wall_ms": 7778,
+      "final": "[cell executed; state persists]",
+      "trace": "/home/lmbullo/code/bench/traces/M2_add_fn.repl.jsonl"
+    },
+    {
+      "task": "M3_branch",
+      "mix": {},
+      "mode": "repl",
+      "shape": "change control flow",
+      "ok": true,
+      "detail": "printed 13.75 expected 13.75",
+      "stop": "DONE",
+      "steps": 10,
+      "calls": 10,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 32705,
+        "completion_tokens": 1988,
+        "total_tokens": 34693,
+        "reasoning_tokens": 721
+      },
+      "wall_ms": 21711,
+      "final": "app.py skips rows whose account is 'legal' via `if row[\"account\"] == \"legal\": continue` (verified: runs rc=0, prints 3768.20)",
+      "trace": "/home/lmbullo/code/bench/traces/M3_branch.repl.jsonl"
+    }
+  ]
+}

@@ -1,0 +1,175 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mix": {},
+      "mode": "repl",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 1107,
+        "completion_tokens": 438,
+        "total_tokens": 1545,
+        "reasoning_tokens": 346
+      },
+      "wall_ms": 4058,
+      "final": "15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.repl.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mix": {},
+      "mode": "repl",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 797,
+        "completion_tokens": 122,
+        "total_tokens": 919,
+        "reasoning_tokens": 88
+      },
+      "wall_ms": 2737,
+      "final": "raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.repl.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mix": {},
+      "mode": "repl",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got \"{'file': 'lib.py', 'checksum(7)': 1401181143}\"",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 794,
+        "completion_tokens": 322,
+        "total_tokens": 1116,
+        "reasoning_tokens": 117
+      },
+      "wall_ms": 3366,
+      "final": "{'file': 'lib.py', 'checksum(7)': 1401181143}",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.repl.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mix": {},
+      "mode": "repl",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 1,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 318,
+        "completion_tokens": 129,
+        "total_tokens": 447,
+        "reasoning_tokens": 90
+      },
+      "wall_ms": 1877,
+      "final": "END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.repl.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mix": {},
+      "mode": "repl",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 1,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 332,
+        "completion_tokens": 275,
+        "total_tokens": 607,
+        "reasoning_tokens": 124
+      },
+      "wall_ms": 2441,
+      "final": "6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.repl.jsonl"
+    },
+    {
+      "task": "M1_rename",
+      "mix": {},
+      "mode": "repl",
+      "shape": "rename symbol",
+      "ok": true,
+      "detail": "PAGE_SIZE=4096 leftover_PAGE=False",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 5552,
+        "completion_tokens": 817,
+        "total_tokens": 6369,
+        "reasoning_tokens": 183
+      },
+      "wall_ms": 6533,
+      "final": "Renamed PAGE to PAGE_SIZE in lib.py and updated all workspace references; value remains 4096.",
+      "trace": "/home/lmbullo/code/bench/traces/M1_rename.repl.jsonl"
+    },
+    {
+      "task": "M2_add_fn",
+      "mix": {},
+      "mode": "repl",
+      "shape": "add function",
+      "ok": true,
+      "detail": "row_total=12.5 expected 12.5; checksum_intact=True",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 1527,
+        "completion_tokens": 839,
+        "total_tokens": 2366,
+        "reasoning_tokens": 263
+      },
+      "wall_ms": 7350,
+      "final": "row_total(rows) added to lib.py: sums amount for USD rows; checksum and parse_row unchanged.",
+      "trace": "/home/lmbullo/code/bench/traces/M2_add_fn.repl.jsonl"
+    },
+    {
+      "task": "M3_branch",
+      "mix": {},
+      "mode": "repl",
+      "shape": "change control flow",
+      "ok": true,
+      "detail": "printed 13.75 expected 13.75",
+      "stop": "DONE",
+      "steps": 5,
+      "calls": 5,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 7253,
+        "completion_tokens": 819,
+        "total_tokens": 8072,
+        "reasoning_tokens": 268
+      },
+      "wall_ms": 9261,
+      "final": "3768.20",
+      "trace": "/home/lmbullo/code/bench/traces/M3_branch.repl.jsonl"
+    }
+  ]
+}

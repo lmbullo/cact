@@ -1,0 +1,70 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "M1_rename",
+      "mix": {},
+      "mode": "repl",
+      "shape": "rename symbol",
+      "ok": true,
+      "detail": "PAGE_SIZE=4096 leftover_PAGE=False",
+      "stop": "DONE",
+      "steps": 7,
+      "calls": 7,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 13806,
+        "completion_tokens": 3229,
+        "total_tokens": 17035,
+        "reasoning_tokens": 832
+      },
+      "wall_ms": 22089,
+      "final": "renamed PAGE to PAGE_SIZE in lib.py; no remaining PAGE references in workspace",
+      "trace": "/home/lmbullo/code/bench/traces/M1_rename.repl.jsonl"
+    },
+    {
+      "task": "M2_add_fn",
+      "mix": {},
+      "mode": "repl",
+      "shape": "add function",
+      "ok": true,
+      "detail": "row_total=12.5 expected 12.5; checksum_intact=True",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 951,
+        "completion_tokens": 634,
+        "total_tokens": 1585,
+        "reasoning_tokens": 336
+      },
+      "wall_ms": 6861,
+      "final": "Added row_total(rows) to lib.py without changing existing functions.",
+      "trace": "/home/lmbullo/code/bench/traces/M2_add_fn.repl.jsonl"
+    },
+    {
+      "task": "M3_branch",
+      "mix": {},
+      "mode": "repl",
+      "shape": "change control flow",
+      "ok": true,
+      "detail": "printed 13.75 expected 13.75",
+      "stop": "DONE",
+      "steps": 5,
+      "calls": 5,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8191,
+        "completion_tokens": 1845,
+        "total_tokens": 10036,
+        "reasoning_tokens": 482
+      },
+      "wall_ms": 14749,
+      "final": "updated app.py to skip legal rows",
+      "trace": "/home/lmbullo/code/bench/traces/M3_branch.repl.jsonl"
+    }
+  ]
+}
