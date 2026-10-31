@@ -310,3 +310,75 @@ def _tree_state():
     return now
 
 
+def _row(rel, before, after):
+    if before is None:
+        diff_text = "".join(_difflib.unified_diff(
+            [], after.splitlines(True), fromfile="/dev/null", tofile="b/" + rel, n=3))
+        state = "added"
+    elif after is None:
+        diff_text = "".join(_difflib.unified_diff(
+            before.splitlines(True), [], fromfile="a/" + rel, tofile="/dev/null", n=3))
+        state = "deleted"
+    else:
+        diff_text = "".join(_difflib.unified_diff(
+            before.splitlines(True), after.splitlines(True), fromfile="a/" + rel, tofile="b/" + rel, n=3))
+        state = "modified"
+    adds = sum(1 for line in diff_text.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    dels = sum(1 for line in diff_text.splitlines() if line.startswith("-") and not line.startswith("---"))
+    return state, adds, dels, diff_text
+
+
+def _changed(now=None):
+    now = now or _tree_state()
+    out = []
+    for rel in sorted(set(_BASE) | set(now)):
+        before = _BASE.get(rel, {}).get("text")
+        after = now.get(rel, {}).get("text")
+        if before != after:
+            out.append((rel, before, after))
+    return out
+
+
+def _delta():
+    global _LAST_STATE
+    _snapshot()
+    now = {rel: row["text"] for rel, row in _tree_state().items()}
+    prev = _LAST_STATE if _LAST_STATE is not None else {rel: row["text"] for rel, row in _BASE.items()}
+    texts = []
+    for rel in sorted(set(prev) | set(now)):
+        before, after = prev.get(rel), now.get(rel)
+        if before != after:
+            texts.append(_row(rel, before, after)[3])
+    _LAST_STATE = now
+    return texts
+
+
+def changes():
+    now = _tree_state()
+    files = {}
+    for rel, before, after in _changed(now):
+        state, adds, dels, _ = _row(rel, before, after)
+        files[rel] = {"state": state, "adds": adds, "dels": dels}
+    return {"ok": True, "kind": "changes", "files": files, "count": len(files)}
+
+
+def diff(path=None, max_chars=8000):
+    rel_filter = None
+    if path is not None:
+        _, rel_filter = _resolve(path)
+    now = _tree_state()
+    texts = []
+    files = []
+    for rel, before, after in _changed(now):
+        if rel_filter is not None and rel != rel_filter:
+            continue
+        state, adds, dels, text = _row(rel, before, after)
+        texts.append(text)
+        files.append({"path": rel, "state": state, "adds": adds, "dels": dels})
+    joined = "\n".join(texts)
+    cut = len(joined) > max_chars
+    if cut:
+        joined = joined[:max_chars] + "\n...[diff truncated]"
+    return {"ok": True, "kind": "diff", "files": files, "text": joined, "truncated": cut}
+
+
