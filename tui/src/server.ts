@@ -192,3 +192,91 @@ function readTaskEvents(taskId: string, limit = 600): TaskEvent[] {
   }
 }
 
+async function readWorkerStream(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (line.trim()) onLine(line);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    if (buffer.trim()) onLine(buffer);
+  } catch (error) {
+    console.error("worker stream read failed", error);
+  }
+}
+
+function handleWorkerLine(task: Task, raw: string): void {
+  const line = raw.trimEnd();
+  if (!line.startsWith(EVENT_PREFIX)) {
+    appendEvent(task, { kind: "log", text: capString(line, 3000) as string });
+    return;
+  }
+  let message: WorkerMessage;
+  try {
+    message = JSON.parse(line.slice(EVENT_PREFIX.length)) as WorkerMessage;
+  } catch {
+    appendEvent(task, { kind: "log", text: capString(line, 3000) as string });
+    return;
+  }
+
+  switch (message.kind) {
+    case "cell.start":
+      appendEvent(task, {
+        kind: "cell.start",
+        cell: message.cell,
+        code: capString(message.code, 12000) as string,
+      });
+      break;
+    case "turn":
+      appendEvent(task, {
+        kind: "turn",
+        turn: message.turn,
+        data: capValue(message.data),
+      });
+      break;
+    case "log":
+      appendEvent(task, { kind: "log", text: capString(message.text, 4000) as string });
+      break;
+    case "error":
+      task.error = String(capString(message.text, 8000));
+      appendEvent(task, { kind: "error", text: task.error });
+      break;
+    case "final":
+      task.stop = message.stop;
+      task.steps = message.steps;
+      task.calls = message.calls;
+      task.llmCalls = message.llmCalls;
+      task.errors = message.errors;
+      task.usage = message.usage;
+      task.wallMs = message.wallMs;
+      task.final = capString(message.final ?? "", 12000) as string;
+      appendEvent(task, {
+        kind: "final",
+        text: task.final,
+        data: {
+          status: message.status,
+          stop: message.stop,
+          steps: message.steps,
+          calls: message.calls,
+          llmCalls: message.llmCalls,
+          errors: message.errors,
+          usage: message.usage,
+          wallMs: message.wallMs,
+        },
+      });
+      break;
+    default:
+      appendEvent(task, { kind: "log", text: line.slice(0, 3000) });
+  }
+}
+
