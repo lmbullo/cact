@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+import json
+import time
+from typing import Any
+
+from .check import evaluate
+from .kernel import Kernel
+from .llm import Client, LLMError
+from .loop import Budget, RunResult, _usage_add
+from .repl import observation
+
+PYTHON_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "python",
+        "description": (
+            "Execute Python in a persistent kernel. Variables, imports and data persist between calls. "
+            "The value of the last expression and anything printed are returned as the tool result."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python source to execute in the kernel."},
+            },
+            "required": ["code"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+TOOL_RULES = """You act by calling the python tool. The call is executed in a persistent kernel: variables, imports and data persist between calls, and the value of the last expression plus anything printed come back as the tool result.
+
+Use the kernel for everything: read(), write(), edit(), grep(), map() for files and run() for whole programs such as tests, builds and linters.
+
+Prefer one large call over many small ones. A single call can loop over files, run several commands, inspect and compute, and print everything you need. Do not spend one call per read or grep.
+
+Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
+
+Finish by calling the python tool with a cell that calls final_answer("<summary>") and prints nothing. If a cell prints output and also calls final_answer, the answer is rejected and the output is returned to you to read first. When the task asks for a specific value, put that value in final_answer, not in prose.
+
+A reply with no tool call also ends the task; its text is the summary.
+"""
+
+
+class ToolLoop:
+    def __init__(
+        self,
+        client: Client,
+        kernel: Kernel,
+        budget: Budget | None = None,
+        rules: str = TOOL_RULES,
+        tools: list[dict] | None = None,
+        goal: Any = None,
+        goal_label: str = "verified",
+        goal_stops: bool = False,
+        obs_chars: int = 0,
+    ) -> None:
+        self.client = client
+        self.kernel = kernel
+        self.budget = budget or Budget()
+        self.rules = rules
+        self.tools = tools or [PYTHON_TOOL]
+        self.goal = goal
+        self.goal_label = goal_label
+        self.goal_stops = goal_stops
+        self.obs_chars = obs_chars
+        self.changed: set[str] = set()
+        self.compactions = 0
+
+    def _observe(self, cell, steps: int) -> str:
+        return observation(cell, self.obs_chars)
+
+    def _compact(self, messages: list[dict]) -> None:
+        return None
+
+    def _goal_state(self):
+        return evaluate(self.goal)
+
+    def _reject(self, check, prefix: str) -> str:
+        if check is None:
+            return f"[observation] {prefix}: the project check still fails. Keep working."
+        return (f"[observation] {prefix}: the project check says the task is not complete.\n"
+                f"{check.text()}\nKeep working and re-run the check when you believe it passes.")
+
+    def _push(self, messages: list[dict], usage: dict | None = None) -> str:
+        msgs = messages + [{
+            "role": "user",
+            "content": "[runtime] The step budget is exhausted. Reply with a short final summary and no tool call.",
+        }]
+        try:
+            resp = self.client.complete(msgs, None, self.budget.max_output_tokens)
+        except LLMError:
+            return ""
+        if usage is not None:
+            _usage_add(usage, resp["usage"])
+        return (resp.get("content") or "").strip()
+
+    def run(self, task_id: str, prompt: str, trace: Any = None) -> RunResult:
+        b = self.budget
+        t0 = time.perf_counter()
+        messages: list[dict] = []
+        if self.rules:
+            messages.append({"role": "system", "content": self.rules})
+        messages.append({"role": "user", "content": prompt})
+
+        steps = calls = errors = repeats = llm_calls = 0
+        usage: dict = {}
+        turns: list[dict] = []
+        final = ""
+        stop = "STEP_LIMIT"
+        seen: set[str] = set()
+
+        while True:
+            self._compact(messages)
+            if steps >= b.max_steps or (time.perf_counter() - t0) > b.max_wall_s:
+                final, stop = self._push(messages, usage), ("STEP_LIMIT" if steps >= b.max_steps else "WALL_LIMIT")
+                break
+
+            steps += 1
+            llm_calls += 1
+            resp = self.client.complete(messages, self.tools, b.max_output_tokens)
+            _usage_add(usage, resp["usage"])
+            cu = resp.get("usage") or {}
+            hit = int(cu.get("prompt_cache_hit_tokens") or 0)
+            miss = int(cu.get("prompt_cache_miss_tokens") or 0)
+            self.last_prompt_tokens = hit + miss
+            content = resp.get("content") or ""
+            tool_calls = resp.get("tool_calls") or []
+            finish = resp.get("finish")
+            rec: dict = {
+                "task": task_id,
+                "turn": steps,
+                "latency_ms": round(resp["latency_ms"]),
+                "content": content,
+                "reasoning": resp.get("reasoning") or "",
+                "tool_calls": [tc.get("function", {}).get("name") for tc in tool_calls],
+                "code": None,
+                "observation": None,
+                "cache": {"hit": hit, "miss": miss},
+                "runs": [],
+                "finish": finish,
+            }
+
+            if not tool_calls:
+                if finish == "length":
+                    messages.append({"role": "user", "content": "[runtime] Your reply was cut off before it finished. Continue from where it stopped."})
+                    rec["stop"] = "TRUNCATED"
+                    turns.append(rec)
+                    if trace:
+                        trace.write(rec)
+                    continue
+                met, check = self._goal_state()
+                if self.goal is not None and not met:
+                    messages.append({"role": "user", "content": self._reject(check, "You finished without a passing check")})
+                    rec["stop"] = "GOAL_UNMET"
+                    turns.append(rec)
+                    if trace:
+                        trace.write(rec)
+                    continue
+                final = content.strip()
+                stop = "DONE"
+                rec["stop"] = stop
+                turns.append(rec)
+                if trace:
+                    trace.write(rec)
+                break
+
+            messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
+
+            terminal = None
+            for call in tool_calls:
+                fn = call.get("function") or {}
+                name = fn.get("name") or ""
+                call_id = call.get("id") or f"call_{steps}_{calls}"
+                if name != "python":
+                    messages.append({"role": "tool", "tool_call_id": call_id,
+                                     "content": f"[observation] unknown tool {name!r}; the only tool is python"})
+                    continue
+                if finish == "length":
+                    messages.append({"role": "tool", "tool_call_id": call_id,
+                                     "content": "[observation] the call arguments were truncated by the output limit. Nothing ran. Split the work into smaller cells."})
+                    rec["stop"] = "TRUNCATED"
+                    continue
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError as exc:
+                    messages.append({"role": "tool", "tool_call_id": call_id,
+                                     "content": f"[observation] arguments were not valid JSON: {exc}. Nothing ran."})
+                    rec["stop"] = "BAD_ARGS"
+                    continue
+                code = args.get("code")
+                if not isinstance(code, str) or not code.strip():
+                    messages.append({"role": "tool", "tool_call_id": call_id,
+                                     "content": "[observation] the code argument was empty. Nothing ran."})
+                    rec["stop"] = "BAD_ARGS"
+                    continue
+
+                if code in seen:
+                    repeats += 1
+                else:
+                    seen.add(code)
+                calls += 1
+                rec["code"] = code
+                cell = self.kernel.run(code)
+                rec["runs"] = (rec["runs"] or []) + (cell.runs or [])
+                rec["observation"] = {
+                    "exit": "raise" if cell.stderr else "ok",
+                    "result": cell.result,
+                    "stdout": cell.stdout,
+                    "stderr": cell.stderr,
+                    "restarted": cell.restarted,
+                    "duration_ms": cell.duration_ms,
+                }
+                if cell.stderr:
+                    errors += 1
+                if cell.changed:
+                    self.changed.update(cell.changed)
+                obs = self._observe(cell, steps)
+
+                if cell.final is not None:
+                    if cell.stdout.strip() or cell.stderr.strip():
+                        messages.append({"role": "tool", "tool_call_id": call_id,
+                                         "content": obs + "\n[observation] final_answer was not accepted: this cell printed output, so you have not seen it yet. Read it, then call final_answer(<value>) in a cell that prints nothing."})
+                        rec["stop"] = "UNREVIEWED"
+                        continue
+                    met, check = self._goal_state()
+                    if not met:
+                        messages.append({"role": "tool", "tool_call_id": call_id,
+                                         "content": self._reject(check, "final_answer rejected")})
+                        rec["stop"] = "GOAL_UNMET"
+                        continue
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
+                    terminal = cell.final
+                    continue
+
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
+                if self.goal_stops and self.goal is not None and cell.mutated and self._goal_state()[0]:
+                    terminal = self.goal_label
+
+            if terminal is not None:
+                final = terminal.strip()
+                stop = "VERIFIED" if final == self.goal_label else "DONE"
+                rec["stop"] = stop
+                turns.append(rec)
+                if trace:
+                    trace.write(rec)
+                break
+
+            turns.append(rec)
+            if trace:
+                trace.write(rec)
+
+        wall_ms = (time.perf_counter() - t0) * 1000.0
+        if trace:
+            trace.write({
+                "task": task_id,
+                "summary": True,
+                "stop": stop,
+                "steps": steps,
+                "calls": calls,
+                "llm_calls": llm_calls,
+                "errors": errors,
+                "misses": 0,
+                "repeats": repeats,
+                "drift": 0,
+                "usage": usage,
+                "wall_ms": round(wall_ms),
+                "final": final,
+            })
+            trace.close()
+
+        return RunResult(
+            task=task_id,
+            stop=stop,
+            final=final,
+            steps=steps,
+            calls=calls,
+            errors=errors,
+            misses=0,
+            repeats=repeats,
+            usage=usage,
+            wall_ms=wall_ms,
+            trace=getattr(trace, "path", None),
+            turns=turns,
+            llm_calls=llm_calls,
+        )
