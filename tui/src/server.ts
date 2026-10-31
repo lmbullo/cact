@@ -49,8 +49,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import type { ServerInfo, Snapshot, Task, TaskEvent, WorkerMessage } from "./types";
+import { join, relative, resolve } from "node:path";
+import type { CheckSpec, ServerInfo, Snapshot, Task, TaskEvent, WorkerMessage } from "./types";
 
 const VERSION = "0.1.0";
 const ROOT = resolve(import.meta.dir, "..");
@@ -97,28 +97,57 @@ process.chdir(workspace);
 const model = process.env.CODE_TUI_MODEL ?? "deepseek-flash";
 const effort = process.env.CODE_TUI_EFFORT ?? "low";
 const concurrency = Math.max(1, Math.min(8, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1));
-const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 120) || 120);
+const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 300) || 300);
 const maxOutput = Math.max(1024, Number(process.env.CODE_TUI_MAX_OUTPUT ?? 393216) || 393216);
 const maxWall = Math.max(30, Number(process.env.CODE_TUI_MAX_WALL ?? 1800) || 1800);
 const cellTimeout = Math.max(5, Number(process.env.CODE_TUI_CELL_TIMEOUT ?? 120) || 120);
 const allowRun = process.env.CODE_TUI_ALLOW_RUN !== "0";
 const python = process.env.CODE_TUI_PYTHON ?? "python3";
 
-function detectCheck(root: string): string {
-  const explicit = process.env.CODE_TUI_CHECK;
-  if (explicit !== undefined) return explicit.trim();
-  try {
-    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> };
-    const scripts = pkg.scripts ?? {};
-    if (scripts.typecheck) return "bun run typecheck";
-    if (scripts.test) return "bun test";
-  } catch {
-    return "";
+function detectChecks(root: string): CheckSpec[] {
+  const explicit = process.env.CODE_TUI_CHECKS;
+  if (explicit !== undefined) {
+    try {
+      const parsed = JSON.parse(explicit) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => item as { name?: unknown; cmd?: unknown; cheap?: unknown })
+        .map((item) => ({
+          name: String(item.name ?? item.cmd ?? "check"),
+          cmd: String(item.cmd ?? "").trim(),
+          cheap: Boolean(item.cheap),
+        }))
+        .filter((item) => item.cmd.length > 0);
+    } catch {
+      return [];
+    }
   }
-  return "";
+  const single = process.env.CODE_TUI_CHECK;
+  if (single !== undefined) {
+    return single.trim() ? [{ name: "check", cmd: single.trim(), cheap: false }] : [];
+  }
+  const out: CheckSpec[] = [];
+  const add = (name: string, cmd: string, cheap: boolean) => {
+    if (!out.some((item) => item.cmd === cmd)) out.push({ name, cmd, cheap });
+  };
+  if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true);
+  const prefix = (dir: string, command: string) => dir === root ? command : `cd ${relative(root, dir)} && ${command}`;
+  for (const dir of [root, join(root, "tui")]) {
+    let scripts: Record<string, string> = {};
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+      scripts = pkg.scripts ?? {};
+    } catch {
+      continue;
+    }
+    if (scripts.typecheck) add("typecheck", prefix(dir, "bun run typecheck"), true);
+    if (scripts.test || existsSync(join(dir, "tests"))) add("test", prefix(dir, "bun test"), false);
+  }
+  return out;
 }
 
-const check = detectCheck(workspace);
+const checks = detectChecks(workspace);
+const check = checks[0]?.cmd ?? "";
 const initialKey = Boolean(process.env.DEEPSEEK_API_KEY);
 
 let server: any = null;
@@ -138,6 +167,7 @@ let info: ServerInfo = {
   hasKey: initialKey,
   python,
   check,
+  checks,
 };
 
 const tasks: Task[] = [];
@@ -353,8 +383,8 @@ function startTask(task: Task): void {
         String(cellTimeout),
         "--allow-run",
         allowRun ? "1" : "0",
-        "--check",
-        check,
+        "--checks",
+        JSON.stringify(checks),
       ],
       cwd: workspace,
       env: {

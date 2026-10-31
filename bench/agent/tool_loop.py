@@ -69,6 +69,8 @@ Prefer one large call over many small ones. A single call can loop over files, r
 
 Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
 
+For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() translates simple file reads (cat, head, tail, ls, wc -l, grep PATTERN FILE) into the helper and returns kind "redirected"; import-only python3 -c is allowed; anything that reads project files through a program is refused.
+
 Finish by calling the python tool with a cell that calls final_answer("<summary>") and prints nothing. If a cell prints output and also calls final_answer, the answer is rejected and the output is returned to you to read first. When the task asks for a specific value, put that value in final_answer, not in prose.
 
 A reply with no tool call also ends the task; its text is the summary.
@@ -87,6 +89,7 @@ class ToolLoop:
         goal_label: str = "verified",
         goal_stops: bool = False,
         obs_chars: int = 0,
+        health: Any = None,
     ) -> None:
         self.client = client
         self.kernel = kernel
@@ -99,6 +102,9 @@ class ToolLoop:
         self.obs_chars = obs_chars
         self.changed: set[str] = set()
         self.compactions = 0
+        self.health = health
+        self.last_check: Any = None
+        self._health_at = 0.0
 
     def _observe(self, cell, steps: int) -> str:
         return observation(cell, self.obs_chars)
@@ -246,6 +252,16 @@ class ToolLoop:
                 }
                 if cell.stderr:
                     errors += 1
+                if self.health is not None and cell.mutated:
+                    now = time.perf_counter()
+                    if now - self._health_at >= 20.0:
+                        self._health_at = now
+                        try:
+                            self.last_check = self.health()
+                        except Exception:
+                            self.last_check = None
+                        if self.last_check is not None:
+                            rec["check"] = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
                 if cell.changed:
                     self.changed.update(cell.changed)
                 obs = self._observe(cell, steps)

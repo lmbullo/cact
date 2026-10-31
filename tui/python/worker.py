@@ -58,6 +58,7 @@ if str(ROOT) not in sys.path:
 
 from bench.agent import config  # noqa: E402
 from bench.agent.check import run_check  # noqa: E402
+from bench.agent.checks import CheckSpec, run_specs  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
 from bench.agent.repl import RUN_NOTE  # noqa: E402
@@ -155,6 +156,7 @@ class EventTrace:
             "observation": record.get("observation"),
             "runs": record.get("runs") or [],
             "cache": record.get("cache") or {},
+            "check": record.get("check"),
         }
         self._emit_event({"kind": "turn", "turn": int(record.get("turn") or 0), "data": data})
 
@@ -168,12 +170,13 @@ def main() -> int:
     parser.add_argument("--prompt-file", required=True)
     parser.add_argument("--model", default="deepseek-flash")
     parser.add_argument("--effort", default="low")
-    parser.add_argument("--max-steps", type=int, default=120)
+    parser.add_argument("--max-steps", type=int, default=300)
     parser.add_argument("--max-wall", type=float, default=1800.0)
     parser.add_argument("--cell-timeout", type=float, default=120.0)
     parser.add_argument("--max-output", type=int, default=config.MAX_OUTPUT)
     parser.add_argument("--allow-run", default="1")
     parser.add_argument("--check", default="")
+    parser.add_argument("--checks", default="")
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
@@ -211,13 +214,22 @@ def main() -> int:
     rules = base_rules + AUTONOMOUS
     if allow_run:
         rules += RUN_NOTE
-    check = args.check.strip()
+    specs = CheckSpec.parse(json.loads(args.checks)) if args.checks.strip() else CheckSpec.parse(args.check.strip())
     goal = None
+    health = None
     goal_label = "verified"
     legacy_check = os.environ.get("CODE_TUI_LEGACY_CHECK") == "1"
-    if check:
-        goal = (lambda: run_check(check, workspace).ok) if legacy_check else (lambda: run_check(check, workspace))
-        goal_label = f"verified: {check} passed"
+    if specs:
+        def plan_goal():
+            result = run_specs(specs, str(workspace))
+            if legacy_check:
+                return bool(result and result.ok)
+            return result
+        goal = plan_goal
+        cheap = [spec for spec in specs if spec.cheap]
+        if cheap:
+            health = lambda: run_specs(cheap, str(workspace))
+        goal_label = "verified: " + ", ".join(spec.name for spec in specs) + " passed"
 
     kernel: StreamingKernel | None = None
 
@@ -252,6 +264,7 @@ def main() -> int:
             goal_label=goal_label,
             goal_stops=False,
             mode=config.MODE,
+            health=health,
         )
         original = prompt
         brief = history_brief(workspace)

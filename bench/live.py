@@ -66,6 +66,7 @@ def main() -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--check", default="bun run typecheck")
+    parser.add_argument("--checks", default="")
     parser.add_argument("--cell-timeout", type=float, default=120.0)
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--max-wall", type=float, default=1800.0)
@@ -90,7 +91,7 @@ def main() -> int:
     cmd = [
         sys.executable, str(ROOT / "tui" / "python" / "worker.py"),
         "--workspace", str(run), "--prompt-file", str(prompt_path),
-        "--check", args.check, "--cell-timeout", str(args.cell_timeout),
+        "--check", args.check, "--checks", args.checks, "--cell-timeout", str(args.cell_timeout),
         "--max-steps", str(args.max_steps), "--max-wall", str(args.max_wall),
     ]
     print(f"run {args.tag} legacy={args.legacy} check={args.check!r} cell={args.cell_timeout}s")

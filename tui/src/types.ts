@@ -66,6 +66,13 @@ export type ServerInfo = {
   hasKey: boolean;
   python: string;
   check: string;
+  checks: CheckSpec[];
+};
+
+export type CheckSpec = {
+  name: string;
+  cmd: string;
+  cheap: boolean;
 };
 
 export type Snapshot = {

@@ -6,3 +6,6 @@ tui/node_modules/
 bench/.cache/
 bench/.tmp/
 tmp8_w_n1sf/
+
+# measurement fixtures: regenerate with bench/ws.py
+bench/ws/

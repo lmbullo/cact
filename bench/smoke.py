@@ -4,7 +4,7 @@ touched.
 WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
   It imports every module, drives the kernel prelude end to end (read/write/edit/changes/
-  diff/undo, run()'s protocol refusal) and checks the pure helpers (reply parsing, state
+  diff/undo, run()'s redirect and refusal) and checks the pure helpers (reply parsing, state
   digests, check parsing, tools registry).
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
@@ -133,9 +133,29 @@ def main() -> int:
         check("kernel: map", "a.txt" in str(cell.result), str(cell.result)[:120])
 
         cell = kernel.run("run('cat a.txt')")
+        redirected = str(cell.result)
+        check("kernel: run() redirects simple file reads",
+              "redirected" in redirected and "read('a.txt')" in redirected, redirected[:200])
+
+        cell = kernel.run("run('python3 -c \"print(1)\"')")
         refusal = str(cell.result)
-        check("kernel: run() refuses file verbs",
-              "wrong_call" in refusal and "read(path)" in refusal, refusal[:200])
+        check("kernel: run() refuses file inspection via -c",
+              "wrong_call" in refusal, refusal[:200])
+
+        cell = kernel.run("run('python3 -c \"import json\"')")
+        allowed = str(cell.result)
+        check("kernel: run() allows import-only -c",
+              "command" in allowed or "exit_code" in allowed, allowed[:200])
+
+        cell = kernel.run("apply('--- a/a.txt\\n+++ b/a.txt\\n@@ -1,2 +1,2 @@\\n alpha\\n-beta\\n+delta\\n')")
+        check("kernel: apply a unified diff",
+              "apply" in str(cell.result) and "delta" in (root / "a.txt").read_text(), str(cell.result)[:160])
+        kernel.run("undo('a.txt')")
+
+        cell = kernel.run("commit({'x.txt': 'x\\n', 'y.txt': 'y\\n'})")
+        check("kernel: commit writes several files",
+              (root / "x.txt").exists() and (root / "y.txt").exists(), str(cell.result)[:160])
+        kernel.run("undo()")
 
         cell = kernel.run("final_answer('done')")
         check("kernel: final_answer", cell.final == "done" and not cell.stdout.strip(), str(cell.final))

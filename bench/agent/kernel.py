@@ -618,12 +618,103 @@ def edit(path, old, new, all=False):
             "lines": entry["after_lines"], "hunk": hunk, "hunk_lines": [lo, hi],
             "adds": entry["adds"], "dels": entry["dels"]}
 
+def _parse_patch(patch):
+    files = []
+    current = None
+    hunk = None
+    for raw in str(patch).splitlines():
+        if raw.startswith("--- "):
+            current = {"src": raw[4:].split("\t")[0].strip(), "dst": None, "hunks": []}
+            files.append(current)
+            hunk = None
+        elif raw.startswith("+++ ") and current is not None:
+            current["dst"] = raw[4:].split("\t")[0].strip()
+        elif raw.startswith("@@") and current is not None:
+            match = _re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", raw)
+            if not match:
+                return None
+            hunk = {"old_start": int(match.group(1)), "lines": []}
+            current["hunks"].append(hunk)
+        elif hunk is not None and raw[:1] in (" ", "+", "-"):
+            hunk["lines"].append(raw)
+    return [item for item in files if item["hunks"]]
+
+
+def _patch_path(value):
+    if not value or value == "/dev/null":
+        return None
+    if value.startswith(("a/", "b/")):
+        value = value[2:]
+    return value
+
+
+def _hunk_old(hunk):
+    return [line[1:] for line in hunk["lines"] if line[:1] in (" ", "-")]
+
+
+def _hunk_new(hunk):
+    return [line[1:] for line in hunk["lines"] if line[:1] in (" ", "+")]
+
+
+def apply(patch):
+    parsed = _parse_patch(patch)
+    if not parsed:
+        return {"ok": False, "kind": "patch_failed", "reason": "no hunks found in the patch text"}
+    results = []
+    for item in parsed:
+        rel = _patch_path(item["dst"] or item["src"])
+        if rel is None:
+            return {"ok": False, "kind": "patch_failed", "reason": "missing +++ path"}
+        target, rel = _resolve(rel)
+        if target is None:
+            return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+        exists = _os.path.isfile(target)
+        body = _read_text(target) if exists else ""
+        lines = body.splitlines()
+        for hunk in item["hunks"]:
+            old = _hunk_old(hunk)
+            new = _hunk_new(hunk)
+            base = max(0, int(hunk["old_start"]) - 1)
+            position = None
+            for offset in range(0, 200):
+                for candidate in (base + offset, base - offset):
+                    if candidate < 0 or candidate + len(old) > len(lines):
+                        continue
+                    if lines[candidate:candidate + len(old)] == old:
+                        position = candidate
+                        break
+                if position is not None:
+                    break
+            if position is None:
+                return {"ok": False, "kind": "patch_failed", "path": rel,
+                        "reason": "context did not match", "hunk": old[:4]}
+            lines[position:position + len(old)] = new
+        trailing = "\n" if body.endswith("\n") or not exists else ""
+        entry = _commit(target, rel, "\n".join(lines) + trailing, "apply")
+        results.append({"path": rel, "adds": entry["adds"], "dels": entry["dels"]})
+    return {"ok": True, "kind": "apply", "files": results}
+
+
+def commit(files, force=False):
+    if not isinstance(files, dict) or not files:
+        return {"ok": False, "kind": "commit", "reason": "pass a dict of {path: text}"}
+    done = []
+    for path, content in files.items():
+        if not isinstance(content, str):
+            return {"ok": False, "kind": "commit", "path": str(path), "reason": "content must be text"}
+        result = write(path, content, force=force)
+        if not result.get("ok"):
+            return {"ok": False, "kind": "commit", "path": str(path), "detail": result}
+        done.append({"path": result["path"], "adds": result["adds"], "dels": result["dels"]})
+    return {"ok": True, "kind": "commit", "files": done}
+
+
 _snapshot()
 """
 
 # --- child side 3/3: RUN_PRELUDE, run() for whole programs, behind the protocol check -----
 RUN_PRELUDE = r"""
-import os as _ros, signal as _rsig, subprocess as _rsp
+import os as _ros, re as _re, signal as _rsig, subprocess as _rsp
 _RUN_ROOT = _ros.getcwd()
 _RUN_LOG = []
 _RUN_FILE_TOOLS = {
@@ -648,6 +739,74 @@ _HINT = {
 }
 
 
+def _is_import_only(code):
+    text = str(code).strip()
+    if not text:
+        return False
+    for token in ("open(", "read_text", "read_bytes", "Path(", "json.load", "print(", "os.listdir", "os.walk", "glob("):
+        if token in text:
+            return False
+    for statement in text.split(";"):
+        statement = statement.strip()
+        if not statement:
+            continue
+        if not _re.match(r"^(import\s+[\w.]+(\s+as\s+\w+)?|from\s+[\w.]+\s+import\s+.+)$", statement):
+            return False
+    return True
+
+
+def _redirected(ran, result):
+    return {"ok": True, "kind": "redirected", "ran": ran,
+            "note": "run() executes programs; this file read was executed with the helper instead.",
+            "result": result}
+
+
+def _redirect_file_command(command):
+    text = str(command).strip()
+    if any(ch in text for ch in "|&;<>`$"):
+        return None
+    parts = text.split()
+    if not parts:
+        return None
+    base = _ros.path.basename(parts[0])
+    args = parts[1:]
+    reader = globals().get("read")
+    mapper = globals().get("map")
+    grepper = globals().get("grep")
+    try:
+        if base == "cat" and reader and len(args) == 1:
+            return _redirected(f"read({args[0]!r})", reader(args[0]))
+        if base in ("head", "tail") and reader:
+            count = 10
+            files = []
+            index = 0
+            while index < len(args):
+                if args[index] == "-n" and index + 1 < len(args):
+                    count = int(args[index + 1]); index += 2
+                elif args[index].startswith("-") and args[index][1:].isdigit():
+                    count = int(args[index][1:]); index += 1
+                else:
+                    files.append(args[index]); index += 1
+            if len(files) == 1:
+                if base == "head":
+                    return _redirected(f"read({files[0]!r}, limit={count})", reader(files[0], limit=count))
+                total = reader(files[0]).get("total_lines") or 0
+                offset = max(1, total - count + 1)
+                return _redirected(f"read({files[0]!r}, offset={offset})", reader(files[0], offset=offset))
+        if base == "wc" and "-l" in args and reader:
+            files = [item for item in args if item != "-l"]
+            if len(files) == 1:
+                return _redirected(f"read({files[0]!r})['total_lines']", reader(files[0]).get("total_lines"))
+        if base == "ls" and mapper and len(args) <= 1:
+            path = args[0] if args else "."
+            return _redirected(f"map({path!r})", mapper(path))
+        if base == "grep" and grepper and len(args) == 2:
+            return _redirected(f"grep({args[0]!r}, {args[1]!r})", grepper(args[0], args[1]))
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
+
+
 def _run_protocol_error(command):
     text = str(command).strip()
     if not text:
@@ -661,10 +820,15 @@ def _run_protocol_error(command):
         return base
     if base == "git" and len(parts) > 1 and parts[1] in _RUN_GIT:
         return f"git {parts[1]}"
-    if base in _RUN_EVAL and any(flag in ("-c", "-e", "--eval", "--print") for flag in parts[1:2]):
-        return f"{base} -c"
-    if base in _RUN_EVAL and any(part in ("-c", "-e") for part in parts[1:4]):
-        return f"{base} -c"
+    if base in _RUN_EVAL:
+        for index, part in enumerate(parts[1:5], 1):
+            if part in ("-e", "--eval", "--print"):
+                return f"{base} -e"
+            if part == "-c":
+                code = " ".join(parts[index + 1:]).strip().strip('"').strip("'")
+                if _is_import_only(code):
+                    return None
+                return f"{base} -c"
     return None
 
 
@@ -672,6 +836,9 @@ def run(command, timeout=60, cwd=None):
     _RUN_LOG.append(str(command))
     blocked = _run_protocol_error(command)
     if blocked:
+        redirected = _redirect_file_command(command)
+        if redirected is not None:
+            return redirected
         use = _HINT.get(blocked.split()[0], "read(), grep(), map(), write() or edit()")
         return {
             "ok": False,

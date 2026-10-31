@@ -69,7 +69,7 @@ run() is not a file interface. Every file action already has a direct call:
   edit a file      -> edit(path, old, new)
 Passing any of these to run() is a protocol violation, not a shortcut: cat, head, tail, less, more, wc, stat, grep, rg, ag, sed, awk, find, ls, tree, du, tee, touch, cp, mv, rm, truncate, echo with >, printf with >, and python3 -c or python3 -m that imports, prints or inspects a project file. run() executes whole programs only: python3 app.py ledger.csv, pytest, make, git, docker.
 
-Why: importing a module to print one constant is file inspection wearing a program's clothes. Shell output is also unparsed and unnumbered. The calls above return path, line numbers, total_lines, the next offset, and conflict/ambiguity/no-match diagnostics. A shell command returns text you must parse. run() checks the command and refuses file verbs with a wrong_call result naming the call to use. If the command you are about to pass begins with one of those words, you have picked the wrong call.
+Why: importing a module to print one constant is file inspection wearing a program's clothes. Shell output is also unparsed and unnumbered. The calls above return path, line numbers, total_lines, the next offset, and conflict/ambiguity/no-match diagnostics. A shell command returns text you must parse. run() checks the command: simple file reads (cat, head, tail, ls, wc -l, grep PATTERN FILE) are executed through the helper and return kind "redirected" with the parsed result; other file verbs are refused with a wrong_call naming the call to use. If the command you are about to pass begins with one of those words, you have picked the wrong call.
 """
 
 RUN_NOTE_MUT = """

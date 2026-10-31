@@ -41,7 +41,6 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
-import json
 import re
 
 from .tool_loop import TOOL_RULES, ToolLoop
@@ -54,6 +53,7 @@ Every tool result is a state card, not a terminal transcript:
   [diff]   the exact hunks this cell changed; empty when nothing changed
   [stderr] and [stdout] are bounded: when the text is large you get the head, the tail, the error lines and a handle
   [result] the last expression, clipped
+  [check]  the project's cheap verification result after a change, when the workspace defines one
 
 Read the diff after a mutation. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
@@ -92,8 +92,8 @@ class StateLoop(ToolLoop):
         self,
         *args,
         output_budget: int = 12_000,
-        context_budget: int = 140_000,
-        keep_messages: int = 10,
+        context_budget: int = 891_289,
+        keep_messages: int = 20,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -110,6 +110,11 @@ class StateLoop(ToolLoop):
             parts.append("[state] timeout: cell interrupted; namespace and variables are intact")
         if cell.delta:
             parts.append("[diff]\n" + clip(cell.delta, 6000))
+        if self.last_check is not None:
+            if self.last_check.ok:
+                parts.append(f"[check] {self.last_check.cmd}: passed")
+            else:
+                parts.append("[check] failing\n" + clip(self.last_check.text(1200), 1500))
         handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
         if cell.stderr:
             parts.append("[stderr]\n" + clip(digest(cell.stderr, self.output_budget, handle), self.output_budget))
@@ -119,17 +124,8 @@ class StateLoop(ToolLoop):
             parts.append("[result] " + clip(cell.result, 1500))
         return "\n".join(parts)
 
-    def _estimate(self, messages: list[dict]) -> int:
-        chars = 0
-        for message in messages:
-            chars += len(str(message.get("content") or ""))
-            calls = message.get("tool_calls")
-            if calls:
-                chars += len(json.dumps(calls))
-        return chars // 4
-
     def _compact(self, messages: list[dict]) -> None:
-        if len(messages) < 8 or self._estimate(messages) <= self.context_budget:
+        if len(messages) < 8 or self.last_prompt_tokens < self.context_budget:
             return
         first = next((i for i, message in enumerate(messages)
                       if message.get("role") == "assistant" and message.get("tool_calls")), 2)

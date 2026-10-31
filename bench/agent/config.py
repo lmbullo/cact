@@ -35,7 +35,8 @@ from .tool_loop import TOOL_RULES, ToolLoop
 
 CONTEXT_WINDOW = 1_048_576
 MAX_OUTPUT = 393_216
-COMPACT_AT = 0.8
+COMPACT_AT = 0.85
+COMPACT_AT_TOKENS = int(CONTEXT_WINDOW * COMPACT_AT)
 OBS_CHARS = 0
 HISTORY = "action"
 import os
@@ -60,6 +61,7 @@ def build(
     goal_label: str = "verified",
     goal_stops: bool = False,
     mode: str = MODE,
+    health: Any = None,
 ):
     if mode == "state":
         return StateLoop(
@@ -71,6 +73,8 @@ def build(
             goal_label=goal_label,
             goal_stops=goal_stops,
             obs_chars=obs_chars,
+            health=health,
+            context_budget=COMPACT_AT_TOKENS,
         )
     if mode == "tool":
         return ToolLoop(
@@ -82,6 +86,7 @@ def build(
             goal_label=goal_label,
             goal_stops=goal_stops,
             obs_chars=obs_chars,
+            health=health,
         )
     return ReplLoop(
         client,
