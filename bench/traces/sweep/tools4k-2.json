@@ -1,0 +1,107 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "tools",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mode": "tools",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 7198,
+        "completion_tokens": 302,
+        "total_tokens": 7500,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 4484,
+      "final": "Of the 40 data rows in ledger.csv (lines 2\u201341), 15 have an amount strictly greater than 100. Note that TX012 (amount exactly 100.00) is not counted.\n\nANSWER: 15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.tools.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mode": "tools",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4243,
+        "completion_tokens": 127,
+        "total_tokens": 4370,
+        "reasoning_tokens": 24
+      },
+      "wall_ms": 2149,
+      "final": "app.py line 13:\n\n```python\nrow = parse_row(raw.strip())\n```\n\nThe expression passed as the first argument is **`raw.strip()`**.\n\nANSWER: raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.tools.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mode": "tools",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got 'lib.py, 1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9022,
+        "completion_tokens": 270,
+        "total_tokens": 9292,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 5016,
+      "final": "`checksum` is defined in `lib.py` (line 7), returning `(x * 2654435761) % 2**32`. With x=7, that's 7 \u00d7 2654435761 = 18581050327, mod 2\u00b3\u00b2 = 1401181143.\n\nANSWER: lib.py, 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.tools.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mode": "tools",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8241,
+        "completion_tokens": 190,
+        "total_tokens": 8431,
+        "reasoning_tokens": 8
+      },
+      "wall_ms": 3684,
+      "final": "The last line (line 176) of notes.md is:\n\n\"END OF FILE: the retention window is 19 days.\"\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.tools.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mode": "tools",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6422,
+        "completion_tokens": 502,
+        "total_tokens": 6924,
+        "reasoning_tokens": 159
+      },
+      "wall_ms": 5734,
+      "final": "**6 occurrences** of the case-sensitive string `TODO`, spread across 5 files (all files in the tree were searched \u2014 `app.py`, `ledger.csv`, `lib.py`, `notes.md`, and `deep/nested/mod.py` \u2014 with no truncation):\n\n| File | Line | Text |\n|---|---|---|\n| app.py | 5 | `# TODO: stream instead of loading the whole file.` |\n| deep/nested/mod.py | 1 | `# TODO: replace the modulo rollover with an explicit epoch counter.` |\n| lib.py | 4 | `# TODO: PAGE is not used by any caller yet.` |\n| notes.md | 14 | `014. TODO: reconcile the retry ceiling with the ops runbook.` |\n| notes.md | 57 | `057. TODO: reconcile the retry ceiling with the ops runbook.` |\n| notes.md | 121 | `121. TODO: reconcile the retry ceiling with the ops runbook.` |\n\nNote that `ledger.csv` contains no `TODO`.\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.tools.jsonl"
+    }
+  ]
+}

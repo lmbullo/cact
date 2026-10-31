@@ -1,0 +1,107 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "tools",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mode": "tools",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 7202,
+        "completion_tokens": 398,
+        "total_tokens": 7600,
+        "reasoning_tokens": 15
+      },
+      "wall_ms": 4115,
+      "final": "Reading ledger.csv (40 data rows, lines 2\u201341), the amounts strictly greater than 100 are:\n\n136.83, 105.07, 180.00, 305.10, 120.00, 260.25, 140.00, 510.00, 109.90, 199.00, 160.50, 102.25, 240.60, 300.00, 125.00\n\nThat is 15 rows (TX012 at exactly 100.00 is excluded, since the condition is \"greater than\").\n\nANSWER: 15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.tools.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mode": "tools",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6905,
+        "completion_tokens": 392,
+        "total_tokens": 7297,
+        "reasoning_tokens": 117
+      },
+      "wall_ms": 4810,
+      "final": "The only call to `parse_row` in `app.py` is at line 13: `row = parse_row(raw.strip())`. The function is imported at line 3 from `lib.py`, and `lib.py` line 11 defines `parse_row(raw: str)`, whose first (and only) parameter is `raw`. A repository-wide search found no other call sites, so the first argument is the expression `raw.strip()` \u2014 the loop variable `raw` from line 12 with `.strip()` applied.\n\nANSWER: raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.tools.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mode": "tools",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got '1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9122,
+        "completion_tokens": 335,
+        "total_tokens": 9457,
+        "reasoning_tokens": 65
+      },
+      "wall_ms": 5599,
+      "final": "The only definition of `checksum` in the tree is in **lib.py** (line 7):\n\n```\ndef checksum(x: int) -> int:\n    return (x * 2654435761) % 2**32\n```\n\nSo `checksum(7)` = (7 \u00d7 2654435761) mod 2\u00b3\u00b2 = **1401181143**.\n\nANSWER: 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.tools.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mode": "tools",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8179,
+        "completion_tokens": 198,
+        "total_tokens": 8377,
+        "reasoning_tokens": 12
+      },
+      "wall_ms": 4045,
+      "final": "The last line (line 176) is:\n\n\"176. END OF FILE: the retention window is 19 days.\"\n\nQuoted exactly as it appears in the file: `END OF FILE: the retention window is 19 days.` (the line carries the number prefix `176.` as displayed).\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.tools.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mode": "tools",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9267,
+        "completion_tokens": 457,
+        "total_tokens": 9724,
+        "reasoning_tokens": 139
+      },
+      "wall_ms": 5611,
+      "final": "The whole tree contains 5 files (`app.py`, `lib.py`, `notes.md`, `ledger.csv`, `deep/nested/mod.py`), which is exactly the 5 files the search scanned \u2014 so nothing was skipped. The case-sensitive search for `TODO` returned 6 occurrences on 6 lines, not truncated:\n\n- app.py line 5\n- deep/nested/mod.py line 1\n- lib.py line 4\n- notes.md lines 14, 57, 121\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.tools.jsonl"
+    }
+  ]
+}
