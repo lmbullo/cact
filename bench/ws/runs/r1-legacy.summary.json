@@ -1,0 +1,37 @@
+{
+  "tag": "r1-legacy",
+  "legacy": "r1",
+  "status": "done",
+  "stop": "DONE",
+  "steps": 10,
+  "usage": {
+    "prompt_tokens": 26974,
+    "completion_tokens": 2360,
+    "total_tokens": 29334,
+    "reasoning_tokens": 1345,
+    "prompt_cache_hit_tokens": 24960,
+    "prompt_cache_miss_tokens": 2014,
+    "local_hits": 0
+  },
+  "wall_s": 52.1,
+  "restarts": 2,
+  "timeouts": 0,
+  "verbs": {
+    "map": 0,
+    "read": 0,
+    "grep": 0,
+    "write": 0,
+    "edit": 0,
+    "run": 6,
+    "diff": 0,
+    "undo": 0,
+    "changes": 2,
+    "final_answer": 1
+  },
+  "changed": {
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "check": null
+}
