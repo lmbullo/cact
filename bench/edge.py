@@ -152,3 +152,64 @@ def build() -> None:
 build()
 
 
+def _orders() -> list[tuple[str, Decimal]]:
+    rows = list(csv.DictReader((EDGE / "orders.csv").open(encoding="utf-8")))
+    return [(r["id"], Decimal(r["amount"])) for r in rows]
+
+
+def _checksum(order_id: str) -> int:
+    ns: dict = {}
+    exec(compile((EDGE / "ledger.py").read_text(encoding="utf-8"), "ledger.py", "exec"), ns)
+    return ns["checksum"](order_id)
+
+
+def _last_checkpoint() -> int:
+    last = 0
+    for line in (EDGE / "events.log").read_text(encoding="utf-8").splitlines():
+        if "EVENT=checkpoint" in line:
+            last = int(re.search(r"SEQ=(\d+)", line).group(1))
+    return last
+
+
+def _records() -> int:
+    with (EDGE / "data.csv").open(encoding="utf-8", newline="") as fh:
+        return sum(1 for _ in csv.reader(fh)) - 1
+
+
+def _indirect() -> int:
+    pointer = (EDGE / "index.txt").read_text(encoding="utf-8").strip()
+    text = (EDGE / pointer).read_text(encoding="utf-8")
+    return int(re.search(r"REVISION=(\d+)", text).group(1))
+
+
+def _lines() -> int:
+    return len((EDGE / "legacy.txt").read_bytes().decode("utf-8", errors="replace").splitlines())
+
+
+TOTAL_CENTS = sum(int(amount * 100) for _, amount in _orders())
+TOP_ID, TOP_AMOUNT = max(_orders(), key=lambda r: r[1])
+TOP_CHECKSUM = _checksum(TOP_ID)
+TOP3 = sorted(_orders(), key=lambda r: r[1], reverse=True)[:3]
+LIMIT_RUNTIME = int(
+    subprocess.run([sys.executable, "app.py"], cwd=EDGE, capture_output=True, text=True).stdout.strip()
+)
+CHECKPOINT_SEQ = _last_checkpoint()
+RECORDS = _records()
+REVISION = _indirect()
+LEGACY_LINES = _lines()
+
+
+def _has_int(text: str, n: int) -> bool:
+    return re.search(rf"(?<![\d.]){n}(?![\d])", text) is not None
+
+
+def _suite_ok(ws: Path, module: str, original: str) -> bool:
+    probe = subprocess.run(
+        [sys.executable, "-m", "unittest", "-q", module],
+        cwd=ws, capture_output=True, text=True, timeout=180,
+    )
+    if probe.returncode != 0:
+        return False
+    return hashlib.sha256((ws / f"{module}.py").read_bytes()).hexdigest() == hashlib.sha256(original.encode()).hexdigest()
+
+
