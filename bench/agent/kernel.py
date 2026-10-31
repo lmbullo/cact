@@ -382,3 +382,101 @@ def diff(path=None, max_chars=8000):
     return {"ok": True, "kind": "diff", "files": files, "text": joined, "truncated": cut}
 
 
+def undo(path=None, n=1):
+    global _MUT
+    now = _tree_state()
+    targets = []
+    for rel, before, after in _changed(now):
+        if path is not None:
+            _, want = _resolve(path)
+            if rel != want:
+                continue
+        targets.append((rel, before))
+    if not targets:
+        return {"ok": True, "kind": "undo", "restored": [],
+                "note": "workspace already matches its session-start state"}
+    restored = []
+    for rel, before in reversed(targets):
+        target, _ = _resolve(rel)
+        try:
+            if before is None:
+                _os.remove(target)
+            else:
+                _os.makedirs(_os.path.dirname(target) or _ROOT, exist_ok=True)
+                with _open(target, "w", encoding="utf-8") as fh:
+                    fh.write(before)
+        except OSError as exc:
+            return {"ok": False, "kind": "undo", "path": rel,
+                    "error": {"code": "restore_failed", "message": str(exc)}}
+        _MUT = True
+        restored.append(rel)
+    return {"ok": True, "kind": "undo", "restored": restored}
+
+
+def _walk(root):
+    for dirpath, dirnames, filenames in _os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not d.startswith("."))
+        for name in sorted(filenames):
+            yield _os.path.join(dirpath, name)
+
+
+def map(path=".", max_files=400):
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+    if not _os.path.exists(target):
+        return {"ok": True, "kind": "miss", "path": rel}
+    base = target if _os.path.isdir(target) else (_os.path.dirname(target) or _ROOT)
+    entries = []
+    for full in _walk(base):
+        try:
+            body = _read_text(full)
+        except OSError:
+            continue
+        entries.append({"path": _os.path.relpath(full, _ROOT),
+                        "lines": len(body.splitlines()), "bytes": len(body)})
+    return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
+            "files": entries[:int(max_files)], "total_files": len(entries)}
+
+
+def read(path, offset=1, limit=0, raw=False):
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+    if not _os.path.exists(target):
+        near = []
+        try:
+            near = _difflib.get_close_matches(
+                _os.path.basename(rel), _os.listdir(_os.path.dirname(target) or _ROOT), n=3, cutoff=0.3)
+        except OSError:
+            pass
+        return {"ok": True, "kind": "miss", "path": rel, "did_you_mean": near}
+    if _os.path.isdir(target):
+        return {"ok": True, "kind": "dir", "path": rel, "entries": sorted(_os.listdir(target))}
+    lines = _read_text(target).splitlines()
+    total = len(lines)
+    start = max(1, min(int(offset), total or 1))
+    want = int(limit)
+    if want <= 0:
+        stop = total
+        budget = 0
+        for n in range(start - 1, total):
+            budget += len(lines[n]) + 1
+            if n - (start - 1) + 1 > 4000 or budget > 400000:
+                stop = n
+                break
+    else:
+        stop = min(total, start + max(1, want) - 1)
+    result = {"ok": True, "kind": "file", "path": rel, "total_lines": total,
+              "shown": [start, stop],
+              "next": {"offset": stop + 1} if stop < total else None,
+              "truncated": stop < total}
+    chunk = "\n".join(lines[start - 1:stop])
+    if raw:
+        result["text"] = chunk
+        result["raw"] = chunk
+    else:
+        result["text"] = "\n".join(f"{n:>6}| {lines[n - 1]}" for n in range(start, stop + 1))
+    return result
+
+
