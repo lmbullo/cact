@@ -1,3 +1,33 @@
+/**
+ * `bin/code`: find or start this workspace's server, then mount the client.
+ *
+ * WHAT IT IS
+ *  Runs once per `./bin/code` invocation. It resolves the workspace, hashes it to a state
+ *  dir, reuses a healthy server from server.json, otherwise spawns a detached server.ts with
+ *  its output in server.log, waits for it, then imports the client with CODE_TUI_URL and
+ *  CODE_TUI_WORKSPACE set.
+ *
+ * ENTRY POINTS
+ *  (no exports) — side-effect entry point, imported by tui/bin/code.
+ *  health(port) / existingServer() / waitForServer(timeoutMs) / launchDetachedServer(log) /
+ *  ensureServer()
+ *
+ * INVARIANTS
+ *  - Reuse before spawn: a second `./bin/code` in the same directory attaches to the running
+ *    server instead of starting a rival one. A stale server.json (dead pid, bad health) is
+ *    replaced.
+ *  - The server is detached and outlives the TUI; stop it with `./bin/code-stop` (stop.ts).
+ *  - State dir: CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then
+ *    workspaces/<sha256(cwd)[:16]>/ — the same formula as server.ts and stop.ts. Change it in
+ *    all three or the pieces stop finding each other.
+ *  - ~/.config/code-tui/{env,.env} is loaded into process.env before spawning, so
+ *    DEEPSEEK_API_KEY can live in a file.
+ *
+ * WHERE TO CHANGE
+ *  Discovery / startup order .... ensureServer()
+ *  Env loading .................. loadEnvFile()
+ *  Env passed to the server ..... the spawn block in launchDetachedServer()
+ */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";

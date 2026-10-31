@@ -1,3 +1,38 @@
+/**
+ * The board: task list + live run log + one prompt box. Read-only over the server.
+ *
+ * WHAT IT IS
+ *  An @opentui/react app mounted by main() with CODE_TUI_URL (set by launcher.ts) and
+ *  CODE_TUI_WORKSPACE. Two views: "list" (task board) and "log" (one task's live turns).
+ *  All state is local UI state; the truth is the server's snapshot/event stream, re-fetched
+ *  on connect and on every reconnect (1s backoff, Ctrl-R forces one).
+ *
+ * ENTRY POINTS
+ *  main()                       createCliRenderer + createRoot(<App/>); not run on import
+ *  App({httpUrl, workspace})    the whole screen: header, list or log, prompt box, toast
+ *  Presentational pieces: Rule, SectionHeader, TaskRow, EventView, LogView
+ *
+ * KEYS
+ *  Ctrl-C / Ctrl-Q quit, Ctrl-K cancel the selected task, Ctrl-R reconnect,
+ *  up/down move the highlight (or the cursor inside a multi-row prompt), Enter opens the
+ *  selected task's log (empty prompt) / adds a line, Ctrl-Enter submits, Esc clears the
+ *  prompt then leaves the log.
+ *
+ * INVARIANTS
+ *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and are the only
+ *    tested logic; keep layout maths out of here when it can be a pure function.
+ *  - The prompt box is shared by both views: submitting always queues a new task with the
+ *    current text; it never "continues" an existing one.
+ *  - Events are capped (last 1000) and de-duplicated by `seq`; a snapshot that no longer
+ *    contains the open task falls back to the list.
+ *  - Palette lives in `C`; no ansi() slots, so the host terminal scheme cannot change it.
+ *
+ * WHERE TO CHANGE
+ *  Layout / wording ................. the components above App
+ *  Keys / focus rules ............... the useKeyboard block
+ *  Ordering, rows, scrolling ........ list-model.ts
+ *  Data contract .................... types.ts
+ */
 import {
   createCliRenderer,
   type TextareaRenderable,

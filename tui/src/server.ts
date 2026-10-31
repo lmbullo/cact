@@ -1,3 +1,42 @@
+/**
+ * The TUI server: one detached Bun process per workspace.
+ *
+ * WHAT IT IS
+ *  Owns the task queue, the worker processes, the HTTP/WebSocket API and the append-only
+ *  journals. The client holds no state of its own and rebuilds the board from these files.
+ *
+ * ENTRY POINTS
+ *  Started by launcher.ts, stopped by stop.ts. It picks a free port, writes server.json
+ *  (port, pid, version, model, check) into the state dir, and prints its listening line.
+ *  HTTP: GET  /                      plain-text banner
+ *        GET  /health                ServerInfo + hasKey
+ *        GET  /api/snapshot          {server, tasks}
+ *        POST /api/tasks             {prompt} -> 201 {task}
+ *        GET  /api/tasks/:id         {task}
+ *        GET  /api/tasks/:id/events  ?limit=N (default 600)
+ *        POST /api/tasks/:id/cancel  {task}
+ *        GET  /ws                    WebSocket: Snapshot on open, then WsMessage
+ *
+ * INVARIANTS
+ *  - One `python/worker.py` process per task, never a shared one. Concurrency is
+ *    CODE_TUI_CONCURRENCY (1-8); pump() starts queued tasks while slots are free.
+ *  - The worker speaks `@@TUI@@`-prefixed JSON lines on stdout. handleWorkerLine() is the
+ *    only parser; any other line becomes a `log` event. Message shape lives in
+ *    tui/python/worker.py.
+ *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
+ *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
+ *  - Port 0 means an OS-chosen port, published in server.json. Two servers for one workspace
+ *    would race on those files, so launcher.ts always reuses a healthy one.
+ *  - detectCheck() decides the verification command once at startup: CODE_TUI_CHECK wins,
+ *    else package.json "typecheck", else "test", else none. An empty string disables it.
+ *
+ * WHERE TO CHANGE
+ *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask
+ *  Worker message handling ............... handleWorkerLine
+ *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
+ *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
+ *  Task shape ............................ tui/src/types.ts
+ */
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,

@@ -1,4 +1,8 @@
-
+/**
+ * Board rendering and keyboard: arrow keys move the marker, Enter opens the selected task.
+ * Uses a fake Bun server serving GET /api/snapshot plus a WebSocket, then renders the real
+ * App through @opentui/react/test-utils. Assertions read the rendered frame as text.
+ */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/client";

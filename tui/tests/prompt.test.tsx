@@ -1,4 +1,7 @@
-
+/**
+ * The prompt box: Enter inserts a newline and the box grows row by row; text that wraps past
+ * the terminal width grows it too. This is the layout regression suite for measurePrompt().
+ */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/client";

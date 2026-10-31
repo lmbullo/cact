@@ -1,4 +1,7 @@
-
+/**
+ * Live log: one line per event, long payloads truncated, the log keeps following the task
+ * over the WebSocket while the board stays mounted.
+ */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/client";

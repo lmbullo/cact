@@ -1,3 +1,26 @@
+/**
+ * Pure list model: ordering, rows, selection stepping, scroll window. No React, no I/O —
+ * this is what tui/tests/list.test.tsx exercises directly.
+ *
+ * ENTRY POINTS
+ *  STATUS_ORDER                         running -> queued -> partial -> failed -> done -> cancelled
+ *  orderTasks(tasks)                    stable sort by rank, then startedAt/id
+ *  taskHandle(id)                       short display handle for a task id
+ *  buildRows(ordered) -> ListRow[]      header + task rows (what the board renders)
+ *  stepSelection(ordered, current, d)   move the highlight, clamped
+ *  selectedRowIndex(rows, selected)     row index for the highlighted task (-1 when absent)
+ *  scrollWindow(rowCount, budget, focus) visible slice {start, size} keeping focus in view
+ *
+ * INVARIANTS
+ *  - Deterministic and side-effect free: same input, same output, no Date.now/Math.random.
+ *  - Ties are broken by `startedAt` then `id`, so a re-render never reshuffles the list.
+ *  - `scrollWindow` never returns a negative start and never exceeds rowCount.
+ *
+ * WHERE TO CHANGE
+ *  Section order or row shape ... STATUS_ORDER, rank, buildRows
+ *  Keyboard movement ............ stepSelection
+ *  Visible window maths ......... scrollWindow
+ */
 import type { Task, TaskStatus } from "./types";
 
 /** Section order: live work first, then finished work; oldest first inside a section. */

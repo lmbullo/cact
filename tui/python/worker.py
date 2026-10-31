@@ -1,3 +1,43 @@
+"""One task == one worker process == one agent loop. The seam between the TUI and bench/.
+
+WHAT IT IS
+  Spawned by tui/src/server.ts for every task. It builds the loop through
+  `bench.agent.config.build` (mode from CODE_TUI_MODE, default `state`), runs the task
+  unattended, and streams every turn to the server as `@@TUI@@`-prefixed JSON lines on
+  stdout. Its exit code is the task verdict.
+
+ENTRY POINTS
+  main()                       argv: --workspace, --prompt-file, --model, --effort,
+                               --max-steps, --max-wall, --cell-timeout, --max-output,
+                               --allow-run, --check
+  emit(payload)                one `@@TUI@@{json}` line on stdout (the only protocol channel)
+  StreamingKernel(kernel)      Kernel that also emits `cell.start` before each cell
+  EventTrace                   Trace-shaped adapter: turn records -> `turn` events
+  state_dir(workspace)         ~/.local/state/code-tui/workspaces/<sha256(cwd)[:16]>
+  history_brief / record_history   history.jsonl read (prompt prefix) and appended
+
+MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
+  cell.start {cell, code} | turn {turn, data} | log {text} | error {text}
+  final {status, final, stop, steps, calls, llmCalls, errors, usage, wallMs}
+
+INVARIANTS
+  - Rules = STATE_RULES (or TOOL_RULES when MODE != "state") + AUTONOMOUS, plus RUN_NOTE
+    when run() is enabled. Production is always unattended: no human answers questions.
+  - `--check` becomes a goal callable, so the check re-runs on every finish attempt;
+    `goal_stops=False` means a failing check never ends the run.
+  - Status mapping is fixed: DONE|VERIFIED -> done, STEP_LIMIT|WALL_LIMIT with a non-empty
+    summary -> partial, anything else -> failed. Exit 0 only for done.
+  - A missing DEEPSEEK_API_KEY or an empty prompt fails fast with NO_API_KEY/EMPTY_PROMPT
+    rather than burning a kernel.
+  - history_brief is prepended to the prompt (state mode only) so the next task in the same
+    workspace knows what the previous ones changed.
+
+WHERE TO CHANGE
+  What the TUI sends the agent .... AUTONOMOUS, the rules assembly, budgets
+  What the board sees ............. emit payloads + the status mapping at the end of main()
+  Per-task limits ................. argparse defaults (CODE_TUI_MAX_* in server.ts feeds them)
+  Cross-task memory ............... history_brief / record_history
+"""
 from __future__ import annotations
 
 import argparse

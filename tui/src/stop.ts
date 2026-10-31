@@ -1,3 +1,10 @@
+/**
+ * `bin/code-stop`: SIGTERM this workspace's server and clear its server.json.
+ *
+ * Resolves the same state dir as launcher.ts (CODE_TUI_STATE_ROOT, else
+ * $XDG_STATE_HOME/code-tui, then workspaces/<sha256(cwd)[:16]>/), reads server.json, kills
+ * the pid, and removes the file. A missing file or dead pid exits 0: stopping twice is fine.
+ */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";

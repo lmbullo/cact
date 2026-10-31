@@ -1,3 +1,21 @@
+/**
+ * The wire contract shared by server.ts, client.tsx, launcher.ts and stop.ts.
+ *
+ * Task          one queued/running/finished agent task (the board row and the detail view)
+ * TaskEvent     one line of events/<id>.jsonl: {seq, ts, kind, text?, data?, ...}
+ * ServerInfo    server.json and GET /health: workspace, port, pid, model, check, hasKey
+ * Snapshot      WebSocket open message: {type:"snapshot", server, tasks}
+ * WsMessage     server -> client: snapshot | task | event | ping
+ * WorkerMessage server <- worker: the `@@TUI@@` payloads emitted by python/worker.py
+ *
+ * INVARIANTS
+ *  - Types only: no runtime code, nothing to import at runtime. Changing a field here means
+ *    changing server.ts (producer) and client.tsx (consumer) in the same commit.
+ *  - `TaskStatus` is the closed vocabulary the board colours and sections by; the mapping
+ *    from stop reason to status lives in tui/python/worker.py, not here.
+ *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
+ *    source of truth for the message kinds.
+ */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 
 export type Task = {

@@ -1,3 +1,7 @@
+/**
+ * View switching: the board and a run log share one prompt box, and the log falls back to the
+ * board when its task disappears from a snapshot.
+ */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/client";
