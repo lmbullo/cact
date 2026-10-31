@@ -31,9 +31,10 @@ INVARIANTS
   - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and
     restarted with an EMPTY namespace, and the model is told so. Never pretend state
     survived. `supervise=False` disables the in-child alarm (legacy behaviour).
-  - `final_answer(v)` raises `Final`; the driver reports `final` only when the cell printed
-    nothing. A printing cell comes back with `answer=None` and the output, so the loop can
-    reject it (see `UNREVIEWED` in tool_loop.py).
+  - `final_answer(v)` raises `Final`; the driver reports the value as `Cell.final`
+    unconditionally, and also reports `Cell.answer` (the `ANSWER` variable, used when a repl
+    loop stops on "var"). It is the LOOP, not the kernel, that rejects an answer from a cell
+    that printed (stop reason UNREVIEWED) — see tool_loop.py / repl.py.
   - Every mutation goes through `_commit`: journal row, snapshot diff, `_CELL_CHANGED`.
     That single path is what changes()/diff()/undo() and the `[state] changed:` card read.
     `write()` replaces (refuses to drop a tail without force=True); `edit()` reports

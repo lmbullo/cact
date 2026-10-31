@@ -6,10 +6,12 @@ WHAT IT IS
   manifest for throwaway runs. `bench/ws/tui-base` and `tui-broken` are frozen this way.
 
 ENTRY POINTS
-  python3 -m bench.ws freeze SRC DST
-  python3 -m bench.ws diff DST
+  python3 -m bench.ws freeze SRC DST     clone, then write DST.manifest.json
+  python3 -m bench.ws clone  SRC DST     copy only (no manifest)
+  python3 -m bench.ws diff   DST         added/modified/deleted vs DST.manifest.json
   manifest(root, write=True) -> dict     {"root": ..., "files": {rel: sha256[:16]}}
-  freeze(src, dst) / clone(src, dst) / diff(root) -> dict
+  clone(src, dst)                        copy, ignoring generated dirs, symlinking node_modules
+  changed(run) -> {"added", "modified", "deleted"}
 
 INVARIANTS
   - Hashes are truncated to 16 hex chars; the manifest is the reference state, so a frozen

@@ -308,6 +308,7 @@ def _eval_calc(node: ast.AST, env: dict | None = None):
 
 
 
+# --- envelopes, schema validation and the registry plumbing --------------------------------
 @dataclass(frozen=True)
 class Tool:
     name: str
@@ -453,6 +454,7 @@ def _miss(root: Path, rel: str, tree: Callable[[], list[str]]) -> dict:
 def _is_binary(data: bytes) -> bool:
     return b"\x00" in data[:8192]
 
+# --- read / find: the read-only tools -----------------------------------------------------
 def make_read(root: Path, max_chars: int = MAX_CHARS) -> Tool:
     root = root.resolve()
     cache: list[str] | None = None
@@ -681,6 +683,7 @@ def make_find(root: Path) -> Tool:
 
     return Tool("find", FIND_DESCRIPTION, FIND_PARAMETERS, find)
 
+# --- calc: a tiny arithmetic evaluator, no eval() -----------------------------------------
 def make_calc() -> Tool:
     def calc(expression: str) -> dict:
         try:
@@ -713,6 +716,7 @@ def make_calc() -> Tool:
 
     return Tool("calc", CALC_DESCRIPTION, CALC_PARAMETERS, calc)
 
+# --- registry: specs out, validated calls in, envelopes back -------------------------------
 class Registry:
     def __init__(self) -> None:
         self.tools: dict[str, Tool] = {}
@@ -774,6 +778,7 @@ class Registry:
         return env
 
 
+# --- write / edit: the only mutating tools, enabled only for mutates=True tasks ------------
 WRITE_DESCRIPTION = """Create or replace a text file under ROOT. Use edit for a targeted change; use write to create a new file or replace a whole one.
 
 CALL
@@ -982,6 +987,7 @@ def make_edit(root: Path) -> Tool:
     return Tool("edit", EDIT_DESCRIPTION, EDIT_PARAMETERS, edit, mutates=True)
 
 
+# --- workspace map: files, line counts and top-level symbols -------------------------------
 MAP_DESCRIPTION = """Return a map of the workspace: every file under ROOT with its line count and top-level def/class names. Use this once to orient instead of walking directories manually.
 
 CALL

@@ -59,13 +59,18 @@ inside `tui/`.
 ## Verify a change
 
 ```bash
-python3 -c "import bench.run, bench.tasks, bench.edge, bench.ws"   # imports still resolve
-python3 -m compileall -q bench tui/python                          # syntax
-cd tui && bun run typecheck && bun test                            # TS: 5 tests, 4 files
+python3 bench/smoke.py                     # offline contract check: imports, kernel prelude,
+                                           # run() refusal, envelopes, reply parsing, checks
+python3 -m compileall -q bench tui/python  # syntax
+cd tui && bun run typecheck && bun test    # TS: 5 tests, 4 files
 ```
 
-The React `act(...)` warnings in `bun test` are expected noise. Python has no unit tests: a
-Python change is verified by running a benchmark task, e.g.
+`bench/smoke.py` is the fast signal: no key, no network, nothing written outside a temp dir.
+A failure there means the contract an agent relies on changed (kernel prelude, `Cell` fields,
+tool envelopes) — not that a model misbehaved.
+
+The React `act(...)` warnings in `bun test` are expected noise. Python has no unit test
+framework: `bench/smoke.py` plus a real benchmark task is the whole story, e.g.
 
 ```bash
 DEEPSEEK_API_KEY=... python3 bench/run.py --suite edge --tasks E1_tests --mode state --traces

@@ -46,6 +46,7 @@ cact/
 │   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
 │   ├── live.py              run ONE task through tui/python/worker.py and journal it
+│   ├── smoke.py             offline contract check: imports, kernel prelude, tools, checks
 │   ├── runs.py              summarise a task journal from a TUI state dir
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
@@ -167,6 +168,7 @@ Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and
 ### Workspaces and live runs
 
 ```bash
+python3 bench/smoke.py                 # offline contract check: imports, kernel, tools, checks
 python3 -m bench.ws freeze SRC DST     # clone + write DST.manifest.json
 python3 -m bench.ws diff  DST          # added/modified/deleted vs the manifest
 python3 bench/live.py --base tui --tag r4 --prompt "make typecheck pass" \
@@ -250,8 +252,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
   from `package.json`, else none); an empty `CODE_TUI_CHECK` opts out.
 - `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — do not edit
   them in place; clone with `bench.ws.clone` first.
-- Tests are TS only (`bun test` = 5 passing tests across 4 files). A Python change is
-  verified by running a benchmark task, not by `pytest`. The React `act(...)` warnings in
-  the test output are expected noise, not failures.
+- Tests are TS only (`bun test` = 5 passing tests across 4 files). Python has no test
+  framework: `python3 bench/smoke.py` is the offline contract check (kernel prelude, `Cell`
+  fields, tool envelopes, reply parsing), and a real change is then confirmed by running a
+  benchmark task. The React `act(...)` warnings in the test output are expected noise.
 - Commit style in this repo: `area(scope): lowercase summary`, e.g.
   `bench(agent/kernel): add grep, write, edit` or `tui(tests): add log and prompt tests`.
