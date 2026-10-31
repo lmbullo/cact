@@ -892,3 +892,77 @@ def make_write(root: Path) -> Tool:
     return Tool("write", WRITE_DESCRIPTION, WRITE_PARAMETERS, write, mutates=True)
 
 
+def make_edit(root: Path) -> Tool:
+    root = root.resolve()
+
+    def edit(path: str, old: str, new: str, all: bool = False) -> dict:
+        rel, _ = _parse_path(path)
+        target, problem = _jail(root, rel)
+        if problem:
+            return problem
+        assert target is not None
+        if not target.exists():
+            return {
+                "ok": True,
+                "kind": "no_change",
+                "path": rel,
+                "closest": [],
+                "note": f"'{rel}' does not exist. Use write to create it.",
+            }
+        if target.is_dir():
+            return err("bad_args", f"'{rel}' is a directory", hint="pass a file path")
+        text = target.read_text(encoding="utf-8", errors="replace")
+        count = text.count(old)
+        if count == 0:
+            return {
+                "ok": True,
+                "kind": "no_change",
+                "path": rel,
+                "closest": _closest_lines(text, old),
+                "note": "old was not found; nothing written. It must match byte for byte, including indentation.",
+            }
+        if count > 1 and not all:
+            matches = [
+                {"line": i, "text": line.strip()[:200]}
+                for i, line in enumerate(text.splitlines(), 1)
+                if old.splitlines()[0] in line
+            ][:10]
+            return {
+                "ok": True,
+                "kind": "ambiguous",
+                "path": rel,
+                "count": count,
+                "matches": matches,
+                "note": f"old occurs {count} times; nothing written. Extend old until it is unique, or pass all=true.",
+            }
+        updated = text.replace(old, new) if all else text.replace(old, new, 1)
+        target.write_text(updated, encoding="utf-8")
+        return {
+            "ok": True,
+            "kind": "edit",
+            "path": rel,
+            "replaced": count if all else 1,
+            "lines": len(updated.splitlines()),
+            "diff": _diff(text, updated),
+        }
+
+    return Tool("edit", EDIT_DESCRIPTION, EDIT_PARAMETERS, edit, mutates=True)
+
+
+MAP_DESCRIPTION = """Return a map of the workspace: every file under ROOT with its line count and top-level def/class names. Use this once to orient instead of walking directories manually.
+
+CALL
+  map()
+
+RETURNS ok:true, kind:"map"
+  files:[{path, lines, bytes, symbols}], total_files, total_lines
+
+FAILS ok:false
+  tool_crashed
+"""
+
+MAP_PARAMETERS = {"type": "object", "properties": {}, "additionalProperties": False}
+
+_SYMBOL = re.compile(r"^(?:def|class)\s+(\w+)", re.M)
+
+
