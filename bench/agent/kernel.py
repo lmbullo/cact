@@ -480,3 +480,111 @@ def read(path, offset=1, limit=0, raw=False):
     return result
 
 
+def grep(pattern, path=".", max_results=50, regex=False):
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+    if not _os.path.exists(target):
+        return {"ok": True, "kind": "miss", "path": rel}
+    matcher = None
+    if regex:
+        try:
+            matcher = _re.compile(pattern)
+        except _re.error as exc:
+            return {"ok": True, "kind": "bad_regex", "pattern": pattern, "message": str(exc)}
+    files = [target] if _os.path.isfile(target) else list(_walk(target))
+    hits = []
+    occurrences = 0
+    for full in files:
+        try:
+            body = _read_text(full)
+        except OSError:
+            continue
+        occurrences += len(matcher.findall(body)) if matcher else body.count(pattern)
+        for number, line in enumerate(body.splitlines(), 1):
+            if matcher.search(line) if matcher else pattern in line:
+                hits.append({"path": _os.path.relpath(full, _ROOT), "line": number,
+                             "text": line.strip()[:200]})
+                if len(hits) >= int(max_results):
+                    return {"ok": True, "kind": "matches", "matches": hits,
+                            "occurrences": None, "truncated": True}
+    return {"ok": True, "kind": "matches", "matches": hits,
+            "occurrences": occurrences, "truncated": False}
+
+
+def write(path, content, force=False):
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+    existed = _os.path.isfile(target)
+    if existed and not force:
+        current = _read_text(target)
+        if len(content) < len(current) and current.startswith(content):
+            return {"ok": False, "kind": "refused_truncation", "path": rel,
+                    "existing_lines": len(current.splitlines()), "new_lines": len(content.splitlines()),
+                    "note": "the new content is a prefix of the current file, so this write would delete its tail. "
+                            "If that is intended, pass force=True; otherwise edit() the region."}
+    entry = _commit(target, rel, content, "write")
+    return {"ok": True, "kind": "write", "path": rel, "created": entry["created"],
+            "lines": entry["after_lines"], "line_delta": None if entry["created"] else entry["after_lines"] - entry["before_lines"],
+            "adds": entry["adds"], "dels": entry["dels"]}
+
+
+def edit(path, old, new, all=False):
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+    if not _os.path.isfile(target):
+        return {"ok": True, "kind": "no_change", "path": rel, "reason": "missing"}
+    body = _read_text(target)
+    count = body.count(old)
+    if count == 0:
+        probe = old.splitlines()[0].strip() if old.splitlines() else old
+        near = [{"line": number, "text": line.strip()[:200]}
+                for number, line in enumerate(body.splitlines(), 1)
+                if _difflib.SequenceMatcher(None, probe, line.strip()).ratio() > 0.6][:3]
+        return {"ok": True, "kind": "no_change", "path": rel, "reason": "not_found", "closest": near}
+    if count > 1 and not all:
+        return {"ok": True, "kind": "ambiguous", "path": rel, "count": count,
+                "action": "extend old until unique, or pass all=True"}
+    updated = body.replace(old, new) if all else body.replace(old, new, 1)
+    entry = _commit(target, rel, updated, "edit")
+    at = updated.find(new)
+    first = updated[:at].count("\n") + 1 if at >= 0 else 1
+    lines = updated.splitlines()
+    lo = max(1, first - 3)
+    hi = min(len(lines), first + new.count("\n") + 3)
+    hunk = "\n".join(f"{n:>6}| {lines[n - 1]}" for n in range(lo, hi + 1))
+    return {"ok": True, "kind": "edit", "path": rel, "replaced": count if all else 1,
+            "lines": entry["after_lines"], "hunk": hunk, "hunk_lines": [lo, hi],
+            "adds": entry["adds"], "dels": entry["dels"]}
+
+_snapshot()
+"""
+
+RUN_PRELUDE = r"""
+import os as _ros, signal as _rsig, subprocess as _rsp
+_RUN_ROOT = _ros.getcwd()
+_RUN_LOG = []
+_RUN_FILE_TOOLS = {
+    "cat", "head", "tail", "less", "more", "wc", "stat", "grep", "rg", "ag",
+    "sed", "awk", "find", "ls", "tree", "du", "tee", "touch", "cp", "mv",
+    "rm", "truncate", "xargs", "strings", "file", "xxd", "od", "nl", "cut",
+    "sort", "uniq", "diff", "comm", "jq",
+}
+_RUN_GIT = {"ls-files", "grep", "show", "cat-file", "ls-tree", "blame", "diff-tree", "diff-index", "grep"}
+_RUN_EVAL = {"python", "python3", "node", "bun", "deno", "ruby", "perl", "php"}
+_HINT = {
+    "cat": "read(path)", "head": "read(path)", "tail": "read(path, offset=total_lines-N)",
+    "less": "read(path)", "more": "read(path)", "wc": "read(path)['total_lines']",
+    "stat": "map(path)", "grep": "grep(pattern, path)", "rg": "grep(pattern, path, regex=True)",
+    "ag": "grep(pattern, path)", "sed": "read(path) then edit(path, old, new)",
+    "awk": "read(path) and slice in Python", "find": "map(path)", "ls": "map(path)",
+    "tree": "map(path)", "du": "map(path)", "tee": "write(path, content)",
+    "touch": "write(path, '')", "cp": "read(path) then write(new_path, text)",
+    "mv": "write(new_path, read(path)['raw']) then os.remove(path)",
+    "rm": "os.remove(path)", "truncate": "write(path, '')", "xargs": "a Python loop",
+    "diff": "read both files and compare in Python",
+}
+
+
