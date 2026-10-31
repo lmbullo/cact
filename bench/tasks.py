@@ -130,3 +130,103 @@ TASKS: list[Task] = [
     ),
 ]
 
+def by_id(task_id: str) -> Task:
+    for task in ALL_TASKS:
+        if task.id == task_id:
+            return task
+    raise KeyError(task_id)
+
+def grade_rename(answer: str, run) -> tuple[bool, str]:
+    root = Path(run.workspace)
+    try:
+        src = (root / "lib.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        ns: dict = {}
+        exec(compile(src, "lib.py", "exec"), ns)
+    except Exception as exc:
+        return False, f"lib.py unusable: {type(exc).__name__}: {exc}"
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    leftover = "PAGE" in ns or "PAGE" in names
+    ok = (not leftover) and ns.get("PAGE_SIZE") == 4096
+    return ok, f"PAGE_SIZE={ns.get('PAGE_SIZE')} leftover_PAGE={leftover}"
+
+
+def grade_row_total(answer: str, run) -> tuple[bool, str]:
+    root = Path(run.workspace)
+    try:
+        ns: dict = {}
+        exec(compile((root / "lib.py").read_text(encoding="utf-8"), "lib.py", "exec"), ns)
+    except Exception as exc:
+        return False, f"lib.py unusable: {type(exc).__name__}: {exc}"
+    fn = ns.get("row_total")
+    if not callable(fn):
+        return False, "row_total not defined"
+    sample = [
+        {"amount": 10.0, "currency": "USD"},
+        {"amount": 5.0, "currency": "EUR"},
+        {"amount": 2.5, "currency": "USD"},
+    ]
+    try:
+        got = fn(sample)
+    except Exception as exc:
+        return False, f"row_total raised {type(exc).__name__}: {exc}"
+    intact = ns.get("checksum", lambda x: None)(7) == 1401181143
+    ok = abs(float(got) - 12.5) < 1e-9 and intact
+    return ok, f"row_total={got!r} expected 12.5; checksum_intact={intact}"
+
+
+def grade_skip_legal(answer: str, run) -> tuple[bool, str]:
+    root = Path(run.workspace)
+    probe = root / "__probe.csv"
+    probe.write_text(
+        "id,account,amount,currency\n"
+        "A,legal,500,USD\n"
+        "B,growth,10,USD\n"
+        "C,ops,2.5,USD\n"
+        "D,legal,7,USD\n"
+        "E,infra,1.25,USD\n",
+        encoding="utf-8",
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "app.py", "__probe.csv"],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        )
+    except Exception as exc:
+        return False, f"app.py did not run: {type(exc).__name__}: {exc}"
+    out = (proc.stdout or "").strip().splitlines()
+    if proc.returncode != 0 or not out:
+        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        return False, f"exit={proc.returncode} stderr={tail[0][:120]}"
+    try:
+        got = float(out[-1])
+    except ValueError:
+        return False, f"last line is not a number: {out[-1][:80]!r}"
+    ok = abs(got - 13.75) < 1e-6
+    return ok, f"printed {got} expected 13.75"
+
+
+MUTATION_TASKS: list[Task] = [
+    Task(
+        "M1_rename",
+        "Rename the constant PAGE to PAGE_SIZE in lib.py, and update every reference to it in the workspace. Keep the value unchanged.",
+        grade_rename,
+        "rename symbol",
+    ),
+    Task(
+        "M2_add_fn",
+        "Add a function row_total(rows) to lib.py. rows is a list of dicts with keys amount (float) and currency (str). "
+        "Return the sum of amount for rows whose currency is 'USD'. Keep the existing functions unchanged.",
+        grade_row_total,
+        "add function",
+    ),
+    Task(
+        "M3_branch",
+        "app.py prints the total amount of every row in the CSV passed on the command line. "
+        "Change it so rows whose account is 'legal' are skipped. Keep the same output format.",
+        grade_skip_legal,
+        "change control flow",
+    ),
+]
+
+ALL_TASKS = TASKS + MUTATION_TASKS
