@@ -80,3 +80,101 @@ PLACEHOLDER = re.compile(r"<final_answer_placeholder>", re.I)
 ORPHAN_PARAM = re.compile(r"<[^<>]*?parameter\s+name\s*=\s*[\"']", re.I)
 
 
+def parse_markup(text: str) -> Action | None:
+    if "DSML" not in text and "invoke name" not in text:
+        return None
+    blocks = list(INVOKE.finditer(text))
+    if not blocks:
+        return None
+    bodies: list[str] = []
+    if "```" in text:
+        for _, chunk in _blocks(text):
+            bodies.append(chunk)
+    for block in blocks:
+        name = block.group(1)
+        params: dict[str, Any] = {}
+        for param in PARAM.finditer(block.group(2)):
+            params[param.group(1)] = _literal(param.group(3), param.group(2))
+        source = _call_source(name, params, block.group(2))
+        if not source.strip():
+            continue
+        bodies.append(source)
+    if not bodies:
+        if THINK_ONLY.search(text):
+            return Action("none", error="reasoning-only reply; no code ran",
+                          detail="a think block is not an action. Reply with one ```python block.",
+                          source="markup", raw=text)
+        return Action("none", error="tool markup with no executable body",
+                      detail="the call carried no code and no command. Reply with one ```python block.",
+                      source="markup", raw=text)
+    code = "\n\n".join(part.strip() for part in bodies if part.strip())
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        return Action("none", error=f"SyntaxError: {exc.msg} (line {exc.lineno})",
+                      detail=code[-400:], source="markup", raw=text)
+    return Action("code", code=code, source="markup", raw=text)
+
+
+def _blocks(text: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
+    for opening in FENCE_OPEN.finditer(text):
+        ticks = opening.group(1)
+        start = opening.end()
+        closes = list(re.finditer(re.escape(ticks) + r"[ \t]*(?=\r?\n|$)", text[start:]))
+        if not closes:
+            continue
+        for close in closes:
+            blocks.append((opening.group(0), text[start:start + close.start()]))
+    return blocks
+
+
+def compile_reply(text: str) -> Action:
+    body = text or ""
+    blocks = _blocks(body)
+    if blocks:
+        parsed: list[str] = []
+        first_code = ""
+        for _, chunk in blocks:
+            code = chunk.strip()
+            if not first_code:
+                first_code = code
+            try:
+                ast.parse(code)
+            except SyntaxError:
+                continue
+            parsed.append(code)
+        if parsed:
+            code = max(parsed, key=len)
+            return Action("code", code=code, source="fence", raw=body)
+        code = first_code
+        try:
+            ast.parse(code)
+        except SyntaxError as exc:
+            lines = code.splitlines()
+            where = max(0, (exc.lineno or 1) - 2)
+            return Action(
+                "none",
+                error=f"SyntaxError: {exc.msg} (line {exc.lineno}, offset {exc.offset})",
+                detail="\n".join(lines[where:where + 3]),
+                source="fence",
+                raw=body,
+            )
+    markup = parse_markup(body)
+    if markup is not None:
+        return markup
+    answer = ANSWER_LINE.search(body)
+    if answer:
+        return Action("answer", value=answer.group(1).strip(), source="answer", raw=body)
+    if PLACEHOLDER.search(body):
+        return Action("none", error="placeholder, not an answer",
+                      detail="final_answer_placeholder is not a value. Call final_answer(<text>) inside a python block.",
+                      source="markup", raw=body)
+    if ORPHAN_PARAM.search(body):
+        return Action("none", error="parameter tags without an invoke name",
+                      detail="the reply has <parameter> tags but no <invoke name=\"...\"> wrapper, so the call cannot be reconstructed. Emit one ```python block instead.",
+                      source="markup", raw=body)
+    cleaned = _strip(body)
+    if not cleaned and MARKUP.search(body):
+        return Action("none", error="empty tool markup", detail="", source="markup", raw=body)
+    return Action("none", error="no code block and no ANSWER line", detail="", source="none", raw=body)
