@@ -966,3 +966,51 @@ MAP_PARAMETERS = {"type": "object", "properties": {}, "additionalProperties": Fa
 _SYMBOL = re.compile(r"^(?:def|class)\s+(\w+)", re.M)
 
 
+def build_map(root: Path) -> dict:
+    root = root.resolve()
+    files = []
+    total_lines = 0
+    for p in sorted(root.rglob("*")):
+        rel = p.relative_to(root)
+        if p.is_dir() or any(part.startswith(".") or part in SKIP_DIRS for part in rel.parts):
+            continue
+        try:
+            raw = p.read_bytes()
+            text = raw.decode("utf-8", "replace")
+        except OSError:
+            continue
+        lines = len(text.splitlines())
+        total_lines += lines
+        files.append({
+            "path": rel.as_posix(),
+            "lines": lines,
+            "bytes": len(raw),
+            "symbols": _SYMBOL.findall(text)[:6],
+        })
+    return {
+        "ok": True,
+        "kind": "map",
+        "files": files[:400],
+        "total_files": len(files),
+        "total_lines": total_lines,
+        "truncated": len(files) > 400,
+    }
+
+
+def map_text(env: dict) -> str:
+    rows = []
+    for f in env.get("files", []):
+        syms = f", symbols: {', '.join(f['symbols'])}" if f.get("symbols") else ""
+        rows.append(f"  {f['path']}  ({f['lines']} lines{syms})")
+    return (
+        "WORKSPACE MAP\n"
+        f"{env.get('total_files')} files, {env.get('total_lines')} lines total.\n"
+        + "\n".join(rows)
+    )
+
+
+def make_map(root: Path) -> Tool:
+    def map_() -> dict:
+        return build_map(root)
+
+    return Tool("map", MAP_DESCRIPTION, MAP_PARAMETERS, map_)
