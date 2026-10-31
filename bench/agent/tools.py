@@ -275,3 +275,89 @@ def _eval_calc(node: ast.AST, env: dict | None = None):
 
 
 
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    description: str
+    parameters: dict
+    fn: Callable[..., dict]
+    mutates: bool = False
+
+    def spec(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
+def err(code: str, message: str, *, hint: str | None = None, **extra: Any) -> dict:
+    body: dict = {"code": code, "message": message}
+    if hint:
+        body["hint"] = hint
+    body.update(extra)
+    return {"ok": False, "error": body}
+
+_PY_TYPES = {
+    "object": dict,
+    "array": list,
+    "string": str,
+    "integer": int,
+    "number": (int, float),
+    "boolean": bool,
+}
+
+def coerce(schema: dict, value: Any) -> Any:
+    kind = schema.get("type")
+    if kind == "object" and isinstance(value, dict):
+        props = schema.get("properties", {})
+        return {k: coerce(props.get(k, {}), v) for k, v in value.items()}
+    if kind == "integer" and not isinstance(value, bool):
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+            return int(value.strip())
+    if kind == "number" and isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            pass
+    if kind == "string" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if kind == "boolean" and isinstance(value, str) and value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    return value
+
+def validate(schema: dict, value: Any, path: str = "args") -> list[str]:
+    problems: list[str] = []
+    kind = schema.get("type")
+    if kind:
+        py = _PY_TYPES[kind]
+        good = isinstance(value, py) and not (kind in ("integer", "number") and isinstance(value, bool))
+        if not good:
+            return [f"{path}: expected {kind}, got {type(value).__name__} ({value!r})"]
+    if "minLength" in schema and isinstance(value, str) and len(value) < schema["minLength"]:
+        problems.append(f"{path}: must be at least {schema['minLength']} characters")
+    if "enum" in schema and value not in schema["enum"]:
+        problems.append(f"{path}: must be one of {schema['enum']}, got {value!r}")
+    if kind in ("integer", "number"):
+        if "minimum" in schema and value < schema["minimum"]:
+            problems.append(f"{path}: must be >= {schema['minimum']}, got {value!r}")
+        if "maximum" in schema and value > schema["maximum"]:
+            problems.append(f"{path}: must be <= {schema['maximum']}, got {value!r}")
+    if kind == "object":
+        props = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value:
+                problems.append(f"{path}.{key}: required, missing")
+        if schema.get("additionalProperties") is False:
+            for key in value:
+                if key not in props:
+                    problems.append(f"{path}.{key}: unknown argument; allowed: {', '.join(props)}")
+        for key, sub in props.items():
+            if key in value:
+                problems.extend(validate(sub, value[key], f"{path}.{key}"))
+    return problems
+
