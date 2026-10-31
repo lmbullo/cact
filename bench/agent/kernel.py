@@ -588,3 +588,76 @@ _HINT = {
 }
 
 
+def _run_protocol_error(command):
+    text = str(command).strip()
+    if not text:
+        return None
+    parts = text.split()
+    first = parts[0]
+    base = _ros.path.basename(first)
+    if base in _RUN_FILE_TOOLS:
+        return base
+    if base in ("echo", "printf") and ">" in text:
+        return base
+    if base == "git" and len(parts) > 1 and parts[1] in _RUN_GIT:
+        return f"git {parts[1]}"
+    if base in _RUN_EVAL and any(flag in ("-c", "-e", "--eval", "--print") for flag in parts[1:2]):
+        return f"{base} -c"
+    if base in _RUN_EVAL and any(part in ("-c", "-e") for part in parts[1:4]):
+        return f"{base} -c"
+    return None
+
+
+def run(command, timeout=60, cwd=None):
+    _RUN_LOG.append(str(command))
+    blocked = _run_protocol_error(command)
+    if blocked:
+        use = _HINT.get(blocked.split()[0], "read(), grep(), map(), write() or edit()")
+        return {
+            "ok": False,
+            "kind": "wrong_call",
+            "command": str(command),
+            "blocked": blocked,
+            "error": {
+                "code": "file_access_via_run",
+                "message": f"`{blocked}` inspects or edits files; run() executes whole programs only.",
+                "use": use,
+            },
+        }
+    extend = globals().get("_CELL_EXTEND")
+    if extend is not None:
+        extend(float(timeout) + 20)
+    try:
+        proc = _rsp.Popen(
+            str(command), shell=True, cwd=cwd or _RUN_ROOT,
+            stdout=_rsp.PIPE, stderr=_rsp.PIPE, text=True,
+            encoding="utf-8", errors="replace", executable="/bin/bash",
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return {"ok": False, "kind": "spawn_error", "command": str(command),
+                "error": {"code": "spawn_failed", "message": str(exc)}}
+    try:
+        out, err = proc.communicate(timeout=float(timeout))
+    except _rsp.TimeoutExpired:
+        try:
+            _ros.killpg(_ros.getpgid(proc.pid), _rsig.SIGKILL)
+        except OSError:
+            proc.kill()
+        try:
+            out, err = proc.communicate(timeout=10)
+        except Exception:
+            out, err = "", ""
+        return {"ok": True, "kind": "timeout", "command": str(command), "timeout_s": float(timeout),
+                "stdout": out or "", "stderr": err or "",
+                "note": "the command hit its own timeout and its process group was killed; the kernel is intact"}
+    return {"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
+            "stdout": out or "", "stderr": err or ""}
+"""
+
+MARKER = "@@K@@"
+MAX_CODE = 20_000
+MAX_OUTPUT = 0
+CELL_TIMEOUT = 15.0
+
+
