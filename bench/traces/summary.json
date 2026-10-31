@@ -1,0 +1,111 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "rows": [
+    {
+      "task": "T1_count",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "misses": 0,
+      "repeats": 0,
+      "usage": {
+        "prompt_tokens": 7300,
+        "completion_tokens": 446,
+        "total_tokens": 7746,
+        "reasoning_tokens": 102
+      },
+      "wall_ms": 4453,
+      "final": "The file has 40 data rows (lines 2\u201341). Filtering amounts strictly greater than 100 (so TX012's exactly 100.00 is excluded) gives 15 rows: TX006, TX011, TX017, TX019, TX020, TX023, TX025, TX026, TX028, TX030, TX032, TX033, TX035, TX037, TX039.\n\nANSWER: 15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 6,
+      "calls": 7,
+      "errors": 0,
+      "misses": 0,
+      "repeats": 0,
+      "usage": {
+        "prompt_tokens": 16212,
+        "completion_tokens": 522,
+        "total_tokens": 16734,
+        "reasoning_tokens": 120
+      },
+      "wall_ms": 8910,
+      "final": "The only call to `parse_row` is in `app.py:13`:\n\n```\nrow = parse_row(raw.strip())\n```\n\nThe import comes from `lib.py:3`, and `lib.py:11` defines `parse_row(raw: str)` with a single parameter, so the first (and only) argument is the expression `raw.strip()` \u2014 a method call on the loop variable `raw` (defined at `app.py:12` from iterating the file handle), with no arguments to `strip()`.\n\nANSWER: raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got '1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "misses": 0,
+      "repeats": 0,
+      "usage": {
+        "prompt_tokens": 9195,
+        "completion_tokens": 296,
+        "total_tokens": 9491,
+        "reasoning_tokens": 72
+      },
+      "wall_ms": 5525,
+      "final": "The function `checksum` is defined in `lib.py` at line 7.\n\n`checksum(7)` returns `1401181143`.\n\nANSWER: 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 1,
+      "errors": 0,
+      "misses": 0,
+      "repeats": 0,
+      "usage": {
+        "prompt_tokens": 7946,
+        "completion_tokens": 76,
+        "total_tokens": 8022,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 2255,
+      "final": "The last line (line 176) is:\n\n\"END OF FILE: the retention window is 19 days.\"\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "misses": 0,
+      "repeats": 0,
+      "usage": {
+        "prompt_tokens": 6701,
+        "completion_tokens": 460,
+        "total_tokens": 7161,
+        "reasoning_tokens": 312
+      },
+      "wall_ms": 5425,
+      "final": "There are 6 case-sensitive occurrences of the string `TODO`, on 6 lines across 5 files.\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.jsonl"
+    }
+  ]
+}
