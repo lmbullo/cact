@@ -1,3 +1,35 @@
+"""ToolLoop: one tool (`python`) executed as a kernel cell (`--mode tool`).
+
+WHAT IT IS
+  The turn machine the production loop extends. The model gets a single function,
+  `PYTHON_TOOL`, whose `code` argument is run by `Kernel.run`. The cell's stdout/stderr/result
+  becomes the observation; a `goal` callable (typically `run_check` from check.py) decides
+  whether the task may finish.
+
+ENTRY POINTS
+  PYTHON_TOOL .. the single tool spec sent to the client
+  TOOL_RULES ... system prompt: use the kernel for everything, finish with final_answer
+  ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars)
+    .run(task_id, prompt, trace) -> RunResult
+  Hooks subclasses override: `_observe(cell, steps)` (cell -> text), `_compact(messages)`
+    (context management), `_goal_state()` (goal -> (ok, Check)).
+
+INVARIANTS
+  - `final_answer` in a cell that printed is rejected (UNREVIEWED) and the output is handed
+    back to the model; the answer is not accepted.
+  - With a goal, finishing before the check passes is rejected (GOAL_UNMET).
+    `goal_stops=True` ends the run itself once a mutating cell passes the goal (VERIFIED).
+  - BAD_ARGS / TRUNCATED mean nothing ran and the model is told why.
+  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, UNREVIEWED, GOAL_UNMET,
+    TRUNCATED, BAD_ARGS (this loop never emits NO_PROGRESS/TOOL_LIMIT).
+  - `changed` accumulates every file the kernel reports; worker.py records it as history.
+
+WHERE TO CHANGE
+  Finish protocol / stop reasons ....... ToolLoop.run, `_reject`, `_push`
+  What the model sees per cell ......... `_observe` (StateLoop overrides it with state cards)
+  Rules and tool description ........... TOOL_RULES, PYTHON_TOOL
+  When a task counts as done ........... the `goal` passed in by run.py / worker.py
+"""
 from __future__ import annotations
 
 import json

@@ -18,6 +18,10 @@ task board in front of it.
 There is no root `package.json`, no `pyproject.toml`, no CI. The only install step is
 `bun install` inside `tui/`.
 
+Coding agents: start at `AGENTS.md` (short version, rules that must not break, how to
+verify). Every module in `bench/` and `tui/` opens with a docstring header stating what it
+is, its entry points, its invariants and where to change what.
+
 ---
 
 ## Read these five files first

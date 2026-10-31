@@ -1,3 +1,31 @@
+"""Reply parsing: model text -> Action. Used by ReplLoop only.
+
+WHAT IT IS
+  Models emit Python in many shapes: a clean ```python fence, a bare indented block, DSML/XML
+  tool markup, an `ANSWER:` line, or a truncated reply. compile_reply() normalises all of
+  them into a single `Action`.
+
+ENTRY POINTS
+  Action(kind, code, value, source, error, detail)
+    kind: "code" | "answer" | "none"
+  compile_reply(text) -> Action        the only entry point callers need
+  parse_markup(text) -> Action | None  DSML/XML-ish tool calls, repaired into Python
+  _call_source(name, params, body)     markup call -> python source
+
+INVARIANTS
+  - Never raise: an unparsable reply is an Action with kind="none" and `error`/`detail`
+    explaining what was missing, so the loop can tell the model instead of crashing.
+  - A recognised tool call with no runnable body is kind="none" with source="markup" — the
+    loop's note then asks for a plain ```python block.
+  - `ANSWER: <value>` wins only when there is no code block (`_blocks` runs first).
+  - Alias map (`ALIASES`, `CALL_NAMES`, `INT_PARAMS`, `BOOL_PARAMS`) is the only place that
+    knows model-specific spellings; extend it there.
+
+WHERE TO CHANGE
+  A model's new markup dialect .... MARKUP / TAG / INVOKE / PARAM + parse_markup
+  Tool-name aliases ................ CALL_NAMES, ALIASES
+  Fence / ANSWER detection ......... FENCE_OPEN, ANSWER_LINE, _blocks
+"""
 from __future__ import annotations
 
 import ast

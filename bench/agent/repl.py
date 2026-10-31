@@ -1,3 +1,36 @@
+"""ReplLoop: one fenced ```python block per reply (`--mode repl`), plus the rules text
+shared with the tool loops.
+
+WHAT IT IS
+  The model writes code, the code runs as a kernel cell, and stdout/stderr/result come back
+  as an `[observation]`. Finishing is `final_answer(...)` inside the cell (stop="call") or an
+  `ANSWER: <value>` line (stop="answer"). Reply text is parsed by reply.compile_reply.
+
+ENTRY POINTS
+  REPL_RULES / BARE_RULES .... system prompts (BARE_RULES is the minimal variant)
+  RUN_NOTE / RUN_NOTE_MUT .... appended when run() is enabled; the "run() is not a file
+                               interface" contract the model must obey
+  observation(cell, cap) ..... one cell -> the text the model sees (the ToolLoop default)
+  history_entry(action) ...... a parsed action -> the line kept in the transcript
+  ReplLoop(client, kernel, budget, rules, stop="call"|"answer", history="full"|"action"|
+           "drop", obs_chars, goal, goal_label, goal_stops, wrap_up_at)
+    .run(task_id, prompt, trace) -> RunResult
+
+INVARIANTS
+  - A reply with neither a python block nor an ANSWER line does not end the task: it comes
+    back as PROTOCOL with a note, and the loop continues.
+  - `final_answer` in a printing cell is UNREVIEWED: the output is shown and the answer is
+    not accepted. With a goal, both ANSWER and final_answer are rejected until it passes
+    (GOAL_UNMET).
+  - `history` decides what stays in the transcript: the full reply, just the action, or
+    nothing. Large observations are capped by `obs_chars` with an `_OBS` handle.
+  - `wrap_up_at` sends a "start wrapping up" nudge at that fraction of the wall budget.
+
+WHERE TO CHANGE
+  What counts as an action ......... reply.py (compile_reply), not here
+  Observation format ............... `observation` (also the ToolLoop default)
+  REPL finish semantics ............ ReplLoop.run, `_goal_state`, `_reject`
+"""
 from __future__ import annotations
 
 import hashlib

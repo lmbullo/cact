@@ -1,3 +1,59 @@
+"""Kernel: the agent's entire action space, plus the subprocess that enforces it.
+
+WHAT IT IS
+  Two layers in one file.
+  1. Source strings executed *inside* the child interpreter:
+       DRIVER       loop: one JSON line per cell on stdin -> exec() in a namespace that
+                    survives between cells -> one `@@K@@` JSON line back on stdout.
+       PRELUDE      injects read/grep/map/write/edit/changes/diff/undo into that namespace
+                    and journals every mutation (snapshot at start, tree diff after each cell).
+       RUN_PRELUDE  injects run(): whole programs only, behind the file-verb protocol check.
+  2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
+     when it dies, hangs or desynchronises, and returns a `Cell`.
+
+ENTRY POINTS
+  Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
+         allow_run=False, supervise=True)
+    .start()   spawn the child (lazy: .run() calls it)
+    .run(code) write one cell, wait for it, -> Cell
+    .stop()    SIGKILL the process group
+  Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
+        mutated, changed, delta, timeout
+  Inside the kernel namespace: read(), grep(), map(), write(), edit(), changes(), diff(),
+        undo(), run() (when allow_run), final_answer(), emit()
+  Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
+  `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish protocol).
+
+INVARIANTS
+  - The child's stdout is a protocol channel: every message is exactly one `@@K@@`-prefixed
+    JSON line. The driver redirects the cell's own stdout/stderr into buffers, so a stray
+    print cannot corrupt the channel.
+  - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and
+    restarted with an EMPTY namespace, and the model is told so. Never pretend state
+    survived. `supervise=False` disables the in-child alarm (legacy behaviour).
+  - `final_answer(v)` raises `Final`; the driver reports `final` only when the cell printed
+    nothing. A printing cell comes back with `answer=None` and the output, so the loop can
+    reject it (see `UNREVIEWED` in tool_loop.py).
+  - Every mutation goes through `_commit`: journal row, snapshot diff, `_CELL_CHANGED`.
+    That single path is what changes()/diff()/undo() and the `[state] changed:` card read.
+    `write()` replaces (refuses to drop a tail without force=True); `edit()` reports
+    ambiguity instead of guessing.
+  - run() enabled => the child is a plain `python3 -u -c DRIVER`. run() disabled => the child
+    runs under bwrap with a read-only `/` (the root is bind-mounted writable only when
+    `writable=True`).
+
+WHERE TO CHANGE
+  Add a file/exec helper for the model .... PRELUDE or RUN_PRELUDE, plus the matching rule
+                                            text in tool_loop.TOOL_RULES / repl.REPL_RULES /
+                                            state_loop.STATE_RULES, or the model never sees it
+  Change what a helper returns ............ the helper's dict shape in PRELUDE; the loops
+                                            only pass the text through
+  Change the cell result shape ............ `Cell` + the driver's final `emit({...})` payload
+  Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`
+  Change the run() protocol list .......... `_RUN_FILE_TOOLS` / `_RUN_GIT` / `_RUN_EVAL` and
+                                            `_run_protocol_error`, then the RUN_NOTE text in
+                                            repl.py and the README contract list
+"""
 from __future__ import annotations
 
 import json
@@ -10,6 +66,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# --- child side 1/3: DRIVER, the cell loop (stdin JSON in, `@@K@@` line out) -------------
 DRIVER = r'''
 import ast, contextlib, io, json, os, signal, sys, time, traceback
 
@@ -149,6 +206,7 @@ for line in sys.stdin:
 '''
 
 
+# --- child side 2/3: PRELUDE, the file helpers and the mutation journal the model calls ----
 PRELUDE = r"""
 import difflib as _difflib, hashlib as _hashlib, os as _os, re as _re
 
@@ -562,6 +620,7 @@ def edit(path, old, new, all=False):
 _snapshot()
 """
 
+# --- child side 3/3: RUN_PRELUDE, run() for whole programs, behind the protocol check -----
 RUN_PRELUDE = r"""
 import os as _ros, signal as _rsig, subprocess as _rsp
 _RUN_ROOT = _ros.getcwd()
@@ -655,6 +714,7 @@ def run(command, timeout=60, cwd=None):
             "stdout": out or "", "stderr": err or ""}
 """
 
+# --- parent side: supervision, protocol and the Cell the loops consume --------------------
 MARKER = "@@K@@"
 MAX_CODE = 20_000
 MAX_OUTPUT = 0

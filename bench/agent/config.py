@@ -1,3 +1,27 @@
+"""Production defaults and the loop factory used by the TUI (tui/python/worker.py).
+
+WHAT IT IS
+  The one place that decides which loop production runs and with which budgets.
+  `MODE` is read from `CODE_TUI_MODE` at import (`state` by default; also `tool`, `repl`).
+
+ENTRY POINTS
+  CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY ... production constants
+  budget(steps, wall_s, output=MAX_OUTPUT) -> Budget         clamped to MAX_OUTPUT
+  build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
+        goal_stops, mode=MODE) -> StateLoop | ToolLoop | ReplLoop
+
+INVARIANTS
+  - `build` is the only construction site in production; the benchmark CLI constructs loops
+    directly (bench/run.py) because it needs per-suite wiring.
+  - Unknown `mode` falls through to ReplLoop, so a typo degrades to the simplest loop instead
+    of crashing a worker.
+  - Constants are TUI-facing. Benchmark defaults live in loop.Budget and run.py flags.
+
+WHERE TO CHANGE
+  Production loop selection ....... build + MODE
+  Production budgets ............... budget, MAX_OUTPUT
+  TUI observation/history policy ... OBS_CHARS, HISTORY (passed straight through to the loop)
+"""
 from __future__ import annotations
 
 from typing import Any

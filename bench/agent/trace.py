@@ -1,3 +1,25 @@
+"""Trace: the JSONL run journal, and a human/agent-readable rendering of it.
+
+WHAT IT IS
+  One JSON object per line: one record per turn, plus a final `{"summary": true, ...}` record.
+  `bench/traces/<task>.<mode>.jsonl` is written by this class from every loop.
+
+ENTRY POINTS
+  Trace(path) -> .write(record) / .close()
+  render(path, reasoning_chars, env_chars) -> str   `err`/`call`/`get`/`text` lines, then the
+                                                    `== stop=... steps=...` summary
+
+INVARIANTS
+  - The file is opened with "w": a trace is a new run, never appended to. `bench/traces/` is
+    committed evidence — add new runs, never rewrite old ones.
+  - Records are written and flushed per turn, so a killed run still leaves readable evidence.
+  - `worker.py` substitutes its own `EventTrace` with the same `write/close` interface; keep
+    that duck type intact.
+
+WHERE TO CHANGE
+  Record shape .................. the loops (they build the dict); this file only writes it
+  Rendering for humans/agents ... render()
+"""
 from __future__ import annotations
 
 import json

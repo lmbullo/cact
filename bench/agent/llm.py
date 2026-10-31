@@ -1,3 +1,31 @@
+"""The model client: one chat-completions POST, retries, and an on-disk reply cache.
+
+WHAT IT IS
+  `Client.complete()` posts the OpenAI-shaped body to `{base}/chat/completions` (DeepSeek by
+  default) and returns a flat dict. No streaming: a turn is one blocking call.
+
+ENTRY POINTS
+  LLMError
+  Client(api_key, model="deepseek-flash", effort="low", base=..., timeout=180, temperature,
+         seed, cache=True, cache_dir=CACHE_DIR)
+    .complete(messages, tools=None, max_tokens=8192) -> dict
+      {content, reasoning, tool_calls, usage, latency_ms, finish, local_cache}
+
+INVARIANTS
+  - The cache key is sha256(request body + model); `bench/.cache/llm/<key>.json`. Hits come
+    back with `local_cache=True` and `latency_ms=0`, which is what the traces report as a
+    local hit. `BENCH_LLM_CACHE` moves the directory; `cache=False` disables it (the TUI).
+  - Retries: 4 attempts, exponential-ish sleep, only for 429/5xx and network errors. Anything
+    else raises `LLMError` with the response detail; callers turn that into a stop reason.
+  - `tools` is passed through verbatim; the loops own the specs.
+  - `finish == "length"` means the reply was truncated — the loops treat that as TRUNCATED,
+    so do not swallow it.
+
+WHERE TO CHANGE
+  Provider quirks (headers, body fields) ... Client.complete
+  Retry policy ............................. the loop inside Client.complete
+  Cache semantics .......................... the key computation + CACHE_DIR
+"""
 from __future__ import annotations
 
 import hashlib

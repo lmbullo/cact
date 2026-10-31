@@ -1,3 +1,33 @@
+"""AgentLoop: the classic JSON tool-calling loop (`--mode tools`), plus the Budget/RunResult
+types and usage accounting every other loop shares.
+
+WHAT IT IS
+  One turn = one `client.complete(messages, registry.specs())`. Tool calls in the reply are
+  prepared (type coercion + schema validation) and executed against a `tools.Registry`; each
+  envelope goes back as a `role: "tool"` message. A reply with no tool calls ends the task.
+
+ENTRY POINTS
+  RULES ...... system prompt for this loop (the JSON tool-call contract)
+  Budget ..... max_steps, max_tool_calls, max_output_tokens, max_wall_s, no_progress_limit
+  RunResult .. task, stop, final, steps, calls, errors, misses, repeats, usage, wall_ms,
+               trace, turns, workspace, llm_calls  <- what run.py grades and traces hold
+  AgentLoop(client, registry, budget, rules).run(task_id, prompt, trace) -> RunResult
+  _usage_add(acc, usage) adds token counters, including cache and reasoning tokens.
+
+INVARIANTS
+  - Identical calls are not re-executed: the cached envelope is returned with a note and
+    counted in `repeats`. A write/edit clears that cache because the tree moved.
+  - `final` is prose ending in `ANSWER: <value>`; run.py grades it with the task's grader.
+  - `_final_push` is the last-resort "answer now, no tool call" call when a budget runs out;
+    an empty reply from it becomes stop EMPTY_FINAL.
+  - Stop vocabulary here: DONE, STEP_LIMIT, WALL_LIMIT, TOOL_LIMIT, NO_PROGRESS,
+    EMPTY_FINAL. tool_loop/repl add their own on top.
+
+WHERE TO CHANGE
+  Tool-call semantics, dedupe, no-progress ... AgentLoop.run
+  Budget defaults ............................ Budget (the TUI builds its own in config.budget)
+  What a finished run carries ................ RunResult (all four loops construct it)
+"""
 from __future__ import annotations
 
 import copy

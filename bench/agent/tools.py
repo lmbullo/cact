@@ -1,3 +1,36 @@
+"""The classic tool API (`--mode tools`): read/find/calc + map/write/edit, and the Registry
+that validates and executes them.
+
+WHAT IT IS
+  This is the JSON-tool equivalent of the kernel prelude: each tool is a plain function that
+  returns an envelope dict (`ok`, `kind`, plus a `note` or `error.hint` when action is
+  needed). AgentLoop sends `Registry.specs()` to the model and executes what comes back.
+  None of this runs inside the kernel; it runs in the benchmark process against `root`.
+
+ENTRY POINTS
+  make_read(root, max_chars) / make_find(root) / make_calc() / make_map(root)
+  make_write(root) / make_edit(root)          mutations, only for tasks with mutates=True
+  build_map(root) / map_text(env)             workspace map, also reused by run.py
+  Registry().add(tool) / .specs() / .prepare(name, raw_arguments) / .execute(tool, args)
+  err(code, message, hint=...)                the envelope shape for failures
+  Tool(name, description, parameters, fn, mutates)  one tool; `spec()` is the wire form
+
+INVARIANTS
+  - Every envelope is JSON-serialisable and carries `ok`. Failures carry `error.hint`: the
+    single call most likely to succeed next. That hint is the model's recovery path.
+  - `prepare` validates and coerces before anything runs (`validate`, `coerce`), so a bad
+    call is a BAD_ARGS envelope, not an exception.
+  - `_jail` keeps every path inside `root`; `_miss` returns a ranked "closest paths" answer
+    instead of a bare not-found.
+  - write replaces (refuses to drop a tail without force/overwrite) and edit reports
+    ambiguity plus `_closest_lines` instead of guessing. Both return a unified `_diff`.
+  - `Tool.mutates` is what tells AgentLoop to drop its call cache.
+
+WHERE TO CHANGE
+  Add a tool ...................... a `make_*` factory + Registry.add in run.py::build_tools
+  Prompt text sent with a spec .... the *_DESCRIPTION / *_PARAMETERS constants
+  Error envelope / recovery hints .. err(), _miss(), _closest_lines()
+"""
 from __future__ import annotations
 
 import ast

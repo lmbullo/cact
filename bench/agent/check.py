@@ -1,3 +1,32 @@
+"""The goal check: run a project command, parse its failures, decide pass/fail.
+
+WHAT IT IS
+  `run_check(cmd, cwd)` runs a shell command (tsc, bun test, pytest, ...) and turns the
+  output into a `Check`. `evaluate(goal)` calls a goal callable and normalises the result,
+  so the loops never need to know whether a goal returns a bool or a Check.
+
+ENTRY POINTS
+  Check(cmd, state, exit_code, duration_ms, stdout, stderr, failures)
+    state: "passed" | "failed" | "unrunnable"
+    .ok, .text(limit)   the model-facing rendering (unrunnable is called out explicitly)
+  run_check(cmd, cwd, timeout=600.0) -> Check
+  evaluate(goal) -> (ok, Check | None)
+
+INVARIANTS
+  - "unrunnable" (broken command, timeout, crash) is NOT "failed": the text says the check
+    itself is broken so the model repairs the project instead of chasing a missing tool.
+    The TUI maps an unrunnable check to a failed task only via the loop, never here.
+  - `failures` is a bounded, de-duplicated list of {line, text} parsed by `_PATTERNS`
+    (bun `(fail)`, pytest `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines).
+  - A goal that raises becomes `unrunnable`, not an exception in the loop.
+  - Goals are callables, not command strings: tui/python/worker.py builds
+    `lambda: run_check(check, workspace)` so the check re-runs on every finish attempt.
+
+WHERE TO CHANGE
+  Recognise another test runner's failure lines ... _PATTERNS, _failures
+  How a check is executed ........................ run_check (timeout, bash, cwd)
+  What the model is told on failure .............. Check.text
+"""
 from __future__ import annotations
 
 import re

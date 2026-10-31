@@ -1,3 +1,44 @@
+"""StateLoop: ToolLoop + state-card observations. The production mode (`CODE_TUI_MODE=state`,
+`--mode state`), and the default in config.build.
+
+WHAT IT IS
+  Same action space as ToolLoop (one `python` tool), but a cell's result is rendered as a
+  state card instead of a transcript:
+
+    [state]  turn, elapsed, prompt tokens, and the files this cell changed
+    [diff]   the exact hunks this cell changed (empty when nothing changed)
+    [stderr] / [stdout]  digested: head, error lines, tail, plus an _OBS[n] handle
+    [result] the last expression, clipped
+
+  Plus compaction: when the transcript grows past `context_budget`, the oldest turns are
+  folded into one `[history]` message so the model keeps working from the workspace rather
+  than from stale text.
+
+ENTRY POINTS
+  STATE_RULES = TOOL_RULES + the state-card contract (what the model is told)
+  clip(text, limit)                  bounded text
+  digest(text, budget, handle)       head + error lines + "[n lines, m chars; full text is
+                                     _OBS[i]" + tail
+  StateLoop(..., output_budget, context_budget, keep_messages)
+    ._observe(cell, steps) -> str    the card
+    ._compact(messages)              fold old turns into a [history] message
+    ._estimate(messages)             chars/4 heuristic for the context budget
+
+INVARIANTS
+  - Output is never silently dropped: the card always names the `_OBS[n]` entry holding the
+    full text, and the kernel keeps `_OBS` in the namespace so `print(_OBS[n]['stdout'])`
+    works. That is why the handle, not the text, is the contract.
+  - `_compact` cuts only on an assistant tool-call boundary, so no tool result is orphaned
+    from its call.
+  - The `[state] changed:` line and `[diff]` both come from `Cell.changed` / `Cell.delta`,
+    which the kernel's journal produces (kernel.py::_commit).
+
+WHERE TO CHANGE
+  Card layout / error-line selection ... `_observe`, `digest`, `_ERROR_LINE`, `clip`
+  Compaction policy ..................... `_compact`, `_estimate`, `keep_messages`,
+                                          `context_budget`
+  What the model is told about cards ... STATE_RULES (keep it in sync with `_observe`)
+"""
 from __future__ import annotations
 
 import json
