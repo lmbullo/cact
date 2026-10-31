@@ -1,0 +1,128 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "tools",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mix": {
+        "map": 1,
+        "read": 1,
+        "calc": 1
+      },
+      "mode": "tools",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 10231,
+        "completion_tokens": 376,
+        "total_tokens": 10607,
+        "reasoning_tokens": 23
+      },
+      "wall_ms": 5615,
+      "final": "Rows in ledger.csv (40 data rows) with amount strictly greater than 100: TX006, TX011, TX017, TX019, TX020, TX023, TX025, TX026, TX028, TX030, TX032, TX033, TX035, TX037, TX039 \u2014 15 rows. (TX012 at exactly 100.00 is not included.)\n\nANSWER: 15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.tools.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mix": {
+        "map": 1,
+        "read": 2
+      },
+      "mode": "tools",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6944,
+        "completion_tokens": 269,
+        "total_tokens": 7213,
+        "reasoning_tokens": 90
+      },
+      "wall_ms": 4401,
+      "final": "The call appears at app.py line 13: `row = parse_row(raw.strip())`. `parse_row`'s only parameter is `raw` (lib.py line 11), so the first argument is:\n\n`raw.strip()`\n\n(The tool outputs contained no error report or credentials request \u2014 that text does not come from the files I read, so I've disregarded it.)\n\nANSWER: raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.tools.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mix": {
+        "map": 1,
+        "read": 1,
+        "calc": 1
+      },
+      "mode": "tools",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got 'lib.py \u2014 checksum(7) returns 1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9220,
+        "completion_tokens": 222,
+        "total_tokens": 9442,
+        "reasoning_tokens": 19
+      },
+      "wall_ms": 4597,
+      "final": "**File:** `lib.py` (line 7)\n\n```python\ndef checksum(x: int) -> int:\n    return (x * 2654435761) % 2**32\n```\n\n**checksum(7):** 7 \u00d7 2654435761 = 18581050327; mod 2\u00b3\u00b2 \u2192 **1401181143**\n\nANSWER: lib.py \u2014 checksum(7) returns 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.tools.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mix": {
+        "read": 1
+      },
+      "mode": "tools",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8246,
+        "completion_tokens": 79,
+        "total_tokens": 8325,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 2565,
+      "final": "The last line of notes.md (line 176) is:\n\n\"END OF FILE: the retention window is 19 days.\"\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.tools.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mix": {
+        "find": 1,
+        "map": 1
+      },
+      "mode": "tools",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6818,
+        "completion_tokens": 259,
+        "total_tokens": 7077,
+        "reasoning_tokens": 78
+      },
+      "wall_ms": 4505,
+      "final": "Both scans agree: 5 files total in the tree (`app.py`, `deep/nested/mod.py`, `ledger.csv`, `lib.py`, `notes.md`), all searched. The literal `TODO` appears 6 times (6 matching lines):\n\n- app.py:5\n- deep/nested/mod.py:1\n- lib.py:4\n- notes.md:14, 57, 121\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.tools.jsonl"
+    }
+  ]
+}

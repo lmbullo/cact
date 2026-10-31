@@ -1,0 +1,221 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "repl",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mix": {},
+      "mode": "repl",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 1,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4763,
+        "completion_tokens": 60,
+        "total_tokens": 4823,
+        "reasoning_tokens": 12,
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 4379,
+        "local_hits": 0
+      },
+      "wall_ms": 1511,
+      "runs": [],
+      "final": "15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.repl.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mix": {},
+      "mode": "repl",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9578,
+        "completion_tokens": 93,
+        "total_tokens": 9671,
+        "reasoning_tokens": 42,
+        "prompt_cache_hit_tokens": 9216,
+        "prompt_cache_miss_tokens": 362,
+        "local_hits": 0
+      },
+      "wall_ms": 2595,
+      "runs": [],
+      "final": "raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.repl.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mix": {},
+      "mode": "repl",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got './lib.py defines checksum; checksum(7) returns 1401181143'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9562,
+        "completion_tokens": 504,
+        "total_tokens": 10066,
+        "reasoning_tokens": 314,
+        "prompt_cache_hit_tokens": 9216,
+        "prompt_cache_miss_tokens": 346,
+        "local_hits": 0
+      },
+      "wall_ms": 5113,
+      "runs": [],
+      "final": "./lib.py defines checksum; checksum(7) returns 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.repl.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mix": {},
+      "mode": "repl",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 1,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4762,
+        "completion_tokens": 23,
+        "total_tokens": 4785,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 4608,
+        "prompt_cache_miss_tokens": 154,
+        "local_hits": 0
+      },
+      "wall_ms": 1455,
+      "runs": [],
+      "final": "END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.repl.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mix": {},
+      "mode": "repl",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 1,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4776,
+        "completion_tokens": 178,
+        "total_tokens": 4954,
+        "reasoning_tokens": 40,
+        "prompt_cache_hit_tokens": 4608,
+        "prompt_cache_miss_tokens": 168,
+        "local_hits": 0
+      },
+      "wall_ms": 1837,
+      "runs": [],
+      "final": "6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.repl.jsonl"
+    },
+    {
+      "task": "M1_rename",
+      "mix": {},
+      "mode": "repl",
+      "shape": "rename symbol",
+      "ok": true,
+      "detail": "PAGE_SIZE=4096 leftover_PAGE=False",
+      "stop": "DONE",
+      "steps": 7,
+      "calls": 7,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 34657,
+        "completion_tokens": 1561,
+        "total_tokens": 36218,
+        "reasoning_tokens": 420,
+        "prompt_cache_hit_tokens": 33280,
+        "prompt_cache_miss_tokens": 1377,
+        "local_hits": 0
+      },
+      "wall_ms": 15334,
+      "runs": [
+        "python3 app.py ledger.csv"
+      ],
+      "final": "{'remaining_PAGE_refs': [], 'verification': 'lib.py renamed to PAGE_SIZE=4096; no remaining PAGE refs; app.py runs cleanly'}",
+      "trace": "/home/lmbullo/code/bench/traces/M1_rename.repl.jsonl"
+    },
+    {
+      "task": "M2_add_fn",
+      "mix": {},
+      "mode": "repl",
+      "shape": "add function",
+      "ok": true,
+      "detail": "row_total=12.5 expected 12.5; checksum_intact=True",
+      "stop": "DONE",
+      "steps": 6,
+      "calls": 6,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 30543,
+        "completion_tokens": 861,
+        "total_tokens": 31404,
+        "reasoning_tokens": 254,
+        "prompt_cache_hit_tokens": 29312,
+        "prompt_cache_miss_tokens": 1231,
+        "local_hits": 0
+      },
+      "wall_ms": 11652,
+      "runs": [
+        "python3 app.py ledger.csv"
+      ],
+      "final": "lib.row_total added; existing functions unchanged and verified.",
+      "trace": "/home/lmbullo/code/bench/traces/M2_add_fn.repl.jsonl"
+    },
+    {
+      "task": "M3_branch",
+      "mix": {},
+      "mode": "repl",
+      "shape": "change control flow",
+      "ok": true,
+      "detail": "printed 13.75 expected 13.75",
+      "stop": "DONE",
+      "steps": 19,
+      "calls": 18,
+      "errors": 2,
+      "usage": {
+        "prompt_tokens": 122521,
+        "completion_tokens": 19266,
+        "total_tokens": 141787,
+        "reasoning_tokens": 15287,
+        "prompt_cache_hit_tokens": 116736,
+        "prompt_cache_miss_tokens": 5785,
+        "local_hits": 0
+      },
+      "wall_ms": 124588,
+      "runs": [
+        "python3 app.py ledger.csv",
+        "python3 app.py ledger.csv",
+        "python3 app.py ledger.csv",
+        "python3 app.py ledger.csv",
+        "python3 app.py ledger.csv",
+        "python3 app.py ledger.csv",
+        "python3 app.py ledger.csv",
+        "python3 app.py /tmp/m3_check.csv",
+        "python3 app.py ledger.csv"
+      ],
+      "final": "app.py now skips rows whose account is 'legal'; ledger total is 3768.20",
+      "trace": "/home/lmbullo/code/bench/traces/M3_branch.repl.jsonl"
+    }
+  ]
+}

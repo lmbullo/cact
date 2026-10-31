@@ -1,0 +1,127 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "tools",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mix": {
+        "read": 1,
+        "calc": 1
+      },
+      "mode": "tools",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 7278,
+        "completion_tokens": 467,
+        "total_tokens": 7745,
+        "reasoning_tokens": 185
+      },
+      "wall_ms": 4648,
+      "final": "15 rows in ledger.csv have amount greater than 100 (TX012's 100.00 is excluded, since it is not strictly greater).\n\nANSWER: 15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.tools.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mix": {
+        "read": 3,
+        "find": 1
+      },
+      "mode": "tools",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6901,
+        "completion_tokens": 213,
+        "total_tokens": 7114,
+        "reasoning_tokens": 48
+      },
+      "wall_ms": 4298,
+      "final": "app.py line 13: `row = parse_row(raw.strip())` \u2014 the first (and only) argument is `raw.strip()`.\n\nANSWER: raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.tools.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mix": {
+        "find": 2,
+        "read": 1,
+        "calc": 1
+      },
+      "mode": "tools",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got 'lib.py, and checksum(7) returns 1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8946,
+        "completion_tokens": 282,
+        "total_tokens": 9228,
+        "reasoning_tokens": 14
+      },
+      "wall_ms": 5421,
+      "final": "`checksum` is defined in `lib.py` at line 7:\n\n```python\ndef checksum(x: int) -> int:\n    return (x * 2654435761) % 2**32\n```\n\nEvaluating with x = 7: (7 \u00d7 2654435761) mod 2\u00b3\u00b2 = 18581050327 mod 4294967296 = 1401181143.\n\nANSWER: lib.py, and checksum(7) returns 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.tools.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mix": {
+        "read": 1
+      },
+      "mode": "tools",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 7951,
+        "completion_tokens": 81,
+        "total_tokens": 8032,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 2666,
+      "final": "The last line (line 176) reads:\n\n\"END OF FILE: the retention window is 19 days.\"\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.tools.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mix": {
+        "find": 2,
+        "read": 3
+      },
+      "mode": "tools",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 6,
+      "calls": 5,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 14985,
+        "completion_tokens": 701,
+        "total_tokens": 15686,
+        "reasoning_tokens": 341
+      },
+      "wall_ms": 9112,
+      "final": "I scanned the entire working tree (5 files, including nested directories: `app.py`, `lib.py`, `ledger.csv`, `notes.md`, and `deep/nested/mod.py`).\n\nMatches for the case-sensitive string `TODO`:\n- app.py: line 5\n- deep/nested/mod.py: line 1\n- lib.py: line 4\n- notes.md: lines 14, 57, 121\n\nThat is 6 occurrences on 6 lines across 4 files (ledger.csv has none), and the scan was not truncated.\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.tools.jsonl"
+    }
+  ]
+}

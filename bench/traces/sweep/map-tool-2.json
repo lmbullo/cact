@@ -1,0 +1,128 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "tools",
+  "rows": [
+    {
+      "task": "T1_count",
+      "mix": {
+        "read": 1,
+        "calc": 1
+      },
+      "mode": "tools",
+      "shape": "single file, aggregate",
+      "ok": true,
+      "detail": "got '15'; expected 15",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 7636,
+        "completion_tokens": 268,
+        "total_tokens": 7904,
+        "reasoning_tokens": 0
+      },
+      "wall_ms": 4181,
+      "final": "Rows in ledger.csv with amount strictly greater than 100: **15**.\n\nANSWER: 15",
+      "trace": "/home/lmbullo/code/bench/traces/T1_count.tools.jsonl"
+    },
+    {
+      "task": "T2_join",
+      "mix": {
+        "map": 1,
+        "read": 2
+      },
+      "mode": "tools",
+      "shape": "two files, join",
+      "ok": true,
+      "detail": "expected 'raw.strip()'; answer 'raw.strip()'",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6940,
+        "completion_tokens": 196,
+        "total_tokens": 7136,
+        "reasoning_tokens": 44
+      },
+      "wall_ms": 3991,
+      "final": "app.py line 13 contains the only call to `parse_row`:\n\n```\nrow = parse_row(raw.strip())\n```\n\nThe first argument passed is the expression **`raw.strip()`** (where `raw` is the loop variable from `for raw in fh:` at line 12).\n\nANSWER: raw.strip()",
+      "trace": "/home/lmbullo/code/bench/traces/T2_join.tools.jsonl"
+    },
+    {
+      "task": "T3_locate",
+      "mix": {
+        "find": 1,
+        "map": 1,
+        "read": 1,
+        "calc": 1
+      },
+      "mode": "tools",
+      "shape": "navigation + computation",
+      "ok": true,
+      "detail": "expected lib.py + 1401181143; got 'lib.py defines checksum; checksum(7) = 1401181143'",
+      "stop": "DONE",
+      "steps": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 9682,
+        "completion_tokens": 208,
+        "total_tokens": 9890,
+        "reasoning_tokens": 4
+      },
+      "wall_ms": 4810,
+      "final": "`checksum` is defined in `lib.py` (line 7), returning `(x * 2654435761) % 2**32`. For x=7 that evaluates to 1401181143.\n\nANSWER: lib.py defines checksum; checksum(7) = 1401181143",
+      "trace": "/home/lmbullo/code/bench/traces/T3_locate.tools.jsonl"
+    },
+    {
+      "task": "T4_tail",
+      "mix": {
+        "read": 1
+      },
+      "mode": "tools",
+      "shape": "long file, tail",
+      "ok": true,
+      "detail": "expected 'END OF FILE: the retention window is 19 days.'; answer 'END OF FILE: the retention window is 19 days.'",
+      "stop": "DONE",
+      "steps": 2,
+      "calls": 1,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8253,
+        "completion_tokens": 112,
+        "total_tokens": 8365,
+        "reasoning_tokens": 20
+      },
+      "wall_ms": 2968,
+      "final": "The file has 176 lines (not truncated), and line 176 is the last one.\n\n> END OF FILE: the retention window is 19 days.\n\nANSWER: END OF FILE: the retention window is 19 days.",
+      "trace": "/home/lmbullo/code/bench/traces/T4_tail.tools.jsonl"
+    },
+    {
+      "task": "T5_coverage",
+      "mix": {
+        "find": 1,
+        "map": 1
+      },
+      "mode": "tools",
+      "shape": "traversal + coverage",
+      "ok": true,
+      "detail": "got '6'; expected 6",
+      "stop": "DONE",
+      "steps": 3,
+      "calls": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 6904,
+        "completion_tokens": 338,
+        "total_tokens": 7242,
+        "reasoning_tokens": 176
+      },
+      "wall_ms": 4917,
+      "final": "Across the 5 files in the tree, `find` reported 6 matching lines with 6 total occurrences (every hit is a single occurrence on its own line):\n\n- app.py:5\n- deep/nested/mod.py:1\n- lib.py:4\n- notes.md:14, :57, :121\n\nANSWER: 6",
+      "trace": "/home/lmbullo/code/bench/traces/T5_coverage.tools.jsonl"
+    }
+  ]
+}
