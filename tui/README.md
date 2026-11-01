@@ -138,6 +138,8 @@ workspaces/<sha256-of-workspace, first 16 hex>/
   tasks/<id>.json      task metadata
   events/<id>.jsonl    append-only event journal
   prompts/<id>.txt     original prompt
+  history.jsonl        last 50 tasks (prompt, summary, changed files), prepended to the next
+                       state-mode task as [workspace history]
 ```
 
 The workspace is the directory where you ran `code`, resolved with `path.resolve` (the
@@ -219,10 +221,14 @@ Environment variables are read by the server (and inherited by workers), plus
 | `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
-| `CODE_TUI_MAX_OUTPUT` | `393216` | Max characters of cell output kept per call |
-| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `run()` and uses the bwrap sandbox |
+| `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per model reply (clamped to 393216) |
+| `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
+| `CODE_TUI_READ_GATE` | `1` | `0` disables the read-coverage gate on `final_answer` |
+| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `run()` and runs the kernel under bwrap |
 | `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
-| `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap}]`; wins over `CODE_TUI_CHECK` |
+| `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |
+| `CODE_TUI_LEGACY_CHECK` | unset | `1` makes the goal return a bare pass/fail, not a parsed `Check` |
+| `CODE_TUI_LEGACY_TIMEOUT` | unset | `1` disables the in-child cell alarm (old behaviour) |
 | `CODE_TUI_PYTHON` | `python3` | Python with `bench` dependencies |
 | `CODE_TUI_STATE_ROOT` | `~/.local/state/code-tui` | Alternative state root |
 
@@ -233,12 +239,16 @@ On startup the server detects a *plan* (an ordered list of named commands):
 `python3 bench/smoke.py` (when the workspace has one) plus `typecheck`/`test` from the
 root and `tui/package.json`. The plan is passed to the worker as `--checks <json>`.
 
-A plan entry has `{name, cmd, cheap}`. Order matters: the first failure is what the agent
+A plan entry has `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes used by
+the cheap health run: a scoped entry is skipped unless the cell changed a path under one
+of them. The goal still runs the whole plan, so a docs-only edit does not re-run the TUI
+checks on every cell but still runs them before a finish. The default plan scopes `smoke`
+to `bench` and the TUI checks to `tui`. Order matters: the first failure is what the agent
 sees, so cheap checks come first. Two things happen with it:
 
-- **Cheap checks are health checks.** After a cell that mutated the tree, at most once
-  every 20 seconds, the `cheap` entries re-run and the result appears as the `[check]`
-  line of the next state card. They never end the run.
+- **Cheap checks are health checks.** After a cell that mutated the tree in their scope,
+  at most once every 20 seconds, the `cheap` entries re-run and the result appears as the
+  `[check]` line of the next state card. They never end the run.
 - **The whole plan is the goal.** `final_answer` is rejected (`GOAL_UNMET`) until every
   entry passes; when it does, the task lands as `done` with the label
   `verified: <names> passed`.
@@ -285,17 +295,18 @@ This is meant for trusted, fire-and-forget work. With the default
 `CODE_TUI_ALLOW_RUN=1`, the agent has an unsandboxed Python kernel and shell in the
 launch directory. It can edit files and run commands as your user.
 
-For untrusted tasks use `CODE_TUI_ALLOW_RUN=0`, which uses the `bwrap` read-only
-sandbox and disables the `run()` helper. Test-repair tasks will then be much harder.
+For untrusted tasks use `CODE_TUI_ALLOW_RUN=0`: the kernel runs under `bwrap` with a
+read-only `/`, the workspace is bind-mounted writable so the agent can still do its job,
+and `run()` is not injected at all. Test-repair tasks will then be much harder.
 
-`run()` is reserved for whole programs (tests, builds, git, servers). Shell file
-inspection is not allowed: a plain `cat`, `head`, `tail`, `ls`, `wc -l` or
-`grep PATTERN FILE` is *redirected* to the matching helper and returns `kind:
-"redirected"`; anything else (`sed`, `awk`, `find`, `rg`, `rm`, redirection, `git show`,
-`python3 -c` that is not imports-only, ...) is refused as `kind: "wrong_call"` with the
-helper to use instead. The kernel prelude provides `read()`, `grep()`, `map()`, `write()`,
-`edit()`, `apply()` and `commit()`, journalled together so `changes()`/`diff()`/`undo()`
-cover multi-file edits.
+`run()` executes one bash command (tests, builds, servers, read-only git). Reads,
+searches, tests and builds work as written (`cat`, `sed -n`, `rg`, `git diff`,
+`python3 -c`); only mutating shell verbs (`tee`, `cp`, `mv`, `rm`, `sed -i`,
+`git apply/...`, `>` redirection) are refused as `kind: "wrong_call"` with the helper to
+use instead. The kernel prelude provides `read()`, `grep()`, `map()`, `write()`, `edit()`,
+`apply()` and `commit()`, journalled together so `changes()`/`diff()`/`undo()` cover
+multi-file edits. A program launched through `run()` can still write files: the journal
+is a typed-helper contract, not a sandbox.
 
 The server binds to `127.0.0.1` with a random port. It has no authentication; do not
 expose the port.
@@ -304,7 +315,7 @@ expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/ list, log, and prompt rendering
+bun test            # tests/: list, log, prompt and view rendering (5 tests, 4 files)
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on the captured

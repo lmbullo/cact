@@ -19,8 +19,8 @@ There is no root `package.json`, no `pyproject.toml`, no CI. The only install st
 `bun install` inside `tui/`.
 
 Coding agents: start at `AGENTS.md` (short version, rules that must not break, how to
-verify). Every module in `bench/` and `tui/` opens with a docstring header stating what it
-is, its entry points, its invariants and where to change what.
+verify). Every module under `bench/agent/` and `tui/src/` opens with a docstring header stating
+what it is, its entry points, its invariants and where to change what.
 
 ---
 
@@ -45,26 +45,28 @@ cact/
 │   ├── tasks.py             READ suite T1-T5 (answer in text) + MUTATION suite M1-M3 (grade the workspace)
 │   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
 │   ├── hard.py              HARD suite H1-H4 with a held-out oracle; `bench/HARD.md` has the numbers
+│   ├── hard_runner.py       runs a held-out test directory against a workspace (the hard oracle)
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
 │   ├── live.py              run ONE task through tui/python/worker.py and journal it
-│   ├── smoke.py             offline contract check: imports, kernel prelude, tools, checks
+│   ├── smoke.py             offline contract check: imports, kernel prelude, helpers, checks
 │   ├── runs.py              summarise a task journal from a TUI state dir
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
-│   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, sweep/ batches
+│   ├── hard_fixtures/       the H1-H4 workspaces; the H3 CSV is generated and gitignored
+│   ├── hard_hidden/         the held-out test tree for H1/H2/H4, outside every workspace
+│   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, hard/, sweep/
 │   ├── ws/                  generated: frozen TUI workspaces (tui-base, tui-broken) + runs/ journals
 │   ├── .tmp/, .cache/       generated, gitignored (per-run workspaces, LLM response cache)
 │   └── agent/
-│       ├── kernel.py        subprocess driver (DRIVER, RUN_PRELUDE) + in-child PRELUDE helpers
+│       ├── kernel.py        subprocess driver (DRIVER, PRELUDE, RUN_PRELUDE) + Kernel + Cell
 │       ├── llm.py           DeepSeek chat client, retries, on-disk response cache
-│       ├── loop.py          AgentLoop (JSON tool calling), Budget, RunResult, usage accounting
-│       ├── repl.py          ReplLoop (one fenced python block per turn), observations
+│       ├── loop.py          shared types only: Budget, RunResult, usage accounting
+│       ├── repl.py          ReplLoop (one fenced python block per turn), observations, RUN_NOTE
 │       ├── tool_loop.py     ToolLoop (a single `python` tool), goal checks, stop reasons
-│       ├── state_loop.py    StateLoop = ToolLoop + state cards, output digest, compaction
+│       ├── state_loop.py    StateLoop = ToolLoop + state cards, read coverage, fold compaction
 │       ├── reply.py         parse model text into an Action (markup repair, fences, ANSWER:)
-│       ├── tools.py         classic tool API: read/find/calc/map/write/edit + Registry + envelopes
 │       ├── check.py         run_check(): runs tsc/pytest/bun test, extracts failures into a Check
-│       ├── checks.py        the check plan (goal + cheap health subset), run_specs
+│       ├── checks.py        the check plan (goal + cheap health subset), run_specs/run_plan
 │       ├── trace.py         Trace JSONL writer + render() for humans
 │       └── config.py        production defaults + build() factory (CODE_TUI_MODE)
 └── tui/
@@ -73,7 +75,8 @@ cact/
     ├── src/server.ts               queue, concurrency, cancellation, HTTP + WebSocket, journals
     ├── src/client.tsx              the board, the live log, the single prompt box
     ├── src/list-model.ts           pure ordering/rows/scroll model
-    ├── src/types.ts                Task, TaskEvent, ServerInfo, Snapshot, WorkerMessage
+    ├── src/types.ts                Task, TaskEvent, ServerInfo, CheckSpec, Snapshot, WorkerMessage
+    ├── src/stop.ts                 SIGTERM this workspace's server
     ├── python/worker.py            one task = one worker process = one agent loop
     ├── tests/*.test.tsx            rendering tests against a fake Bun server
     └── README.md                   exhaustive TUI reference: keys, env vars, HTTP API, states
@@ -108,8 +111,9 @@ bench/run.py                        tui/bin/code
   request hash; `--no-cache` disables it.
 - **Kernel cell:** `Kernel.run(code)` writes one JSON line, reads one `@@K@@` line back,
   and returns a `Cell` (`stdout`, `stderr`, `result`, `final`, `duration_ms`, `restarted`,
-  `changed`, `delta`, `timeout`). A dead or hung kernel is killed and restarted **with an
-  empty namespace**; the loop tells the model rather than hiding it.
+  `answer`, `runs`, `obs_index`, `mutated`, `changed`, `delta`, `timeout`, `reads`). A dead
+  or hung kernel is killed and restarted **with an empty namespace**; the loop tells the
+  model rather than hiding it.
 - **Sandbox:** `run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
   `run()` disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
   bind of the root only when `writable=True`).
@@ -117,31 +121,35 @@ bench/run.py                        tui/bin/code
   what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
   `edit()`, `apply()` and `commit()` all funnel through the same `_commit`, so a multi-file
   `apply()`/`commit()` is one diff and one `undo()`.
-- **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap}`.
+- **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`.
   The whole plan is the goal (`final_answer` is rejected until it passes); the `cheap`
-  subset re-runs after a mutating cell and appears as the `[check]` line of the next state
-  card. `run()`'s file-verb guard is not a wall either: plain `cat`, `head`, `tail`, `ls`,
-  `wc -l` and `grep PATTERN FILE` are redirected to the matching helper and return
-  `kind: "redirected"`.
+  subset re-runs after a mutating cell (at most once every 20s) and appears as the
+  `[check]` line of the next state card. A spec may carry a `scope` list of path prefixes
+  that filters the cheap health run only, so a docs-only edit does not typecheck the TUI on
+  every cell; the goal still runs the whole plan. `run()` is a shell, not a redirect layer:
+  reads, searches, tests, builds and read-only git run as written; only mutating verbs are
+  refused (see the contract below).
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
   `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
-  state of its own and reconnects every second.
+  persistent state of its own and reconnects every second.
 
 ---
 
-## The four loops
+## The loops
 
-Selected by `--mode` in `run.py`, by `CODE_TUI_MODE` in production (default `state`).
+Selected by `--mode` in `run.py`, by `CODE_TUI_MODE` in production (default `state`). There
+are three loops; `--mode bare` is the hard suite's control, not a fourth implementation.
 
 | mode | Loop | Action space | Rules constant |
 |---|---|---|---|
-| `tools` | `AgentLoop` | JSON tool calls: `read`, `find`, `calc`, optionally `map`, `edit`, `write` (`tools.py`) | `loop.RULES` |
 | `repl` | `ReplLoop` | one fenced python block per reply, run as a kernel cell | `repl.REPL_RULES` / `BARE_RULES` |
 | `tool` | `ToolLoop` | one function: `python` | `tool_loop.TOOL_RULES` |
 | `state` | `StateLoop` | same as `tool`, observations rendered as state cards | `state_loop.STATE_RULES` |
+| `bare` | `ToolLoop` with `goal=None`, no file helpers and no read gate (benchmark control) | one function: `python` | `run.py::BARE_TOOL_RULES` |
 
-All four share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult`, and
-the `Client`. Stop reasons are a fixed vocabulary:
+All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult`, and
+the `Client`. `loop.py` now holds only those shared types, after the JSON tool-calling
+`AgentLoop` and its `tools.py` registry were removed. Stop reasons are a fixed vocabulary:
 
 | stop | meaning | TUI status |
 |---|---|---|
@@ -150,9 +158,10 @@ the `Client`. Stop reasons are a fixed vocabulary:
 | `STEP_LIMIT` / `WALL_LIMIT` | budget exhausted (a non-empty summary still counts) | `partial` |
 | `GOAL_UNMET` | model tried to finish while the check failed | continues |
 | `STAGED` | `final_answer` in a cell that also printed; accepted on the next no-tool reply | continues |
+| `UNREAD` | state/tool loops: a cited file has undelivered line ranges | continues |
 | `UNREVIEWED` | ReplLoop only: `final_answer` in a printing cell is rejected | continues |
+| `PROTOCOL` | ReplLoop only: reply had neither a python block nor an ANSWER line | continues |
 | `TRUNCATED` / `BAD_ARGS` | cut-off or unparsable call; nothing ran | continues |
-| `NO_PROGRESS` / `TOOL_LIMIT` | tools mode only | `failed` |
 
 `check.py::run_check` wraps tsc / bun test / pytest output into a `Check` with parsed
 failure lines, and distinguishes `unrunnable` (broken check) from `failed` (real failure).
@@ -165,26 +174,28 @@ failure lines, and distinguishes `unrunnable` (broken check) from `failed` (real
 
 ```bash
 export DEEPSEEK_API_KEY=...            # or --key
-python3 bench/run.py                                   # read suite, tools mode, fixtures/
+python3 bench/run.py                                   # read suite, state mode, fixtures/
 python3 bench/run.py --suite all --mode state          # read + mutation, production loop
 python3 bench/run.py --suite edge --tasks E1_tests,E6_repair --mode state --traces
-python3 bench/run.py --suite hard --mode state           # envelope vs `--mode bare`; see bench/HARD.md
+python3 bench/run.py --suite hard --mode state         # envelope vs `--mode bare`; see bench/HARD.md
 python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-lib all
 ```
 
 Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and rewrites
 `bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` of each run
-(`err`/`call`/`get`/`text` lines). Useful knobs: `--steps`, `--wall`, `--max-output`,
-`--read-chars`, `--obs-chars`, `--map off|tool|inline`, `--context map|full`,
-`--allow-run off|on`, `--cell-timeout`, `--temperature`, `--seed`, `--no-cache`.
+(`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|hard`,
+`--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--obs-chars`,
+`--map off|tool|inline`, `--context map|full`, `--context-chars`, `--allow-run off|on`,
+`--cell-timeout`, `--health on|off`, `--repl-rules|--repl-stop|--repl-history|--repl-lib`,
+`--model`, `--effort low|high|max|none`, `--temperature`, `--seed`, `--no-cache`.
 
 ### Workspaces and live runs
 
 ```bash
-python3 bench/smoke.py                 # offline contract check: imports, kernel, tools, checks
+python3 bench/smoke.py                 # offline contract check: imports, kernel, helpers, checks
 python3 -m bench.ws freeze SRC DST     # clone + write DST.manifest.json
 python3 -m bench.ws diff  DST          # added/modified/deleted vs the manifest
-python3 bench/live.py --base tui --tag r4 --prompt "make typecheck pass" \
+python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "make typecheck pass" \
         --check "bun run typecheck" --legacy r3
 python3 bench/runs.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
 ```
@@ -249,14 +260,14 @@ imports `bench.agent` from this repo, so the checkout path matters.
 
 | Change | Touch |
 |---|---|
-| What the agent can do (new file/exec helper) | `kernel.PRELUDE` or `RUN_PRELUDE`, plus the matching rule text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`; if it replaces a shell verb, `_redirect_file_command` + `_HINT` |
+| What the agent can do (new file/exec helper) | `kernel.PRELUDE` or `RUN_PRELUDE`, plus the matching rule text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`; if it replaces a mutating shell verb, `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` + `_HINT` |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run` (and `repl.py` if REPL) |
 | A new benchmark task | `tasks.py` (read/mutation) or `edge.py` (edge), then a run to record the trace |
 | Grading semantics | the `grade_*` functions in `tasks.py` / `edge.py` |
 | Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env vars |
 | Goal check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |
-| The check plan / cheap health check | `checks.py` (`CheckSpec.parse`, `run_specs`), `server.ts::detectChecks` |
+| The check plan / cheap health check | `checks.py` (`CheckSpec.parse`, `run_plan` / `run_specs`, `scope`), `server.ts::detectChecks` |
 | Task board, live log, prompt box | `tui/src/client.tsx` + `tui/src/list-model.ts` (pure, tested) |
 | Queueing, cancellation, journal format | `tui/src/server.ts` |
 | What the TUI sends the agent | `tui/python/worker.py` (`AUTONOMOUS`, rules, budgets, status mapping) |
@@ -268,13 +279,15 @@ imports `bench.agent` from this repo, so the checkout path matters.
 - `bench/run.py` has two import blocks: script mode (`python3 bench/run.py`) inserts the
   repo root on `sys.path`, package mode (`python3 -m bench.run`) uses relative imports.
   Keep both working.
-- The default `--suite read` tasks only need text answers; only `mutation`/`edge` tasks
-  set `mutates=True` and get `write`/`edit` plus a writable kernel.
+- The default `--suite read` tasks only need text answers; `mutation`/`edge` tasks and
+  `H1`/`H2`/`H4` in the hard suite set `mutates=True` and get the file helpers plus a
+  writable kernel. `H3_bigcsv` is a text answer over a generated CSV.
 - Budget mismatch: `run.py` defaults to 200 steps / 3600 s, the TUI defaults to 300 steps
   / 1800 s / 120 s per cell (`CODE_TUI_MAX_*`).
 - The TUI server detects a check plan automatically: `CODE_TUI_CHECKS` (JSON list) wins,
   else `CODE_TUI_CHECK`, else `python3 bench/smoke.py` plus `typecheck`/`test` from the
-  root and `tui/package.json`. Cheap entries run after every mutating cell; the whole plan
+  root and `tui/package.json`. Entries may carry a `scope` path prefix list; the cheap ones
+  run after a mutating cell that touched their scope (at most every 20s), and the whole plan
   gates `final_answer`. An empty `CODE_TUI_CHECK` opts out.
 - `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — do not edit
   them in place; clone with `bench.ws.clone` first. `bench/ws/` is gitignored: recreate

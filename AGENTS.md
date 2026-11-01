@@ -2,7 +2,7 @@
 
 Orientation for coding agents. The human owner does not read this code; you do. Read this
 file first, then the docstring at the top of whatever module you are about to change — every
-module in `bench/` and `tui/` now opens with WHAT IT IS / ENTRY POINTS / INVARIANTS /
+module under `bench/agent/` and `tui/src/` opens with WHAT IT IS / ENTRY POINTS / INVARIANTS /
 WHERE TO CHANGE. `README.md` is the full prose reference; this file is the short version.
 
 ## What this repo is
@@ -22,7 +22,7 @@ task board in front of it.
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
 
-## Read these five first
+## Read these first
 
 | File | Why |
 |---|---|
@@ -52,13 +52,16 @@ inside `tui/`.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired. The hard suite's oracle lives
    outside the workspace (`bench/hard_hidden/`), so the agent cannot read or edit it.
-5. **The check plan is the goal** (`bench/agent/checks.py`). `run_specs` runs the ordered
-   plan and returns the first failure; the `cheap` subset re-runs after a mutating cell and
-   is printed as the `[check]` line of the state card. `final_answer` is rejected
+5. **The check plan is the goal** (`bench/agent/checks.py`). `run_plan` / `run_specs` run the
+   ordered plan and return the first failure; a spec's `scope` path prefixes filter the cheap
+   health run to the files a cell changed (the goal still runs every spec). The `cheap`
+   subset re-runs after a mutating cell (at most every 20s) and is printed as the `[check]`
+   line of the state card. `final_answer` is rejected
    (`GOAL_UNMET`) until the whole plan passes. Production passes `goal_stops=False`, so a
    failing check never ends the run by itself — it only rejects the finish.
-6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the fixtures.
-   Editing a fixture silently redefines the expected answers.
+6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `hard.py` from the
+   fixtures. Editing a fixture silently redefines the expected answers; `H3_bigcsv`'s CSV is
+   generated and gitignored, and the H1/H2/H4 oracle lives in `hard_hidden/`.
 7. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
    `bench/ws/` (frozen workspaces + `runs/` journals) is gitignored measurement output:
    rebuild `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and let
@@ -74,7 +77,7 @@ inside `tui/`.
 
 ```bash
 python3 bench/smoke.py                     # offline contract check: imports, kernel prelude,
-                                           # run() redirect + refusal, apply/commit,
+                                           # run() allow + refusal, apply/commit,
                                            # envelopes, reply parsing, check parsing
 python3 -m compileall -q bench tui/python  # syntax
 cd tui && bun run typecheck && bun test    # TS: 5 tests, 4 files
@@ -101,7 +104,8 @@ the trace format.
   tutorials.
 - When you add a helper to the kernel, add the matching rule text to `tool_loop.TOOL_RULES` /
   `repl.REPL_RULES` / `state_loop.STATE_RULES`, or the model will not know it exists. If it
-  replaces a shell verb, add it to `_redirect_file_command` and `_HINT` too.
+  replaces a mutating shell verb, add it to `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` and
+  `_HINT` in `RUN_PRELUDE` too.
 - When you add a check command, give it a name and mark it `cheap` only if it takes seconds;
-  the cheap ones run after every mutating cell.
+  the cheap ones run after a mutating cell in their `scope` (at most every 20s).
 - When you add an edge task, also add its fixture to `edge.build()`.

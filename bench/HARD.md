@@ -13,7 +13,7 @@ control: one `python` tool, no helpers, no check plan, no read gate.
 | `H1_spec` | `SPEC.md` is the contract; the visible suite is green but incomplete | held-out tests |
 | `H2_bughunt` | ten modules with latent bugs behind a green visible suite | held-out tests |
 | `H3_bigcsv` | four aggregates over 200k rows | exact answer |
-| `H4_refactor` | rename an API and a field across sixteen files, delete the old name | held-out tests |
+| `H4_refactor` | rename an API and a field across sixteen call-site modules, delete the old name | held-out tests |
 
 Held-out tests live in `bench/hard_hidden/`, outside the workspace, and run through
 `bench/hard_runner.py`. The agent sees pass/fail and failing test names (the `[check]` line
@@ -39,7 +39,7 @@ Per task, the gap concentrates where the envelope has something to say:
 | `H1_spec` | 3, 3 | 9, 8 | per-cell `changed` and the check line stop the model from re-reading its own work |
 | `H2_bughunt` | 5, 4 | 17, 9 | one batched `commit` plus the failing-test names beats ten discover-edit cycles |
 | `H3_bigcsv` | 3, 4 | 5, 3 | no envelope advantage; both write one program |
-| `H4_refactor` | 4, 4 | 11, 14 | `commit({path: text})` edits sixteen files in one journalled cell |
+| `H4_refactor` | 4, 4 | 11, 14 | `commit({path: text})` edits sixteen modules in one journalled cell |
 
 With a 15s per-task wall budget the gap becomes a completion gap:
 
@@ -79,9 +79,9 @@ Did not earn its keep:
   incoherent. `run()` now allows reads, searches, tests and read-only git, and refuses only
   verbs that mutate files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply`, `>`), because
   those would make `diff()`/`undo()` lie. Cell errors on the edge suite fell from 8 to 0.
-- **Read-coverage gating at finish.** It is still there (`--read-gate` in production) but it
-  never fires on these tasks; it guards against a specific kind of unsupported citation
-  rather than improving the work.
+- **Read-coverage gating at finish.** It is still there (`CODE_TUI_READ_GATE`, on by
+  default) but it never fires on these tasks; it guards against a specific kind of
+  unsupported citation rather than improving the work.
 
 ## Reproducing the comparison
 
