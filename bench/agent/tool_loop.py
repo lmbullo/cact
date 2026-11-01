@@ -77,7 +77,7 @@ Use the kernel for everything: read(), write(), edit(), grep(), map() for files 
 
 Prefer one large call over many small ones. A single call can loop over files, run several commands, inspect and compute, and print everything you need. Do not spend one call per read or grep.
 
-Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
+Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
 
 For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() runs any command, including cat/grep/sed/tests/git; only shell verbs that mutate files (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal.
 

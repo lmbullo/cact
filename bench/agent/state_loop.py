@@ -71,7 +71,7 @@ Read the diff after a mutation. A file is only "read" up to the ranges shown by 
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
 _CITED = re.compile(r"`([^`\n]+)`")
-_NUMBERED = re.compile(r"^\s*\d+\| ?(.*)$")
+_NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
 _PLAIN_PATH = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:py|ts|tsx|js|md|json|csv|txt|toml|yaml|yml))")
 _READ_GATE_MAX_LINES = 4000
 
@@ -180,14 +180,24 @@ class StateLoop(ToolLoop):
             run: list[int] = []
             total = int(entry.get("total") or 0)
             seen = set()
+            numbered: set[int] = set()
             for line in body.splitlines():
                 match = _NUMBERED.match(line)
-                seen.add((match.group(1) if match else line).rstrip())
+                if match:
+                    numbered.add(int(match.group(1)))
+                    seen.add(match.group(2).rstrip())
+                else:
+                    seen.add(line.rstrip())
             for a, b in entry.get("ranges") or []:
                 for number in range(int(a), min(int(b), len(lines)) + 1):
                     text = lines[number - 1]
                     probe = text.rstrip()
-                    shown = bool(probe.strip()) and (probe in seen or (len(probe) > 400 and probe[:400] in seen))
+                    # A numbered line was delivered even when it is blank; matching on the
+                    # text alone made a file with any empty line impossible to finish.
+                    shown = number in numbered or (
+                        bool(probe.strip())
+                        and (probe in seen or (len(probe) > 400 and probe[:400] in seen))
+                    )
                     if shown:
                         run.append(number)
                     elif run:

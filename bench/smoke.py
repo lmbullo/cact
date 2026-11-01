@@ -123,6 +123,10 @@ def main() -> int:
         check("kernel: edit reports the file", cell.changed == ["b.txt"], str(cell.changed))
         check("kernel: diff shows the hunk", "-one" in cell.delta and "+uno" in cell.delta, cell.delta[:120])
 
+        cell = kernel.run("print(type(diff()).__name__); print(diff()[:20])")
+        check("kernel: diff() returns text, not a dict",
+              "str" in cell.stdout and "---" in cell.stdout, cell.stdout[:160])
+
         cell = kernel.run("print(changes())")
         check("kernel: changes lists the file", "b.txt" in cell.stdout, cell.stdout[:120])
 
@@ -209,6 +213,14 @@ def main() -> int:
         probe._observe(clipped, 2)
         hole = probe._read_rejection("see `b.txt`")
         check("state: a clipped read leaves a hole", hole is not None and "unread 2-2" in hole, str(hole)[:120])
+        (root / "blank.txt").write_text("a\n\nb\n", encoding="utf-8")
+        blank = Cell("[stdout]\n     1| a\n     2| \n     3| b\n", "", None, None, 1,
+                     reads={"blank.txt": {"ranges": [[1, 3]], "total": 3}})
+        probe._observe(blank, 3)
+        hole = probe._read_rejection("see `blank.txt`")
+        check("state: a blank delivered line is not a hole",
+              hole is None and probe.coverage.get("blank.txt", {}).get("ranges") == [[1, 3]],
+              str(hole or probe.coverage.get("blank.txt"))[:120])
         probe.coverage = {"big.txt": {"ranges": [[1, 10]], "total": 900}}
         message = probe._read_rejection("see `big.txt`")
         check("state: read gate rejects a cited file with holes",

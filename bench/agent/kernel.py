@@ -488,10 +488,11 @@ def diff(path=None, max_chars=8000):
         texts.append(text)
         files.append({"path": rel, "state": state, "adds": adds, "dels": dels})
     joined = "\n".join(texts)
-    cut = len(joined) > max_chars
-    if cut:
+    if len(joined) > max_chars:
         joined = joined[:max_chars] + "\n...[diff truncated]"
-    return {"ok": True, "kind": "diff", "files": files, "text": joined, "truncated": cut}
+    # A string, not a dict: the model reads and slices the diff directly, and `changes()`
+    # already carries the per-file metadata.
+    return joined
 
 
 def undo(path=None, n=1):
@@ -645,12 +646,14 @@ def write(path, content, force=False):
             "adds": entry["adds"], "dels": entry["dels"]}
 
 
-def edit(path, old, new, all=False):
+def edit(path, old, new, all=False, replace_all=None):
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
     if not _os.path.isfile(target):
         return {"ok": True, "kind": "no_change", "path": rel, "reason": "missing"}
+    if replace_all is not None:
+        all = bool(replace_all)
     body = _read_text(target)
     count = body.count(old)
     if count == 0:
