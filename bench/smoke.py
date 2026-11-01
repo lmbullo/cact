@@ -218,6 +218,10 @@ def main() -> int:
         check("kernel: run() refuses a working-tree overwrite",
               "wrong_call" in refusal and "git checkout" in refusal, refusal[:200])
 
+        cell = kernel.run("print(run('echo \"a > b\"')['stdout'].strip())")
+        check("kernel: a quoted > is an argument, not a redirect",
+              "a > b" in cell.stdout and "wrong_call" not in str(cell.result), (cell.stdout + cell.stderr)[:200])
+
         cell = kernel.run("run('echo x > z.txt')")
         refusal = str(cell.result)
         check("kernel: run() refuses redirection into a file",

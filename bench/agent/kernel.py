@@ -949,13 +949,49 @@ def _mutator_targets_outside(parts):
 
 
 def _writes_stdout(segment):
-    for match in _re.finditer(r"(?<![0-9])>>?\s*([^\s|;&]+)", segment):
-        target = match.group(1).strip("'\"")
-        if target in ("/dev/null", "/dev/stdout", "/dev/stderr", "&1", "&2"):
+    # Quote-aware: `>` inside '...' or "..." is an argument, not a redirect. The old regex
+    # refused `python3 -c "print(a > b)"` and nested command strings.
+    quote = None
+    i, n = 0, len(segment)
+    while i < n:
+        ch = segment[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            i += 1
             continue
-        if _abs_outside(target):
+        if ch == "\\" and i + 1 < n:
+            i += 2
             continue
-        return True
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if ch == ">" and (i == 0 or not segment[i - 1].isdigit()):
+            j = i + 1
+            if j < n and segment[j] == ">":
+                j += 1
+            while j < n and segment[j].isspace():
+                j += 1
+            if j < n and segment[j] in ("'", '"'):
+                close = segment[j]
+                j += 1
+                start = j
+                while j < n and segment[j] != close:
+                    j += 1
+                target = segment[start:j]
+            else:
+                start = j
+                while j < n and segment[j] not in " \t\r\n;|&":
+                    j += 1
+                target = segment[start:j]
+            target = target.strip("'\"")
+            if target and target not in ("/dev/null", "/dev/stdout", "/dev/stderr", "&1", "&2") \
+                    and not _abs_outside(target):
+                return True
+            i = j
+            continue
+        i += 1
     return False
 
 
