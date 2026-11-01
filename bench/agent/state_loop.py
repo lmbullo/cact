@@ -71,6 +71,7 @@ Read the diff after a mutation. A file is only "read" up to the ranges shown by 
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
 _CITED = re.compile(r"`([^`\n]+)`")
+_NUMBERED = re.compile(r"^\s*\d+\| ?(.*)$")
 _PLAIN_PATH = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:py|ts|tsx|js|md|json|csv|txt|toml|yaml|yml))")
 _READ_GATE_MAX_LINES = 4000
 
@@ -161,12 +162,45 @@ class StateLoop(ToolLoop):
         self.deltas: dict[str, str] = {}
 
     def _note_cell(self, cell) -> None:
-        for path, entry in (cell.reads or {}).items():
-            current = self.coverage.setdefault(path, {"ranges": [], "total": 0})
-            current["ranges"].extend(entry.get("ranges") or [])
-            current["total"] = int(entry.get("total") or current["total"] or 0)
         for path, block in split_delta(cell.delta or "").items():
             self.deltas[path] = block
+
+    def _displayed(self, cell, body: str) -> dict[str, list[list[int]]]:
+        out: dict[str, list[list[int]]] = {}
+        root = str(getattr(self.kernel, "root", ""))
+        for path, entry in (cell.reads or {}).items():
+            try:
+                target = Path(root, path)
+                if target.stat().st_size > 2_000_000:
+                    continue
+                lines = target.read_text(errors="replace").splitlines()
+            except OSError:
+                continue
+            kept: list[list[int]] = []
+            run: list[int] = []
+            total = int(entry.get("total") or 0)
+            seen = set()
+            for line in body.splitlines():
+                match = _NUMBERED.match(line)
+                seen.add((match.group(1) if match else line).rstrip())
+            for a, b in entry.get("ranges") or []:
+                for number in range(int(a), min(int(b), len(lines)) + 1):
+                    text = lines[number - 1]
+                    probe = text.rstrip()
+                    shown = bool(probe.strip()) and (probe in seen or (len(probe) > 400 and probe[:400] in seen))
+                    if shown:
+                        run.append(number)
+                    elif run:
+                        kept.append([run[0], run[-1]])
+                        run = []
+            if run:
+                kept.append([run[0], run[-1]])
+            if kept:
+                out[path] = kept
+                current = self.coverage.setdefault(path, {"ranges": [], "total": 0})
+                current["ranges"].extend(kept)
+                current["total"] = total or current["total"]
+        return out
 
     def _read_rejection(self, final: str) -> str | None:
         if not self.coverage:
@@ -215,21 +249,24 @@ class StateLoop(ToolLoop):
                 parts.append(f"[check] {self.last_check.cmd}: passed")
             else:
                 parts.append("[check] failing\n" + clip(self.last_check.text(1200), 1500))
-        for path, entry in sorted((cell.reads or {}).items()):
-            total = int(entry.get("total") or 0)
-            ranges = entry.get("ranges") or []
-            shown = ", ".join(f"{a}-{b}" for a, b in merge_ranges(ranges))
+        handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
+        body: list[str] = []
+        if cell.stderr:
+            body.append("[stderr]\n" + clip(digest(cell.stderr, self.output_budget, handle), self.output_budget))
+        if cell.stdout:
+            body.append("[stdout]\n" + clip(digest(cell.stdout, self.output_budget, handle), self.output_budget))
+        if cell.result is not None:
+            body.append("[result] " + clip(cell.result, 1500))
+        visible = "\n".join(body)
+        displayed = self._displayed(cell, visible)
+        for path, ranges in sorted(displayed.items()):
             session = self.coverage.get(path) or {}
-            missing = gaps((session.get("ranges") or []) + ranges, total)
+            total = int(session.get("total") or 0)
+            shown = ", ".join(f"{a}-{b}" for a, b in merge_ranges(ranges))
+            missing = gaps(session.get("ranges") or [], total)
             tail = f" (next {missing[0][0]})" if missing else ""
             parts.append(f"[read] {path} {shown}/{total}{tail}")
-        handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
-        if cell.stderr:
-            parts.append("[stderr]\n" + clip(digest(cell.stderr, self.output_budget, handle), self.output_budget))
-        if cell.stdout:
-            parts.append("[stdout]\n" + clip(digest(cell.stdout, self.output_budget, handle), self.output_budget))
-        if cell.result is not None:
-            parts.append("[result] " + clip(cell.result, 1500))
+        parts.extend(body)
         return "\n".join(parts)
 
     def _compact(self, messages: list[dict]) -> None:

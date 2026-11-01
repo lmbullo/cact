@@ -174,7 +174,17 @@ def main() -> int:
         cell = kernel.run("run('echo cached-check')", check_cache={"echo cached-check": "PASSED"})
         check("kernel: a plan check answers run() from the cache",
               "check_cached" in str(cell.result) and "PASSED" in str(cell.result), str(cell.result)[:160])
+        from bench.agent.kernel import Cell
         probe = state_loop.StateLoop(object(), kernel, loop.Budget(), read_gate=True, keep_messages=4)
+        shown = Cell("[stdout]\nalpha\nbeta\n", "", None, None, 1, reads={"a.txt": {"ranges": [[1, 2]], "total": 2}})
+        probe._observe(shown, 1)
+        check("state: a printed read counts as delivered",
+              probe.coverage.get("a.txt", {}).get("ranges") == [[1, 2]], str(probe.coverage))
+        clipped = Cell("[stdout]\nalpha\n...[2 lines]...\n", "", None, None, 1, reads={"b.txt": {"ranges": [[1, 2]], "total": 2}})
+        (root / "b.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+        probe._observe(clipped, 2)
+        hole = probe._read_rejection("see `b.txt`")
+        check("state: a clipped read leaves a hole", hole is not None and "unread 2-2" in hole, str(hole)[:120])
         probe.coverage = {"big.txt": {"ranges": [[1, 10]], "total": 900}}
         message = probe._read_rejection("see `big.txt`")
         check("state: read gate rejects a cited file with holes",
