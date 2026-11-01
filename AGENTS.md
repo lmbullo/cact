@@ -49,14 +49,14 @@ inside `tui/`.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
    **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and
    `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
-   them. All four go through `_commit`, which is what makes the journal honest.
+   them. All of them go through `_commit`, which is what makes the journal honest.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired.
-5. **The check plan is the goal** (`bench/agent/checks.py`). `run_specs` runs an ordered
+5. **The check plan is the goal** (`bench/agent/checks.py`). `run_specs` runs the ordered
    plan and returns the first failure; the `cheap` subset re-runs after a mutating cell and
-   is printed as the `[check]` line of the state card. `final_answer` is rejected until the
-   whole plan passes (`GOAL_UNMET`) unless `goal_stops=False` in which case the check only
-   reports. A plan entry may not rewrite the tests it grades.
+   is printed as the `[check]` line of the state card. `final_answer` is rejected
+   (`GOAL_UNMET`) until the whole plan passes. Production passes `goal_stops=False`, so a
+   failing check never ends the run by itself — it only rejects the finish.
 6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the fixtures.
    Editing a fixture silently redefines the expected answers.
 7. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
@@ -74,7 +74,8 @@ inside `tui/`.
 
 ```bash
 python3 bench/smoke.py                     # offline contract check: imports, kernel prelude,
-                                           # run() refusal, envelopes, reply parsing, checks
+                                           # run() redirect + refusal, apply/commit,
+                                           # envelopes, reply parsing, check parsing
 python3 -m compileall -q bench tui/python  # syntax
 cd tui && bun run typecheck && bun test    # TS: 5 tests, 4 files
 ```
