@@ -20,10 +20,12 @@ INVARIANTS
     (bun `(fail)`, pytest `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines).
   - A goal that raises becomes `unrunnable`, not an exception in the loop.
   - Goals are callables, not command strings: tui/python/worker.py builds
-    `lambda: run_check(check, workspace)` so the check re-runs on every finish attempt.
+    `lambda: run_specs(specs, workspace)` so the plan re-runs on every finish attempt.
+    Several commands (a cheap health subset plus the full suite) live in checks.py.
 
 WHERE TO CHANGE
   Recognise another test runner's failure lines ... _PATTERNS, _failures
+  Several checks / a cheap health subset ......... checks.py (CheckSpec, run_specs)
   How a check is executed ........................ run_check (timeout, bash, cwd)
   What the model is told on failure .............. Check.text
 """

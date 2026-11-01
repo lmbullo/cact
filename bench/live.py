@@ -9,7 +9,8 @@ WHAT IT IS
 
 ENTRY POINTS
   python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "..." \
-          --check "bun run typecheck" [--legacy r1|r3|both]
+          --check "bun run typecheck" [--checks '[{"name":"smoke","cmd":"...","cheap":true}]']
+          [--legacy r1|r3|both]
   load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env}
 
 INVARIANTS
@@ -20,6 +21,9 @@ INVARIANTS
     changes its messages, this breaks first.
   - `--legacy` toggles the worker's legacy env flags (`CODE_TUI_LEGACY_TIMEOUT`,
     `CODE_TUI_LEGACY_CHECK`) so old behaviour stays reproducible.
+  - `--check` is a single command; `--checks` is a JSON plan (see bench/agent/checks.py)
+    and wins when set. The worker treats the plan as its goal and runs the `cheap` subset
+    after mutating cells.
   - The check runs twice by design: once inside the agent as its goal, once here as the
     independent verdict printed in the summary.
 

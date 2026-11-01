@@ -1,3 +1,34 @@
+"""The check plan: an ordered list of project commands, cheap health checks first.
+
+WHAT IT IS
+  `CheckSpec.parse(raw)` reads the plan from a command string or a JSON list of
+  `{name, cmd, cheap}`; `run_specs(specs, cwd)` runs it and returns the first failure as a
+  `Check`, or a synthetic `passed` when every command passes.
+
+  One plan, two roles:
+    goal    the whole plan is what `final_answer` must satisfy (tool_loop: GOAL_UNMET)
+    health  the `cheap` subset re-runs after a mutating cell and shows up as the `[check]`
+            line of the state card (tool_loop `health=`, state_loop `_observe`)
+
+ENTRY POINTS
+  CheckSpec(name, cmd, cheap=False)       .parse(raw) -> list[CheckSpec]
+  run_specs(specs, cwd) -> Check | None   None when the plan is empty
+
+INVARIANTS
+  - Order is the contract: put the cheap, fast checks (smoke, typecheck) first so a broken
+    tree is reported before the slow suite runs. The first failure is returned and the rest
+    are skipped.
+  - `unrunnable` from check.py survives the plan: a command that cannot run is a broken
+    check, never a broken project.
+  - A plan is data, never a shell string. server.ts detects the default plan
+    (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts) and
+    passes it to worker.py as `--checks <json>`; bench/live.py forwards `--checks` the same way.
+
+WHERE TO CHANGE
+  Plan parsing .................... CheckSpec.parse
+  How a plan runs and what it returns ... run_specs
+  The default plan for a workspace ...... tui/src/server.ts::detectChecks
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
