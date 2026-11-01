@@ -28,7 +28,7 @@ inside `tui/`.
 |---|---|
 | `bench/agent/kernel.py` | `DRIVER` + `PRELUDE` + `RUN_PRELUDE` define the agent's entire action space, and `Kernel` is the subprocess that enforces it |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
-| `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, goal checks, stop reasons |
+| `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `tui/python/worker.py` | The seam between the TUI and `bench`: builds the loop, streams `@@TUI@@` JSON lines to `server.ts` |
 
@@ -38,22 +38,35 @@ inside `tui/`.
    printed, the answer is rejected and the output is returned to the model. With a goal
    check, `final_answer` is also rejected until the check passes. `run.py` grades
    `result.final`; a prose reply with no tool call is the summary.
-2. **`run()` is not a file interface.** `_run_protocol_error` in `kernel.py` refuses
-   `cat head tail wc grep rg ag sed awk find ls tree du tee touch cp mv rm truncate`, output
-   redirection, `git ls-files/grep/show/...`, and `python3 -c` that inspects project files.
-   Keep that list honest: the model must use `read()`, `grep()`, `map()`, `write()`, `edit()`.
+2. **`run()` is not a file interface — it redirects the easy cases and refuses the rest.**
+   A plain `cat`, `head`, `tail`, `ls`, `wc -l`, or `grep PATTERN FILE` is translated into the
+   matching helper and comes back as `kind: "redirected"` (`ran` names the call that ran).
+   Everything else in `_RUN_FILE_TOOLS` (`rg`, `sed`, `awk`, `find`, `tree`, `du`, `tee`,
+   `touch`, `cp`, `mv`, `rm`, `truncate`, ...), `echo >`/`printf >`, `git show/ls-files/...`
+   and `-c`/`-e` scripting is refused by `_run_protocol_error` as `kind: "wrong_call"` with a
+   `use` hint. `python3 -c` passes only when the code is imports and nothing else
+   (`_is_import_only`). Keep `_redirect_file_command`, `_HINT` and the RUN_NOTE text honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
-   **`edit()` reports ambiguity rather than guessing**; both are journalled.
+   **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and
+   `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
+   them. All four go through `_commit`, which is what makes the journal honest.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired.
-5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the fixtures.
+5. **The check plan is the goal** (`bench/agent/checks.py`). `run_specs` runs an ordered
+   plan and returns the first failure; the `cheap` subset re-runs after a mutating cell and
+   is printed as the `[check]` line of the state card. `final_answer` is rejected until the
+   whole plan passes (`GOAL_UNMET`) unless `goal_stops=False` in which case the check only
+   reports. A plan entry may not rewrite the tests it grades.
+6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the fixtures.
    Editing a fixture silently redefines the expected answers.
-6. **`bench/traces/` and `bench/ws/runs/` are append-only evidence.** Add runs; never rewrite
-   recorded journals.
-7. **Generated, not source:** `bench/.tmp/` (per-run workspaces), `bench/.cache/` (cached LLM
-   replies), `tui/node_modules/`, and the TUI state root `~/.local/state/code-tui/`.
-   `bench/edge_fixtures/` is committed but is rebuilt by `edge.build()` when missing.
-8. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
+7. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
+   `bench/ws/` (frozen workspaces + `runs/` journals) is gitignored measurement output:
+   regenerate it with `bench/ws.py` / `bench/live.py` instead of expecting it in a fresh clone.
+8. **Generated, not source:** `bench/.tmp/` (per-run workspaces), `bench/.cache/` (cached LLM
+   replies), `bench/ws/` (frozen workspaces, rebuilt on demand), `tui/node_modules/`, and the
+   TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is
+   rebuilt by `edge.build()` when missing.
+9. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
    mode (`python3 -m bench.run`). Keep both working.
 
 ## Verify a change
@@ -85,5 +98,8 @@ the trace format.
 - Prose is for agents: state the contract, the entry point and the failure mode; skip
   tutorials.
 - When you add a helper to the kernel, add the matching rule text to `tool_loop.TOOL_RULES` /
-  `repl.REPL_RULES` / `state_loop.STATE_RULES`, or the model will not know it exists.
+  `repl.REPL_RULES` / `state_loop.STATE_RULES`, or the model will not know it exists. If it
+  replaces a shell verb, add it to `_redirect_file_command` and `_HINT` too.
+- When you add a check command, give it a name and mark it `cheap` only if it takes seconds;
+  the cheap ones run after every mutating cell.
 - When you add an edge task, also add its fixture to `edge.build()`.

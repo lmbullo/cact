@@ -28,7 +28,7 @@ is, its entry points, its invariants and where to change what.
 
 | File | Why |
 |---|---|
-| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `map`, `write`, `edit`, `run`, `changes`, `diff`, `undo`, `final_answer`) |
+| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `map`, `write`, `edit`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `final_answer`) |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, with output digests and context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
@@ -51,7 +51,7 @@ cact/
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
 │   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, sweep/ batches
-│   ├── ws/                  frozen TUI workspaces (tui-base, tui-broken) + runs/ journals
+│   ├── ws/                  generated: frozen TUI workspaces (tui-base, tui-broken) + runs/ journals
 │   ├── .tmp/, .cache/       generated, gitignored (per-run workspaces, LLM response cache)
 │   └── agent/
 │       ├── kernel.py        subprocess driver (DRIVER, RUN_PRELUDE) + in-child PRELUDE helpers
@@ -63,6 +63,7 @@ cact/
 │       ├── reply.py         parse model text into an Action (markup repair, fences, ANSWER:)
 │       ├── tools.py         classic tool API: read/find/calc/map/write/edit + Registry + envelopes
 │       ├── check.py         run_check(): runs tsc/pytest/bun test, extracts failures into a Check
+│       ├── checks.py        the check plan (goal + cheap health subset), run_specs
 │       ├── trace.py         Trace JSONL writer + render() for humans
 │       └── config.py        production defaults + build() factory (CODE_TUI_MODE)
 └── tui/
@@ -93,7 +94,8 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per cell
-          ├─ PRELUDE: read/grep/map/write/edit/changes/diff/undo, final_answer, emit
+          ├─ PRELUDE: read/grep/map/write/edit/apply/commit, changes/diff/undo,
+          │           final_answer, emit
           └─ RUN_PRELUDE: run() — whole programs only
                   │
                   ▼
@@ -111,7 +113,15 @@ bench/run.py                        tui/bin/code
   `run()` disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
   bind of the root only when `writable=True`).
 - **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
-  what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from.
+  what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
+  `edit()`, `apply()` and `commit()` all funnel through the same `_commit`, so a multi-file
+  `apply()`/`commit()` is one diff and one `undo()`.
+- **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap}`.
+  The whole plan is the goal (`final_answer` is rejected until it passes); the `cheap`
+  subset re-runs after a mutating cell and appears as the `[check]` line of the next state
+  card. `run()`'s file-verb guard is not a wall either: plain `cat`, `head`, `tail`, `ls`,
+  `wc -l` and `grep PATTERN FILE` are redirected to the matching helper and return
+  `kind: "redirected"`.
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
   `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
   state of its own and reconnects every second.
@@ -202,21 +212,29 @@ imports `bench.agent` from this repo, so the checkout path matters.
    printed, the answer is rejected, the output is returned to the model, and it must
    resubmit. When a goal check exists, `final_answer` is also rejected until the check
    passes. `run.py` grades `result.final`; a prose reply with no tool call is the summary.
-2. **`run()` is not a file interface.** `_run_protocol_error` blocks `cat head tail wc
-   grep rg sed awk find ls tree du tee touch cp mv rm truncate`, `echo >`, `printf >`,
-   `git ls-files/grep/show/...`, and `python3 -c` that inspects project files. Keep that
-   list honest: the agent must use `read()`, `grep()`, `map()`, `write()`, `edit()`.
+2. **`run()` is not a file interface — it redirects the easy cases and refuses the rest.**
+   A plain `cat`, `head`, `tail`, `ls`, `wc -l` or `grep PATTERN FILE` is executed through
+   the matching helper and returns `kind: "redirected"` with the parsed result. Everything
+   else in `_RUN_FILE_TOOLS` (`rg`, `sed`, `awk`, `find`, `tree`, `du`, `tee`, `touch`, `cp`,
+   `mv`, `rm`, `truncate`, ...), `echo >`, `printf >`, `git ls-files/grep/show/...` and
+   `-c`/`-e` scripting is refused with `kind: "wrong_call"` and a `use` hint. `python3 -c`
+   passes only when the code is imports and nothing else. Keep `_redirect_file_command`,
+   `_HINT` and the RUN_NOTE text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without
-   `force=True`); **`edit()` reports ambiguity instead of guessing**; both are journalled.
+   `force=True`); **`edit()` reports ambiguity instead of guessing**; `apply(<unified diff>)`
+   and `commit({path: text})` write several files in one cell. All of them go through the
+   same journalled `_commit`.
 4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or
    `test_calc2.py` scores zero — repair the source.
 5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the
    fixtures. Editing a fixture silently redefines the expected answers.
-6. **`bench/traces/` and `bench/ws/runs/` are append-only evidence.** Add new runs; never
-   rewrite recorded journals. The `sweep/` files are batch summaries.
+6. **`bench/traces/` is append-only evidence.** Add new runs; never rewrite recorded
+   journals. The `sweep/` files are batch summaries. `bench/ws/` (frozen workspaces and
+   `runs/` journals) is gitignored measurement output — regenerate it with `bench/ws.py` and
+   `bench/live.py`.
 7. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
-   `bench/.cache/` (LLM replies), `tui/node_modules/`, `tmp8_w_n1sf/`, and the TUI state
-   root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is recreated
+   `bench/.cache/` (LLM replies), `bench/ws/` (frozen workspaces), `tui/node_modules/`,
+   `tmp8_w_n1sf/`, and the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is recreated
    by `edge.build()` whenever it is missing — if you add an edge task, add its fixture
    there (or extend `build()`).
 
@@ -226,13 +244,14 @@ imports `bench.agent` from this repo, so the checkout path matters.
 
 | Change | Touch |
 |---|---|
-| What the agent can do (new file/exec helper) | `kernel.PRELUDE` or `RUN_PRELUDE`, plus the matching rule text in `tool_loop.TOOL_RULES` / `repl.RULES` / `state_loop.STATE_RULES` |
+| What the agent can do (new file/exec helper) | `kernel.PRELUDE` or `RUN_PRELUDE`, plus the matching rule text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`; if it replaces a shell verb, `_redirect_file_command` + `_HINT` |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run` (and `repl.py` if REPL) |
 | A new benchmark task | `tasks.py` (read/mutation) or `edge.py` (edge), then a run to record the trace |
 | Grading semantics | the `grade_*` functions in `tasks.py` / `edge.py` |
 | Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env vars |
 | Goal check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |
+| The check plan / cheap health check | `checks.py` (`CheckSpec.parse`, `run_specs`), `server.ts::detectChecks` |
 | Task board, live log, prompt box | `tui/src/client.tsx` + `tui/src/list-model.ts` (pure, tested) |
 | Queueing, cancellation, journal format | `tui/src/server.ts` |
 | What the TUI sends the agent | `tui/python/worker.py` (`AUTONOMOUS`, rules, budgets, status mapping) |
@@ -246,12 +265,14 @@ imports `bench.agent` from this repo, so the checkout path matters.
   Keep both working.
 - The default `--suite read` tasks only need text answers; only `mutation`/`edge` tasks
   set `mutates=True` and get `write`/`edit` plus a writable kernel.
-- Budget mismatch: `run.py` defaults to 200 steps / 3600 s, the TUI defaults to 120 steps
+- Budget mismatch: `run.py` defaults to 200 steps / 3600 s, the TUI defaults to 300 steps
   / 1800 s / 120 s per cell (`CODE_TUI_MAX_*`).
-- The TUI server picks a verification command automatically (`typecheck`, else `test`
-  from `package.json`, else none); an empty `CODE_TUI_CHECK` opts out.
+- The TUI server detects a check plan automatically: `CODE_TUI_CHECKS` (JSON list) wins,
+  else `CODE_TUI_CHECK`, else `python3 bench/smoke.py` plus `typecheck`/`test` from the
+  root and `tui/package.json`. Cheap entries run after every mutating cell; the whole plan
+  gates `final_answer`. An empty `CODE_TUI_CHECK` opts out.
 - `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — do not edit
-  them in place; clone with `bench.ws.clone` first.
+  them in place; clone with `bench.ws.clone` first. They are gitignored; regenerate them.
 - Tests are TS only (`bun test` = 5 passing tests across 4 files). Python has no test
   framework: `python3 bench/smoke.py` is the offline contract check (kernel prelude, `Cell`
   fields, tool envelopes, reply parsing), and a real change is then confirmed by running a
