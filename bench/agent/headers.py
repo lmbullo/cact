@@ -12,10 +12,13 @@ WHAT IT IS
     SECTIONS         the four names, in order
 
   Kernel cells cannot import `bench`: their cwd is a task workspace and their interpreter is
-  a bare `python3 -c`. `kernel.py` therefore prepends *this file's source* to `PRELUDE`, so
-  the `guide()` verb and `python3 bench/map.py` run identical code. Everything here is
-  stdlib-only, side-effect-free, and resolves the tree from the current working directory
-  when `root` is omitted — which is why it works unchanged in both processes.
+  a bare `python3 -c`. `kernel.py` therefore ships *this file's source* to the child in
+  KERNEL_HEADERS, execs it into a private `_HEADERS` namespace, and exposes one verb,
+  `guide()`, so the verb and `python3 bench/map.py` run identical code. Everything here is
+  stdlib-only (`_OPEN` pins builtins.open before the prelude replaces it), side-effect-free,
+  and resolves the tree from the current working directory when `root` is omitted — which is
+  why it works unchanged in both processes, and why it must never import `bench` or read
+  `__file__`.
 
 ENTRY POINTS
   python3 bench/map.py [--query TEXT | --module PATH | --json | --check]
