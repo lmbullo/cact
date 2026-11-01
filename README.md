@@ -299,7 +299,7 @@ imports `bench.agent` from this repo, so the checkout path matters.
   them in place; clone with `bench.ws.clone` first. `bench/ws/` is gitignored: recreate
   `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and `tui-broken` as
   that tree with `tests/log.test.tsx` failing.
-- Tests are TS only (`bun test` = 5 passing tests across 4 files). Python has no test
+- Tests are TS only (`bun test` = 12 passing tests across 5 files). Python has no test
   framework: `python3 bench/smoke.py` is the offline contract check (kernel prelude, `Cell`
   fields, tool envelopes, reply parsing), and a real change is then confirmed by running a
   benchmark task. The React `act(...)` warnings in the test output are expected noise.

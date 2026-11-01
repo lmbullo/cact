@@ -82,7 +82,7 @@ python3 bench/smoke.py                     # offline contract check: imports, ke
                                            # run() allow + refusal, apply/commit,
                                            # envelopes, reply parsing, check parsing
 python3 -m compileall -q bench tui/python  # syntax
-cd tui && bun run typecheck && bun test    # TS: 5 tests, 4 files
+cd tui && bun run typecheck && bun test    # TS: 12 tests, 5 files
 ```
 
 `bench/smoke.py` is the fast signal: no key, no network, nothing written outside a temp dir.

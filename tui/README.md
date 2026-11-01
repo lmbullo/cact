@@ -318,7 +318,7 @@ expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, prompt and view rendering (5 tests, 4 files)
+bun test            # tests/: list, log, prompt, view rendering and check detection (12 tests, 5 files)
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on the captured
