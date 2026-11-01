@@ -123,6 +123,15 @@ def main() -> int:
         check("kernel: edit reports the file", cell.changed == ["b.txt"], str(cell.changed))
         check("kernel: diff shows the hunk", "-one" in cell.delta and "+uno" in cell.delta, cell.delta[:120])
 
+        kernel.run("write('gone.txt', 'x')")
+        cell = kernel.run("import os; os.remove('gone.txt')")
+        check("kernel: an untyped deletion is a change",
+              cell.changed == ["gone.txt"], str(cell.changed))
+
+        cell = kernel.run("write('ghost.txt', 'x'); import os; os.remove('ghost.txt')")
+        check("kernel: a created-then-deleted file is not a change",
+              cell.changed == [] and not (root / "ghost.txt").exists(), str(cell.changed))
+
         cell = kernel.run("print(type(diff()).__name__); print(diff()[:20])")
         check("kernel: diff() returns text, not a dict",
               "str" in cell.stdout and "---" in cell.stdout, cell.stdout[:160])

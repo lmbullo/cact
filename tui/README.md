@@ -234,10 +234,13 @@ Environment variables are read by the server (and inherited by workers), plus
 
 ### Verification: the check plan
 
-On startup the server detects a *plan* (an ordered list of named commands):
+When a task starts the server detects a *plan* (an ordered list of named commands):
 `CODE_TUI_CHECKS` if it is set, else `CODE_TUI_CHECK` as a single entry, else
-`python3 bench/smoke.py` (when the workspace has one) plus `typecheck`/`test` from the
-root and `tui/package.json`. The plan is passed to the worker as `--checks <json>`.
+`python3 bench/smoke.py` (when the workspace has one) plus `typecheck`/`test` (or `build`
+when neither exists) from the root and `tui/package.json`. The plan is re-detected per
+task, so a script an earlier task added is picked up without restarting the server. The
+runner follows the lockfile (`bun.lock` -> bun, `package-lock.json` -> npm). The plan is
+passed to the worker as `--checks <json>`.
 
 A plan entry has `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes used by
 the cheap health run: a scoped entry is skipped unless the cell changed a path under one

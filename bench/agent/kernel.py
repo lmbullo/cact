@@ -221,13 +221,24 @@ for line in sys.stdin:
         except Exception:
             _delta = ""
     # `changed` is THIS cell, not the session: typed commits are in _CELL_CHANGED and a
-    # program that wrote through open()/subprocess shows up in the tree delta.
-    _changed = list(ns.get("_CELL_CHANGED") or [])
+    # program that wrote through open()/subprocess shows up in the tree delta. A file that
+    # was created and removed in the same cell is not a change, so filter the typed list by
+    # the current tree as well.
+    _delta_paths = set()
     for _line in _delta.splitlines():
         if _line.startswith("+++ b/"):
-            _rel = _line[6:].strip()
-            if _rel not in _changed:
-                _changed.append(_rel)
+            _delta_paths.add(_line[6:].strip())
+        elif _line.startswith("--- a/"):
+            # Deletions show as a/... -> /dev/null; the source side still names the path.
+            _delta_paths.add(_line[6:].strip())
+    _now_state = ns.get("_LAST_STATE") or {}
+    _base_state = ns.get("_BASE") or {}
+    _changed: list[str] = []
+    for _rel in list(ns.get("_CELL_CHANGED") or []) + sorted(_delta_paths):
+        if _rel in _changed:
+            continue
+        if _rel in _delta_paths or _base_state.get(_rel, {}).get("text") != _now_state.get(_rel):
+            _changed.append(_rel)
     _mutated = _mutated or bool(_changed)
     _obs_log = ns.setdefault("_OBS", [])
     _obs_log.append({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr})
