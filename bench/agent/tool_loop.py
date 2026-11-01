@@ -9,7 +9,8 @@ WHAT IT IS
 ENTRY POINTS
   PYTHON_TOOL .. the single tool spec sent to the client
   TOOL_RULES ... system prompt: use the kernel for everything, finish with final_answer
-  ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars)
+  ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
+           health)
     .run(task_id, prompt, trace) -> RunResult
   Hooks subclasses override: `_observe(cell, steps)` (cell -> text), `_compact(messages)`
     (context management), `_goal_state()` (goal -> (ok, Check)).
@@ -19,6 +20,9 @@ INVARIANTS
     back to the model; the answer is not accepted.
   - With a goal, finishing before the check passes is rejected (GOAL_UNMET).
     `goal_stops=True` ends the run itself once a mutating cell passes the goal (VERIFIED).
+  - `health` is an optional cheap check plan (checks.run_specs over the `cheap` specs). After
+    a mutating cell, at most once every 20s, its result lands in `self.last_check` and is
+    rendered as the `[check]` line of the next card. It never ends the run; the full goal does.
   - BAD_ARGS / TRUNCATED mean nothing ran and the model is told why.
   - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, UNREVIEWED, GOAL_UNMET,
     TRUNCATED, BAD_ARGS (this loop never emits NO_PROGRESS/TOOL_LIMIT).
@@ -29,6 +33,8 @@ WHERE TO CHANGE
   What the model sees per cell ......... `_observe` (StateLoop overrides it with state cards)
   Rules and tool description ........... TOOL_RULES, PYTHON_TOOL
   When a task counts as done ........... the `goal` passed in by run.py / worker.py
+  The cheap check in the card .......... `health`, `_health_at`, `last_check` (remember to
+                                          reset it in `_observe` when you change the card)
 """
 from __future__ import annotations
 

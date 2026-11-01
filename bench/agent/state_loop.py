@@ -21,8 +21,9 @@ ENTRY POINTS
                                      _OBS[i]" + tail
   StateLoop(..., output_budget, context_budget, keep_messages)
     ._observe(cell, steps) -> str    the card
-    ._compact(messages)              fold old turns into a [history] message
-    ._estimate(messages)             chars/4 heuristic for the context budget
+    ._compact(messages)              fold old turns into a [history] message; gated on
+                                     `last_prompt_tokens`, the provider's real count
+    health= / last_check             the cheap check rendered as the `[check]` line
 
 INVARIANTS
   - Output is never silently dropped: the card always names the `_OBS[n]` entry holding the
@@ -32,11 +33,15 @@ INVARIANTS
     from its call.
   - The `[state] changed:` line and `[diff]` both come from `Cell.changed` / `Cell.delta`,
     which the kernel's journal produces (kernel.py::_commit).
+  - `[check]` is ToolLoop's `last_check` (the `health` plan's cheap subset, refreshed after a
+    mutating cell at most every 20s); this class only renders it.
+  - Compaction triggers on the real prompt token count at `context_budget` (config sets 85%
+    of the 1M window), never on a character estimate; it cuts only on a tool-call boundary.
 
 WHERE TO CHANGE
   Card layout / error-line selection ... `_observe`, `digest`, `_ERROR_LINE`, `clip`
-  Compaction policy ..................... `_compact`, `_estimate`, `keep_messages`,
-                                          `context_budget`
+  Compaction policy ..................... `_compact`, `keep_messages`, `context_budget`
+                                          (config.COMPACT_AT / COMPACT_AT_TOKENS)
   What the model is told about cards ... STATE_RULES (keep it in sync with `_observe`)
 """
 from __future__ import annotations

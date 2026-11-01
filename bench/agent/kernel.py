@@ -19,8 +19,8 @@ ENTRY POINTS
     .stop()    SIGKILL the process group
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
         mutated, changed, delta, timeout
-  Inside the kernel namespace: read(), grep(), map(), write(), edit(), changes(), diff(),
-        undo(), run() (when allow_run), final_answer(), emit()
+  Inside the kernel namespace: read(), grep(), map(), write(), edit(), apply(), commit(),
+        changes(), diff(), undo(), run() (when allow_run), final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish protocol).
 
@@ -38,7 +38,14 @@ INVARIANTS
   - Every mutation goes through `_commit`: journal row, snapshot diff, `_CELL_CHANGED`.
     That single path is what changes()/diff()/undo() and the `[state] changed:` card read.
     `write()` replaces (refuses to drop a tail without force=True); `edit()` reports
-    ambiguity instead of guessing.
+    ambiguity instead of guessing; `apply(unified diff)` and `commit({path: text})` write
+    several files in one cell, so one diff()/undo() covers the whole change set.
+  - run() is not a file interface, but it is not a wall either: a plain
+    `cat|head|tail|ls|wc -l|grep PATTERN FILE` command is *redirected* to the matching helper
+    and returns `kind: "redirected"` with the helper's parsed result (`ran` names the call).
+    Everything else in `_RUN_FILE_TOOLS`, `git show/ls-files/...`, redirection and
+    `-c`/`-e` scripting is refused with `kind: "wrong_call"` plus a `use` hint. `python3 -c`
+    is allowed only when the code is imports and nothing else (`_is_import_only`).
   - run() enabled => the child is a plain `python3 -u -c DRIVER`. run() disabled => the child
     runs under bwrap with a read-only `/` (the root is bind-mounted writable only when
     `writable=True`).
@@ -54,6 +61,8 @@ WHERE TO CHANGE
   Change the run() protocol list .......... `_RUN_FILE_TOOLS` / `_RUN_GIT` / `_RUN_EVAL` and
                                             `_run_protocol_error`, then the RUN_NOTE text in
                                             repl.py and the README contract list
+  Change what run() redirects ............. `_redirect_file_command` + `_HINT` (keep both in
+                                            step with the helper signatures)
 """
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ ENTRY POINTS
   CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY ... production constants
   budget(steps, wall_s, output=MAX_OUTPUT) -> Budget         clamped to MAX_OUTPUT
   build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
-        goal_stops, mode=MODE) -> StateLoop | ToolLoop | ReplLoop
+        goal_stops, mode=MODE, health=None) -> StateLoop | ToolLoop | ReplLoop
 
 INVARIANTS
   - `build` is the only construction site in production; the benchmark CLI constructs loops
@@ -16,10 +16,15 @@ INVARIANTS
   - Unknown `mode` falls through to ReplLoop, so a typo degrades to the simplest loop instead
     of crashing a worker.
   - Constants are TUI-facing. Benchmark defaults live in loop.Budget and run.py flags.
+  - COMPACT_AT_TOKENS (85% of the 1M window) is what StateLoop compares the provider's real
+    prompt token count against; OBS_CHARS=0 means the state card decides, not a char cap.
+  - `health` is only wired for the state/tool loops (the goal's cheap subset); ReplLoop
+    ignores it.
 
 WHERE TO CHANGE
   Production loop selection ....... build + MODE
   Production budgets ............... budget, MAX_OUTPUT
+  Compaction threshold ............. CONTEXT_WINDOW, COMPACT_AT, COMPACT_AT_TOKENS
   TUI observation/history policy ... OBS_CHARS, HISTORY (passed straight through to the loop)
 """
 from __future__ import annotations

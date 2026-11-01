@@ -52,7 +52,7 @@ REPL_RULES = """PYTHON REPL CONTRACT
 4. To finish without code, the last line must be exactly "ANSWER: <value>". A reply with neither a python block nor an ANSWER line does not end the task; it is returned to you as a protocol error.
 5. The kernel imports only the standard library; do not install packages into it.
 6. Print only what the answer needs. Output is returned in full.
-7. Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff, and undo(path=None) restores files to their session-start state. Read diff() before you finish.
+7. Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff, and undo(path=None) restores files to their session-start state. For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. Read diff() before you finish.
 8. This is not tools mode. Never emit DSML, XML, <|...|>, or tool-call markup. Your reply must contain only prose and at most one fenced python block.
 """
 
