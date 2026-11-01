@@ -79,7 +79,7 @@ Prefer one large call over many small ones. A single call can loop over files, r
 
 Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
 
-For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() runs any command, including cat/grep/sed/tests/git; only shell verbs that mutate files inside the workspace (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal; /tmp and other paths outside the project are not gated.
+For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() runs any command, including cat/grep/sed/tests/git; only shell verbs that mutate files inside the workspace (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal; scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated.
 
 Finish by calling the python tool with a cell that calls final_answer("<summary>") and prints nothing. If a cell prints output and also calls final_answer, the answer is rejected and the output is returned to you to read first. When the task asks for a specific value, put that value in final_answer, not in prose.
 
@@ -211,7 +211,9 @@ class ToolLoop:
                 candidate = pending if pending is not None else content.strip()
                 met, check = self._goal_state()
                 if self.goal is not None and not met:
-                    messages.append({"role": "user", "content": self._reject(check, "You finished without a passing check")})
+                    notice = self._reject(check, "You finished without a passing check")
+                    messages.append({"role": "user", "content": notice})
+                    rec["notice"] = notice[:2000]
                     rec["stop"] = "GOAL_UNMET"
                     turns.append(rec)
                     if trace:
@@ -222,6 +224,7 @@ class ToolLoop:
                     reason = self._read_rejection(pending)
                     if reason:
                         messages.append({"role": "user", "content": reason})
+                        rec["notice"] = reason[:2000]
                         rec["stop"] = "UNREAD"
                         turns.append(rec)
                         if trace:
@@ -316,17 +319,20 @@ class ToolLoop:
                 if cell.final is not None:
                     if cell.stdout.strip() or cell.stderr.strip():
                         pending = cell.final
-                        messages.append({"role": "tool", "tool_call_id": call_id,
-                                         "content": obs + f"\n[finish] answer staged: {str(cell.final)[:400]!r}. "
-                                         "The cell also produced the output above; check it. Your next reply "
-                                         "with no tool call accepts this answer, or call final_answer(...) "
-                                         "again to change it."})
+                        notice = (obs + f"\n[finish] answer staged: {str(cell.final)[:400]!r}. "
+                                  "The cell also produced the output above; check it. Your next reply "
+                                  "with no tool call accepts this answer, or call final_answer(...) "
+                                  "again to change it.")
+                        messages.append({"role": "tool", "tool_call_id": call_id, "content": notice})
+                        rec["notice"] = notice[-2000:]
                         rec["stop"] = "STAGED"
                         continue
                     met, check = self._goal_state()
                     if not met:
+                        notice = self._reject(check, "final_answer rejected")
                         messages.append({"role": "tool", "tool_call_id": call_id,
-                                         "content": self._reject(check, "final_answer rejected")})
+                                         "content": notice})
+                        rec["notice"] = notice[:2000]
                         rec["stop"] = "GOAL_UNMET"
                         continue
                     if self.read_gate:
@@ -334,6 +340,7 @@ class ToolLoop:
                         if reason:
                             messages.append({"role": "tool", "tool_call_id": call_id,
                                              "content": reason})
+                            rec["notice"] = reason[:2000]
                             rec["stop"] = "UNREAD"
                             continue
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})

@@ -191,6 +191,11 @@ def main() -> int:
         check("kernel: run() allows a mutation outside the workspace",
               "wrong_call" not in allowed and "'ok': True" in allowed, allowed[:200])
 
+        cell = kernel.run("run('rm -rf /home')")
+        refusal = str(cell.result)
+        check("kernel: run() refuses a mutation outside the scratch roots",
+              "wrong_call" in refusal, refusal[:200])
+
         cell = kernel.run("run('rm -rf a.txt')")
         refusal = str(cell.result)
         check("kernel: run() still refuses a workspace mutation",

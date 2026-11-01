@@ -128,8 +128,8 @@ bench/run.py                        tui/bin/code
   that filters the cheap health run only, so a docs-only edit does not typecheck the TUI on
   every cell; the goal still runs the whole plan. `run()` is a shell, not a redirect layer:
   reads, searches, tests, builds and read-only git run as written; only verbs that mutate
-  the workspace are refused (see the contract below). Mutating an absolute path outside the
-  workspace (`rm -rf /tmp/build`, `cp out /tmp/`) is allowed: the journal covers the tree.
+  the workspace are refused (see the contract below). Mutating scratch space (`/tmp`,
+  `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed: the journal covers the tree, not scratch.
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
   `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
   persistent state of its own and reconnects every second.
@@ -234,8 +234,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
    `git checkout/reset/apply/...`, `>` redirection) are refused with `kind: "wrong_call"`
    and a `use` hint, because they would bypass the journal and make `diff()`/`undo()` lie.
    `git add`, `commit`, `push`, `fetch`, `init` and `clone` are allowed: they do not
-   overwrite working-tree content. Mutations whose targets are absolute paths outside the
-   workspace (`/tmp`, scratch dirs) are allowed too; the journal only promises the tree. A program can still write files;
+   overwrite working-tree content. Mutations whose targets are absolute paths under a
+   scratch root (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed; the journal only
+   promises the tree. A program can still write files;
    the journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT`
    and the RUN_NOTE text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without

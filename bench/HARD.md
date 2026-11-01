@@ -78,8 +78,9 @@ Did not earn its keep:
 - **The shell-verb wall.** Refusing `cat`/`grep`/`sed` while allowing `open().read()` was
   incoherent. `run()` now allows reads, searches, tests and read-only git, and refuses only
   verbs that mutate the workspace (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply`, `>`),
-  because those would make `diff()`/`undo()` lie. Mutations targeting absolute paths outside
-  the workspace are allowed, so a temp build (`rm -rf /tmp/base`) is not blocked. Cell
+  because those would make `diff()`/`undo()` lie. Mutations targeting a scratch root
+  (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed, so a temp build
+  (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. Cell
   errors on the edge suite fell from 8 to 0.
 - **Read-coverage gating at finish.** It stays (`CODE_TUI_READ_GATE`, on by default): a real
   run hit five `UNREAD` rejections because a blank line could never count as delivered. The

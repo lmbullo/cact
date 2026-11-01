@@ -62,7 +62,7 @@ RUN_NOTE = """
 RUNNING PROGRAMS
 run(command, timeout=60, cwd=None) executes one bash command from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Prefer the helpers when you want structured output (path, line numbers, total_lines, next.offset): read(), grep(), map().
 
-Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Paths outside the workspace (/tmp, scratch dirs) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
+Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
 """
 
 RUN_NOTE_MUT = """
@@ -70,7 +70,7 @@ RUN_NOTE_MUT = """
 RUNNING PROGRAMS
 run(command, timeout=60, cwd=None) executes one bash command from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Read files with open(path).read() or let a program read them.
 
-Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Paths outside the workspace (/tmp, scratch dirs) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
+Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
 """
 
 BARE_RULES = """Write Python in one ```python block. Cells share a kernel; variables persist. Set ANSWER to the final value to end the task.

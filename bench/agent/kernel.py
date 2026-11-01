@@ -827,14 +827,20 @@ def _segments(command):
     return [part for part in _re.split(r"\|\||&&|\||;|\n", str(command)) if part.strip()]
 
 
+_TMP_ROOTS = {_ros.path.normpath(p) for p in (
+    "/tmp", "/var/tmp", "/dev/shm", _ros.environ.get("TMPDIR") or "/tmp")}
+
+
 def _abs_outside(token):
-    # A path the journal does not cover: absolute, outside the root, with no shell/escape
-    # tricks. Mutating /tmp is fine; mutating the workspace is not.
+    # Only scratch space is exempt: /tmp, /var/tmp, /dev/shm and $TMPDIR. A path outside the
+    # workspace is not enough -- `rm -rf /` is also outside it.
     text = str(token).strip().strip("'\"")
     if not text.startswith("/") or "$" in text or ".." in text:
         return False
     path = _ros.path.normpath(text)
-    return path != _RUN_ROOT and not path.startswith(_RUN_ROOT + _ros.sep)
+    if path == _RUN_ROOT or path.startswith(_RUN_ROOT + _ros.sep):
+        return False
+    return any(path == root or path.startswith(root + _ros.sep) for root in _TMP_ROOTS)
 
 
 def _mutator_targets_outside(parts):
