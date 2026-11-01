@@ -122,7 +122,8 @@ same keys on both screens — you can keep typing (and queue) a prompt while a r
   journals. It serves HTTP plus a WebSocket and skips the worker when no key is set.
 - `python/worker.py` builds the `bench` agent loop with `config.build(...)` over a
   `Kernel` with `prelude="all"` and streams each code cell, turn, and observation back
-  to the server as `@@TUI@@`-prefixed JSON lines.
+  to the server as `@@TUI@@`-prefixed JSON lines. It also prepends a short history of the
+  previous tasks in the same workspace (files they changed, one line each).
 - `src/list-model.ts` is the pure ordering / row / scroll model.
 - The server broadcasts task updates and events over WebSocket; the TUI only keeps
   in-memory state and reconnects every second on close. There is no TUI-side database.
@@ -215,22 +216,36 @@ Environment variables are read by the server (and inherited by workers), plus
 | `CODE_TUI_MODEL` | `deepseek-flash` | Model name |
 | `CODE_TUI_EFFORT` | `low` | `reasoning_effort` (`none` disables it) |
 | `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–8) |
-| `CODE_TUI_MAX_STEPS` | `120` | ReplLoop step cap |
+| `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max characters of cell output kept per call |
 | `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `run()` and uses the bwrap sandbox |
-| `CODE_TUI_CHECK` | auto | Verification command; empty string disables it |
+| `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
+| `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap}]`; wins over `CODE_TUI_CHECK` |
 | `CODE_TUI_PYTHON` | `python3` | Python with `bench` dependencies |
 | `CODE_TUI_STATE_ROOT` | `~/.local/state/code-tui` | Alternative state root |
 
-### Verification goal
+### Verification: the check plan
 
-On startup the server picks a check command: `CODE_TUI_CHECK` if it is set, otherwise
-`bun run typecheck` when the workspace's `package.json` has a `typecheck` script, else
-`bun test` when it has a `test` script, else nothing. The worker passes it to the agent
-as a goal; when the check exits `0` the run stops with `VERIFIED` and lands as `done`
-with the label `verified: <check> passed`. Set `CODE_TUI_CHECK=` to opt out.
+On startup the server detects a *plan* (an ordered list of named commands):
+`CODE_TUI_CHECKS` if it is set, else `CODE_TUI_CHECK` as a single entry, else
+`python3 bench/smoke.py` (when the workspace has one) plus `typecheck`/`test` from the
+root and `tui/package.json`. The plan is passed to the worker as `--checks <json>`.
+
+A plan entry has `{name, cmd, cheap}`. Order matters: the first failure is what the agent
+sees, so cheap checks come first. Two things happen with it:
+
+- **Cheap checks are health checks.** After a cell that mutated the tree, at most once
+  every 20 seconds, the `cheap` entries re-run and the result appears as the `[check]`
+  line of the next state card. They never end the run.
+- **The whole plan is the goal.** `final_answer` is rejected (`GOAL_UNMET`) until every
+  entry passes; when it does, the task lands as `done` with the label
+  `verified: <names> passed`.
+
+`CODE_TUI_CHECK=` (empty) disables the plan. `CODE_TUI_LEGACY_CHECK=1` makes the goal
+answer with a bare pass/fail instead of the parsed `Check`, so a rejection says only that
+the check still fails (the old message, no failure lines).
 
 ## HTTP API
 
@@ -274,9 +289,13 @@ For untrusted tasks use `CODE_TUI_ALLOW_RUN=0`, which uses the `bwrap` read-only
 sandbox and disables the `run()` helper. Test-repair tasks will then be much harder.
 
 `run()` is reserved for whole programs (tests, builds, git, servers). Shell file
-inspection such as `grep`, `cat`, `sed`, `ls`, and `find` is rejected with a protocol
-error; the agent must use `read()`, `grep()`, `map()`, `write()`, or `edit()` instead.
-The kernel prelude provides all five helpers.
+inspection is not allowed: a plain `cat`, `head`, `tail`, `ls`, `wc -l` or
+`grep PATTERN FILE` is *redirected* to the matching helper and returns `kind:
+"redirected"`; anything else (`sed`, `awk`, `find`, `rg`, `rm`, redirection, `git show`,
+`python3 -c` that is not imports-only, ...) is refused as `kind: "wrong_call"` with the
+helper to use instead. The kernel prelude provides `read()`, `grep()`, `map()`, `write()`,
+`edit()`, `apply()` and `commit()`, journalled together so `changes()`/`diff()`/`undo()`
+cover multi-file edits.
 
 The server binds to `127.0.0.1` with a random port. It has no authentication; do not
 expose the port.

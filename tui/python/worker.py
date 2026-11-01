@@ -9,7 +9,7 @@ WHAT IT IS
 ENTRY POINTS
   main()                       argv: --workspace, --prompt-file, --model, --effort,
                                --max-steps, --max-wall, --cell-timeout, --max-output,
-                               --allow-run, --check
+                               --allow-run, --check, --checks
   emit(payload)                one `@@TUI@@{json}` line on stdout (the only protocol channel)
   StreamingKernel(kernel)      Kernel that also emits `cell.start` before each cell
   EventTrace                   Trace-shaped adapter: turn records -> `turn` events
@@ -23,14 +23,20 @@ MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
 INVARIANTS
   - Rules = STATE_RULES (or TOOL_RULES when MODE != "state") + AUTONOMOUS, plus RUN_NOTE
     when run() is enabled. Production is always unattended: no human answers questions.
-  - `--check` becomes a goal callable, so the check re-runs on every finish attempt;
-    `goal_stops=False` means a failing check never ends the run.
+  - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/checks.py.
+    The whole plan becomes the goal callable, so it re-runs on every finish attempt and
+    `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
+    never ends the run by itself. The `cheap` entries also become the loop's `health`
+    check, which is what the `[check]` card line reports.
+  - CODE_TUI_LEGACY_CHECK=1 makes the goal answer with a bare pass/fail (no Check text);
+    CODE_TUI_LEGACY_TIMEOUT=1 turns off the in-child cell alarm.
   - Status mapping is fixed: DONE|VERIFIED -> done, STEP_LIMIT|WALL_LIMIT with a non-empty
     summary -> partial, anything else -> failed. Exit 0 only for done.
   - A missing DEEPSEEK_API_KEY or an empty prompt fails fast with NO_API_KEY/EMPTY_PROMPT
     rather than burning a kernel.
   - history_brief is prepended to the prompt (state mode only) so the next task in the same
-    workspace knows what the previous ones changed.
+    workspace knows what the previous ones changed; record_history is appended after a
+    completed run even when the task failed, because a failed attempt still moved files.
 
 WHERE TO CHANGE
   What the TUI sends the agent .... AUTONOMOUS, the rules assembly, budgets

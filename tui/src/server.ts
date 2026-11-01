@@ -27,14 +27,19 @@
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
  *  - Port 0 means an OS-chosen port, published in server.json. Two servers for one workspace
  *    would race on those files, so launcher.ts always reuses a healthy one.
- *  - detectCheck() decides the verification command once at startup: CODE_TUI_CHECK wins,
- *    else package.json "typecheck", else "test", else none. An empty string disables it.
+ *  - detectChecks() decides the verification plan once at startup and never again:
+ *    CODE_TUI_CHECKS (JSON [{name, cmd, cheap}]) wins, else CODE_TUI_CHECK as one entry,
+ *    else `python3 bench/smoke.py` (cheap) plus "typecheck"/"test" from the root and
+ *    tui/package.json. An empty CODE_TUI_CHECK disables it. The plan travels to the worker
+ *    as `--checks <json>` and is published in ServerInfo.checks; `cheap` entries become the
+ *    agent's post-mutation health check.
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask
  *  Worker message handling ............... handleWorkerLine
  *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
  *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
+ *  Verification plan detection .......... detectChecks, and ServerInfo.checks
  *  Task shape ............................ tui/src/types.ts
  */
 import { createHash, randomUUID } from "node:crypto";

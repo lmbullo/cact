@@ -3,8 +3,8 @@
  * this is what tui/tests/list.test.tsx exercises directly.
  *
  * ENTRY POINTS
- *  STATUS_ORDER                         running -> queued -> partial -> failed -> done -> cancelled
- *  orderTasks(tasks)                    stable sort by rank, then startedAt/id
+ *  STATUS_ORDER                         running -> queued -> done -> partial -> failed -> cancelled
+ *  orderTasks(tasks)                    stable sort by rank, then createdAt (oldest first)
  *  taskHandle(id)                       short display handle for a task id
  *  buildRows(ordered) -> ListRow[]      header + task rows (what the board renders)
  *  stepSelection(ordered, current, d)   move the highlight, clamped
@@ -13,7 +13,7 @@
  *
  * INVARIANTS
  *  - Deterministic and side-effect free: same input, same output, no Date.now/Math.random.
- *  - Ties are broken by `startedAt` then `id`, so a re-render never reshuffles the list.
+ *  - Ties are broken by `createdAt`, so a re-render never reshuffles the list.
  *  - `scrollWindow` never returns a negative start and never exceeds rowCount.
  *
  * WHERE TO CHANGE

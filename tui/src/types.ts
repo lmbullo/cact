@@ -3,7 +3,8 @@
  *
  * Task          one queued/running/finished agent task (the board row and the detail view)
  * TaskEvent     one line of events/<id>.jsonl: {seq, ts, kind, text?, data?, ...}
- * ServerInfo    server.json and GET /health: workspace, port, pid, model, check, hasKey
+ * ServerInfo    server.json and GET /health: workspace, port, pid, model, check, checks, hasKey
+ * CheckSpec     one entry of the verification plan: {name, cmd, cheap}
  * Snapshot      WebSocket open message: {type:"snapshot", server, tasks}
  * WsMessage     server -> client: snapshot | task | event | ping
  * WorkerMessage server <- worker: the `@@TUI@@` payloads emitted by python/worker.py
@@ -15,6 +16,8 @@
  *    from stop reason to status lives in tui/python/worker.py, not here.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
+ *  - `CheckSpec` mirrors `bench.agent.checks.CheckSpec` and is parsed in server.ts
+ *    (detectChecks) from CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 
