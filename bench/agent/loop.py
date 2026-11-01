@@ -12,16 +12,16 @@ ENTRY POINTS
   RunResult ... what run.py, worker.py and trace.py consume
   _usage_add(acc, usage) ... sums provider usage, including cache hit/miss
 
-WHERE TO CHANGE
-  New stop/usage field ....... RunResult
-  Budget defaults (bench) .... Budget (production overrides via config.budget)
-
 INVARIANTS
   - This module holds shared types only. There is no loop here: ToolLoop is the turn
     machine, StateLoop adds state cards, ReplLoop is the fenced-block alternate.
   - The benchmark defaults below are overridden by run.py flags and by config.budget for
     production; do not tune production from here.
   - `_usage_add` is additive and tolerates missing provider fields, including cache hits.
+
+WHERE TO CHANGE
+  New stop/usage field ....... RunResult
+  Budget defaults (bench) .... Budget (production overrides via config.budget)
 """
 from __future__ import annotations
 
