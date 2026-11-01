@@ -137,19 +137,26 @@ def main() -> int:
         check("kernel: map", "a.txt" in str(cell.result), str(cell.result)[:120])
 
         cell = kernel.run("run('cat a.txt')")
-        redirected = str(cell.result)
-        check("kernel: run() redirects simple file reads",
-              "redirected" in redirected and "read('a.txt')" in redirected, redirected[:200])
+        allowed = str(cell.result)
+        check("kernel: run() allows a read-only command",
+              "command" in allowed and "alpha" in allowed, allowed[:200])
 
         cell = kernel.run("run('python3 -c \"print(1)\"')")
-        refusal = str(cell.result)
-        check("kernel: run() refuses file inspection via -c",
-              "wrong_call" in refusal, refusal[:200])
-
-        cell = kernel.run("run('python3 -c \"import json\"')")
         allowed = str(cell.result)
-        check("kernel: run() allows import-only -c",
+        check("kernel: run() allows -c scripting",
               "command" in allowed or "exit_code" in allowed, allowed[:200])
+
+        cell = kernel.run("run('sed -i s/alpha/omega/ a.txt')")
+        refusal = str(cell.result)
+        check("kernel: run() refuses a mutating shell verb",
+              "wrong_call" in refusal and "edit(path" in refusal, refusal[:200])
+        check("kernel: the refused mutation did not run",
+              "alpha" in (root / "a.txt").read_text(), (root / "a.txt").read_text()[:80])
+
+        cell = kernel.run("run('echo x > z.txt')")
+        refusal = str(cell.result)
+        check("kernel: run() refuses redirection into a file",
+              "wrong_call" in refusal and not (root / "z.txt").exists(), refusal[:200])
 
         cell = kernel.run("apply('--- a/a.txt\\n+++ b/a.txt\\n@@ -1,2 +1,2 @@\\n alpha\\n-beta\\n+delta\\n')")
         check("kernel: apply a unified diff",
@@ -166,9 +173,11 @@ def main() -> int:
         cell = kernel.run("r=read('big.txt'); print(r['shown'], r['truncated'])")
         check("kernel: read caps delivery and reports next",
               "True" in cell.stdout and cell.reads.get("big.txt", {}).get("total") == 900, cell.stdout[:120])
-        cell = kernel.run("import subprocess; subprocess.run(['cat', 'a.txt'], capture_output=True)")
+        cell = kernel.run("import subprocess; subprocess.run(['rm', 'a.txt'], capture_output=True)")
         gate = str(cell.result)
-        check("kernel: spawn gate blocks a direct cat", "wrong_call" in gate and "read(path)" in gate, gate[:200])
+        check("kernel: spawn gate blocks a mutating process",
+              "wrong_call" in gate and "os.remove(path)" in gate, gate[:200])
+        check("kernel: the blocked spawn did not run", (root / "a.txt").exists(), str((root / "a.txt").exists()))
         cell = kernel.run("import subprocess; print(subprocess.run(['echo', 'ok'], capture_output=True, text=True).stdout.strip())")
         check("kernel: spawn gate allows programs", "ok" in cell.stdout, cell.stdout[:120])
         cell = kernel.run("run('echo cached-check')", check_cache={"echo cached-check": "PASSED"})

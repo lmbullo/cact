@@ -34,18 +34,16 @@ inside `tui/`.
 
 ## Rules that must not break
 
-1. **`final_answer(value)` is only accepted from a cell that prints nothing.** If the cell
-   printed, the answer is rejected and the output is returned to the model. With a goal
-   check, `final_answer` is also rejected until the check passes. `run.py` grades
-   `result.final`; a prose reply with no tool call is the summary.
-2. **`run()` is not a file interface — it redirects the easy cases and refuses the rest.**
-   A plain `cat`, `head`, `tail`, `ls`, `wc -l`, or `grep PATTERN FILE` is translated into the
-   matching helper and comes back as `kind: "redirected"` (`ran` names the call that ran).
-   Everything else in `_RUN_FILE_TOOLS` (`rg`, `sed`, `awk`, `find`, `tree`, `du`, `tee`,
-   `touch`, `cp`, `mv`, `rm`, `truncate`, ...), `echo >`/`printf >`, `git show/ls-files/...`
-   and `-c`/`-e` scripting is refused by `_run_protocol_error` as `kind: "wrong_call"` with a
-   `use` hint. `python3 -c` passes only when the code is imports and nothing else
-   (`_is_import_only`). Keep `_redirect_file_command`, `_HINT` and the RUN_NOTE text honest.
+1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
+   holds the answer (`STAGED`); the next reply with no tool call accepts `v` after the goal
+   and read gates. With a goal check, no answer is accepted until the check passes. `run.py`
+   grades `result.final`; a prose reply with no tool call is the summary.
+2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
+   read-only git work (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`). Shell verbs
+   that change the tree (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
+   `>` redirection) are refused by `_mutating_command` as `kind: "wrong_call"` with a `use`
+   hint, because they bypass the journal. A program can still write files; the journal is a
+   typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
    **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and
    `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers

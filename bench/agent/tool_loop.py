@@ -16,15 +16,16 @@ ENTRY POINTS
     (context management), `_goal_state()` (goal -> (ok, Check)).
 
 INVARIANTS
-  - `final_answer` in a cell that printed is rejected (UNREVIEWED) and the output is handed
-    back to the model; the answer is not accepted.
+  - `final_answer` in a cell that printed is *staged* (STAGED): the output is shown and the
+    answer is held. A next reply with no tool call accepts the staged answer (after the goal
+    and read gates), so output is never lost and no extra empty cell is required.
   - With a goal, finishing before the check passes is rejected (GOAL_UNMET).
     `goal_stops=True` ends the run itself once a mutating cell passes the goal (VERIFIED).
   - `health` is an optional cheap check plan (checks.run_specs over the `cheap` specs). After
     a mutating cell, at most once every 20s, its result lands in `self.last_check` and is
     rendered as the `[check]` line of the next card. It never ends the run; the full goal does.
   - BAD_ARGS / TRUNCATED mean nothing ran and the model is told why.
-  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, UNREVIEWED, GOAL_UNMET,
+  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET,
     TRUNCATED, BAD_ARGS (this loop never emits NO_PROGRESS/TOOL_LIMIT).
   - `changed` accumulates every file the kernel reports; worker.py records it as history.
 
@@ -75,7 +76,7 @@ Prefer one large call over many small ones. A single call can loop over files, r
 
 Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
 
-For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() translates simple file reads (cat, head, tail, ls, wc -l, grep PATTERN FILE) into the helper and returns kind "redirected"; import-only python3 -c is allowed; anything that reads project files through a program is refused.
+For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() runs any command, including cat/grep/sed/tests/git; only shell verbs that mutate files (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal.
 
 Finish by calling the python tool with a cell that calls final_answer("<summary>") and prints nothing. If a cell prints output and also calls final_answer, the answer is rejected and the output is returned to you to read first. When the task asks for a specific value, put that value in final_answer, not in prose.
 
@@ -163,6 +164,7 @@ class ToolLoop:
         final = ""
         stop = "STEP_LIMIT"
         seen: set[str] = set()
+        pending: str | None = None
 
         while True:
             self._compact(messages)
@@ -203,6 +205,7 @@ class ToolLoop:
                     if trace:
                         trace.write(rec)
                     continue
+                candidate = pending if pending is not None else content.strip()
                 met, check = self._goal_state()
                 if self.goal is not None and not met:
                     messages.append({"role": "user", "content": self._reject(check, "You finished without a passing check")})
@@ -210,8 +213,19 @@ class ToolLoop:
                     turns.append(rec)
                     if trace:
                         trace.write(rec)
+                    pending = None
                     continue
-                final = content.strip()
+                if pending is not None and self.read_gate:
+                    reason = self._read_rejection(pending)
+                    if reason:
+                        messages.append({"role": "user", "content": reason})
+                        rec["stop"] = "UNREAD"
+                        turns.append(rec)
+                        if trace:
+                            trace.write(rec)
+                        pending = None
+                        continue
+                final = candidate
                 stop = "DONE"
                 rec["stop"] = stop
                 turns.append(rec)
@@ -295,9 +309,13 @@ class ToolLoop:
 
                 if cell.final is not None:
                     if cell.stdout.strip() or cell.stderr.strip():
+                        pending = cell.final
                         messages.append({"role": "tool", "tool_call_id": call_id,
-                                         "content": obs + "\n[observation] final_answer was not accepted: this cell printed output, so you have not seen it yet. Read it, then call final_answer(<value>) in a cell that prints nothing."})
-                        rec["stop"] = "UNREVIEWED"
+                                         "content": obs + f"\n[finish] answer staged: {str(cell.final)[:400]!r}. "
+                                         "The cell also produced the output above; check it. Your next reply "
+                                         "with no tool call accepts this answer, or call final_answer(...) "
+                                         "again to change it."})
+                        rec["stop"] = "STAGED"
                         continue
                     met, check = self._goal_state()
                     if not met:
@@ -316,6 +334,7 @@ class ToolLoop:
                     terminal = cell.final
                     continue
 
+                pending = None
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                 if self.goal_stops and self.goal is not None and cell.mutated and self._goal_state()[0]:
                     terminal = self.goal_label

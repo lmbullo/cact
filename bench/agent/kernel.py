@@ -33,24 +33,25 @@ INVARIANTS
     survived. `supervise=False` disables the in-child alarm (legacy behaviour).
   - `final_answer(v)` raises `Final`; the driver reports the value as `Cell.final`
     unconditionally, and also reports `Cell.answer` (the `ANSWER` variable, used when a repl
-    loop stops on "var"). It is the LOOP, not the kernel, that rejects an answer from a cell
-    that printed (stop reason UNREVIEWED) — see tool_loop.py / repl.py.
+    loop stops on "var"). It is the LOOP, not the kernel, that decides what an answer from a
+    printing cell means: ToolLoop stages it (STAGED) and accepts it on the next no-tool reply;
+    ReplLoop rejects it (UNREVIEWED) — see tool_loop.py / repl.py.
   - Every mutation goes through `_commit`: journal row, snapshot diff, `_CELL_CHANGED`.
     That single path is what changes()/diff()/undo() and the `[state] changed:` card read.
     `write()` replaces (refuses to drop a tail without force=True); `edit()` reports
     ambiguity instead of guessing; `apply(unified diff)` and `commit({path: text})` write
     several files in one cell, so one diff()/undo() covers the whole change set.
-  - run() is not a file interface, but it is not a wall either: a plain
-    `cat|head|tail|ls|wc -l|grep PATTERN FILE` command is *redirected* to the matching helper
-    and returns `kind: "redirected"` with the helper's parsed result (`ran` names the call).
-    Everything else in `_RUN_FILE_TOOLS`, `git show/ls-files/...`, redirection and
-    `-c`/`-e` scripting is refused with `kind: "wrong_call"` plus a `use` hint. `python3 -c`
-    is allowed only when the code is imports and nothing else (`_is_import_only`).
+  - run() runs whole commands, not a whitelist. Reads, searches, tests, builds, linters and
+    read-only git are allowed as they are; the shell is a normal tool. Only *mutating* shell
+    verbs (tee, cp, mv, rm, sed -i, git apply/checkout/..., `>` redirection, ...) are refused
+    with `kind: "wrong_call"` plus a `use` hint, because they would bypass the journal and
+    make diff()/undo() lie. That is a correctness boundary, not a capability boundary: a
+    program can still write files, and the docs say so.
   - Direct process spawning is gated by the same classifier. `sys.addaudithook` in
     RUN_PRELUDE sees `subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn` and
-    `os.spawn`; a spawn whose argv begins with a file verb raises `_SpawnBlocked`, which the
-    driver turns into a `wrong_call` result with the helper hint. Allowed spawns are appended
-    to `Cell.runs`. Inside run() the gate classifies but does not double-log.
+    `os.spawn`; a spawn containing a mutating verb raises `_SpawnBlocked`, which the driver
+    turns into a `wrong_call` result with the helper hint. Allowed spawns are appended to
+    `Cell.runs`. Inside run() the gate classifies but does not double-log.
   - `read()` is a ledger, not a firehose: `limit=0` returns the whole file only while it fits
     400 lines / 9 KB; beyond that the result carries `next.offset`. Every delivered range is
     returned as `Cell.reads = {path: {ranges, total}}`, so the loop can see holes.
@@ -68,11 +69,9 @@ WHERE TO CHANGE
                                             only pass the text through
   Change the cell result shape ............ `Cell` + the driver's final `emit({...})` payload
   Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`
-  Change the run() protocol list .......... `_RUN_FILE_TOOLS` / `_RUN_GIT` / `_RUN_EVAL` and
-                                            `_run_protocol_error`, then the RUN_NOTE text in
-                                            repl.py and the README contract list
-  Change what run() redirects ............. `_redirect_file_command` + `_HINT` (keep both in
-                                            step with the helper signatures)
+  Change what run() refuses .............. `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` /
+                                            `_mutating_command` + `_HINT`, then the RUN_NOTE
+                                            text in repl.py and the README contract list
   The spawn gate .......................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
   Read delivery budget .................... `_READ_MAX_LINES`, `_READ_MAX_CHARS` in PRELUDE
 """
@@ -765,121 +764,75 @@ _SPAWN_EVENTS = {"subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "
 
 class _SpawnBlocked(Exception):
     def __init__(self, blocked, command):
-        super().__init__("`%s` inspects files through a process; use the helper instead" % blocked)
+        super().__init__("`%s` changes files through a process, so it would bypass the journal; use the helper" % blocked)
         self.blocked = blocked
         self.command = command
-_RUN_FILE_TOOLS = {
-    "cat", "head", "tail", "less", "more", "wc", "stat", "grep", "rg", "ag",
-    "sed", "awk", "find", "ls", "tree", "du", "tee", "touch", "cp", "mv",
-    "rm", "truncate", "xargs", "strings", "file", "xxd", "od", "nl", "cut",
-    "sort", "uniq", "diff", "comm", "jq",
+# Shell verbs that change the tree. They are refused because they bypass the journal, so
+# diff()/undo() could not see them; typed helpers are the only journalled way to mutate.
+_RUN_SHELL_MUTATORS = {
+    "tee", "touch", "cp", "mv", "rm", "truncate", "shred", "dd", "install",
+    "ln", "mkdir", "rmdir", "chmod", "chown", "chgrp", "patch",
 }
-_RUN_GIT = {"ls-files", "grep", "show", "cat-file", "ls-tree", "blame", "diff-tree", "diff-index", "grep"}
-_RUN_EVAL = {"python", "python3", "node", "bun", "deno", "ruby", "perl", "php"}
+_RUN_GIT_MUTATORS = {
+    "apply", "checkout", "reset", "clean", "stash", "rm", "mv", "add",
+    "commit", "merge", "rebase", "cherry-pick", "revert", "am", "switch",
+    "restore", "init", "clone", "pull", "push", "fetch",
+}
 _HINT = {
-    "cat": "read(path)", "head": "read(path)", "tail": "read(path, offset=total_lines-N)",
-    "less": "read(path)", "more": "read(path)", "wc": "read(path)['total_lines']",
-    "stat": "map(path)", "grep": "grep(pattern, path)", "rg": "grep(pattern, path, regex=True)",
-    "ag": "grep(pattern, path)", "sed": "read(path) then edit(path, old, new)",
-    "awk": "read(path) and slice in Python", "find": "map(path)", "ls": "map(path)",
-    "tree": "map(path)", "du": "map(path)", "tee": "write(path, content)",
-    "touch": "write(path, '')", "cp": "read(path) then write(new_path, text)",
-    "mv": "write(new_path, read(path)['raw']) then os.remove(path)",
-    "rm": "os.remove(path)", "truncate": "write(path, '')", "xargs": "a Python loop",
-    "diff": "read both files and compare in Python",
+    "tee": "write(path, content)", "touch": "write(path, '')",
+    "cp": "read(path) then write(new_path, text)",
+    "mv": "write(new_path, read(path)['text']) then os.remove(path)",
+    "rm": "os.remove(path)", "truncate": "write(path, '')",
+    "sed -i": "edit(path, old, new)", "mkdir": "os.makedirs(path, exist_ok=True)",
+    "patch": "apply(patch)", "git": "mutate with apply()/commit(); read-only git is allowed",
+    ">": "write(path, content)", "find -delete": "map() then os.remove(path)",
+    "xargs": "a Python loop",
 }
 
 
-def _is_import_only(code):
-    text = str(code).strip()
+def _segments(command):
+    return [part for part in _re.split(r"\|\||&&|\||;|\n", str(command)) if part.strip()]
+
+
+def _writes_stdout(segment):
+    for match in _re.finditer(r"(?<![0-9])>>?\s*([^\s|;&]+)", segment):
+        target = match.group(1).strip("'\"")
+        if target not in ("/dev/null", "/dev/stdout", "/dev/stderr", "&1", "&2"):
+            return True
+    return False
+
+
+def _mutating_command(command):
+    # Return the mutating verb in a shell command, or None when it only reads / runs.
+    text = str(command).strip()
     if not text:
-        return False
-    for token in ("open(", "read_text", "read_bytes", "Path(", "json.load", "print(", "os.listdir", "os.walk", "glob("):
-        if token in text:
-            return False
-    for statement in text.split(";"):
-        statement = statement.strip()
-        if not statement:
+        return None
+    for segment in _segments(text):
+        if _writes_stdout(segment):
+            return ">"
+        parts = segment.strip().split()
+        if not parts:
             continue
-        if not _re.match(r"^(import\s+[\w.]+(\s+as\s+\w+)?|from\s+[\w.]+\s+import\s+.+)$", statement):
-            return False
-    return True
-
-
-def _redirected(ran, result):
-    return {"ok": True, "kind": "redirected", "ran": ran,
-            "note": "run() executes programs; this file read was executed with the helper instead.",
-            "result": result}
-
-
-def _redirect_file_command(command):
-    text = str(command).strip()
-    if any(ch in text for ch in "|&;<>`$"):
-        return None
-    parts = text.split()
-    if not parts:
-        return None
-    base = _ros.path.basename(parts[0])
-    args = parts[1:]
-    reader = globals().get("read")
-    mapper = globals().get("map")
-    grepper = globals().get("grep")
-    try:
-        if base == "cat" and reader and len(args) == 1:
-            return _redirected(f"read({args[0]!r})", reader(args[0]))
-        if base in ("head", "tail") and reader:
-            count = 10
-            files = []
-            index = 0
-            while index < len(args):
-                if args[index] == "-n" and index + 1 < len(args):
-                    count = int(args[index + 1]); index += 2
-                elif args[index].startswith("-") and args[index][1:].isdigit():
-                    count = int(args[index][1:]); index += 1
-                else:
-                    files.append(args[index]); index += 1
-            if len(files) == 1:
-                if base == "head":
-                    return _redirected(f"read({files[0]!r}, limit={count})", reader(files[0], limit=count))
-                total = reader(files[0]).get("total_lines") or 0
-                offset = max(1, total - count + 1)
-                return _redirected(f"read({files[0]!r}, offset={offset})", reader(files[0], offset=offset))
-        if base == "wc" and "-l" in args and reader:
-            files = [item for item in args if item != "-l"]
-            if len(files) == 1:
-                return _redirected(f"read({files[0]!r})['total_lines']", reader(files[0]).get("total_lines"))
-        if base == "ls" and mapper and len(args) <= 1:
-            path = args[0] if args else "."
-            return _redirected(f"map({path!r})", mapper(path))
-        if base == "grep" and grepper and len(args) == 2:
-            return _redirected(f"grep({args[0]!r}, {args[1]!r})", grepper(args[0], args[1]))
-    except (OSError, ValueError, TypeError):
-        return None
-    return None
-
-
-def _run_protocol_error(command):
-    text = str(command).strip()
-    if not text:
-        return None
-    parts = text.split()
-    first = parts[0]
-    base = _ros.path.basename(first)
-    if base in _RUN_FILE_TOOLS:
-        return base
-    if base in ("echo", "printf") and ">" in text:
-        return base
-    if base == "git" and len(parts) > 1 and parts[1] in _RUN_GIT:
-        return f"git {parts[1]}"
-    if base in _RUN_EVAL:
-        for index, part in enumerate(parts[1:5], 1):
-            if part in ("-e", "--eval", "--print"):
-                return f"{base} -e"
-            if part == "-c":
-                code = " ".join(parts[index + 1:]).strip().strip('"').strip("'")
-                if _is_import_only(code):
-                    return None
-                return f"{base} -c"
+        base = _ros.path.basename(parts[0])
+        args = parts[1:]
+        names = [_ros.path.basename(arg) for arg in args]
+        if base in _RUN_SHELL_MUTATORS:
+            return base
+        if base == "sed" and any(arg.startswith("-i") or arg.startswith("--in-place") for arg in args):
+            return "sed -i"
+        if base == "git" and names and names[0] in _RUN_GIT_MUTATORS:
+            return "git " + names[0]
+        if base in ("bash", "sh", "zsh") and len(parts) > 2 and parts[1] in ("-c", "-lc"):
+            inner = _mutating_command(" ".join(parts[2:]))
+            if inner:
+                return inner
+        if base == "find" and any(arg in ("-delete", "-exec", "-execdir", "-ok", "-okdir")
+                                  for arg in args):
+            return "find -delete"
+        if base == "xargs":
+            inner = _mutating_command(" ".join(args))
+            if inner:
+                return "xargs " + inner
     return None
 
 
@@ -914,7 +867,7 @@ def _gate_check(command):
     base = _ros.path.basename(parts[0]) if parts else ""
     if base in ("bash", "sh", "zsh") and len(parts) > 2 and parts[1] in ("-c", "-lc"):
         inner = " ".join(parts[2:]).strip().strip('"').strip("'")
-    return _run_protocol_error(inner)
+    return _mutating_command(inner)
 
 
 def _audit_spawn(event, args):
@@ -945,20 +898,18 @@ def run(command, timeout=60, cwd=None):
         return {"ok": True, "kind": "check_cached", "command": str(command),
                 "result": text, "exit_code": 0 if ok else 1, "stdout": text, "stderr": "",
                 "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."}
-    blocked = _run_protocol_error(command)
+    blocked = _mutating_command(command)
     if blocked:
-        redirected = _redirect_file_command(command)
-        if redirected is not None:
-            return redirected
-        use = _HINT.get(blocked.split()[0], "read(), grep(), map(), write() or edit()")
+        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "write(), edit(), apply() or commit()")
         return {
             "ok": False,
             "kind": "wrong_call",
             "command": str(command),
             "blocked": blocked,
             "error": {
-                "code": "file_access_via_run",
-                "message": f"`{blocked}` inspects or edits files; run() executes whole programs only.",
+                "code": "mutation_via_run",
+                "message": f"`{blocked}` changes files through the shell, so it would bypass the "
+                           "journal and diff()/undo() could not see it. Use the helper.",
                 "use": use,
             },
         }
@@ -977,7 +928,7 @@ def run(command, timeout=60, cwd=None):
         finally:
             _GATE_IN_RUN -= 1
     except _SpawnBlocked as exc:
-        use = _HINT.get(str(exc.blocked).split()[0], "read(), grep(), map(), write() or edit()")
+        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "write(), edit(), apply() or commit()")
         return {"ok": False, "kind": "wrong_call", "command": str(command),
                 "blocked": exc.blocked,
                 "error": {"code": "file_access_via_run", "message": str(exc), "use": use}}

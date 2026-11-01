@@ -148,7 +148,8 @@ the `Client`. Stop reasons are a fixed vocabulary:
 | `VERIFIED` | the goal check passed | `done` |
 | `STEP_LIMIT` / `WALL_LIMIT` | budget exhausted (a non-empty summary still counts) | `partial` |
 | `GOAL_UNMET` | model tried to finish while the check failed | continues |
-| `UNREVIEWED` | `final_answer` in a cell that also printed | continues |
+| `STAGED` | `final_answer` in a cell that also printed; accepted on the next no-tool reply | continues |
+| `UNREVIEWED` | ReplLoop only: `final_answer` in a printing cell is rejected | continues |
 | `TRUNCATED` / `BAD_ARGS` | cut-off or unparsable call; nothing ran | continues |
 | `NO_PROGRESS` / `TOOL_LIMIT` | tools mode only | `failed` |
 
@@ -208,18 +209,18 @@ imports `bench.agent` from this repo, so the checkout path matters.
 
 ## Contracts an agent must not break
 
-1. **`final_answer(value)` must be called from a cell that prints nothing.** If the cell
-   printed, the answer is rejected, the output is returned to the model, and it must
-   resubmit. When a goal check exists, `final_answer` is also rejected until the check
+1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
+   holds the answer (`STAGED`): the output is shown, and the next reply with no tool call
+   accepts `v` after the goal and read gates. An explicit `final_answer` in a silent cell
+   finishes immediately. When a goal check exists, no answer is accepted until the check
    passes. `run.py` grades `result.final`; a prose reply with no tool call is the summary.
-2. **`run()` is not a file interface — it redirects the easy cases and refuses the rest.**
-   A plain `cat`, `head`, `tail`, `ls`, `wc -l` or `grep PATTERN FILE` is executed through
-   the matching helper and returns `kind: "redirected"` with the parsed result. Everything
-   else in `_RUN_FILE_TOOLS` (`rg`, `sed`, `awk`, `find`, `tree`, `du`, `tee`, `touch`, `cp`,
-   `mv`, `rm`, `truncate`, ...), `echo >`, `printf >`, `git ls-files/grep/show/...` and
-   `-c`/`-e` scripting is refused with `kind: "wrong_call"` and a `use` hint. `python3 -c`
-   passes only when the code is imports and nothing else. Keep `_redirect_file_command`,
-   `_HINT` and the RUN_NOTE text honest.
+2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
+   read-only git work as written (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`).
+   Shell verbs that change the tree (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/...`,
+   `>` redirection) are refused with `kind: "wrong_call"` and a `use` hint, because they
+   would bypass the journal and make `diff()`/`undo()` lie. A program can still write files;
+   the journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT`
+   and the RUN_NOTE text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without
    `force=True`); **`edit()` reports ambiguity instead of guessing**; `apply(<unified diff>)`
    and `commit({path: text})` write several files in one cell. All of them go through the

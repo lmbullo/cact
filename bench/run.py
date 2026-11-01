@@ -197,17 +197,20 @@ def main() -> int:
         if True:
             allow_run = args.allow_run == "on"
             timeout = args.cell_timeout or (120.0 if allow_run else 15.0)
-            kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=args.repl_lib,
+            lib = args.repl_lib
+            if args.mode in ("tool", "state") and lib == "off":
+                lib = "all"
+            kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=lib,
                             allow_run=allow_run)
             try:
                 base = TOOL_RULES if args.mode in ("tool", "state") else {"full": REPL_RULES, "bare": BARE_RULES, "none": ""}[args.repl_rules]
                 rules = base
-                if args.repl_lib == "all":
+                if args.mode not in ("tool", "state") and lib == "all":
                     rules = rules + LIB_NOTE
-                elif args.repl_lib == "mut":
+                elif args.mode not in ("tool", "state") and lib == "mut":
                     rules = rules + LIB_MUT_NOTE
-                if allow_run and args.repl_rules != "none":
-                    rules = rules + (RUN_NOTE_MUT if args.repl_lib == "mut" else RUN_NOTE)
+                if allow_run and args.repl_rules != "none" and args.mode not in ("tool", "state"):
+                    rules = rules + (RUN_NOTE_MUT if lib == "mut" else RUN_NOTE)
                 check = getattr(task, "check", None)
                 if args.mode in ("tool", "state"):
                     loop = (StateLoop if args.mode == "state" else ToolLoop)(
