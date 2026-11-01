@@ -62,14 +62,14 @@ RUNNING PROGRAMS
 run(command, timeout=60, cwd=None) executes one bash command from the project root and returns kind, exit_code, stdout, stderr. Use it only for programs that do work: test runners, compilers, linters, formatters, package managers, git, servers, downloads, builds.
 
 run() is not a file interface. Every file action already has a direct call:
-  read a file      -> read(path, offset=1, limit=0)  (whole file; raw=True for unnumbered text)
+  read a file      -> read(path, offset=1, limit=0)  (whole file when it fits; otherwise up to 400 lines / 9 KB with next.offset; raw=True for unnumbered text)
   search text      -> grep(pattern, path='.', max_results=50)
   list files       -> map(path='.')
   write a file     -> write(path, content)  (force=True only to intentionally drop a tail)
   edit a file      -> edit(path, old, new)
 Passing any of these to run() is a protocol violation, not a shortcut: cat, head, tail, less, more, wc, stat, grep, rg, ag, sed, awk, find, ls, tree, du, tee, touch, cp, mv, rm, truncate, echo with >, printf with >, and python3 -c or python3 -m that imports, prints or inspects a project file. run() executes whole programs only: python3 app.py ledger.csv, pytest, make, git, docker.
 
-Why: importing a module to print one constant is file inspection wearing a program's clothes. Shell output is also unparsed and unnumbered. The calls above return path, line numbers, total_lines, the next offset, and conflict/ambiguity/no-match diagnostics. A shell command returns text you must parse. run() checks the command: simple file reads (cat, head, tail, ls, wc -l, grep PATTERN FILE) are executed through the helper and return kind "redirected" with the parsed result; other file verbs are refused with a wrong_call naming the call to use. If the command you are about to pass begins with one of those words, you have picked the wrong call.
+Why: importing a module to print one constant is file inspection wearing a program's clothes. Shell output is also unparsed and unnumbered. The calls above return path, line numbers, total_lines, the next offset, and conflict/ambiguity/no-match diagnostics. A shell command returns text you must parse. run() checks the command: simple file reads (cat, head, tail, ls, wc -l, grep PATTERN FILE) are executed through the helper and return kind "redirected" with the parsed result; other file verbs are refused with a wrong_call naming the call to use. The same gate covers direct process spawning (subprocess, os.system, os.exec): a file verb there is blocked with wrong_call, while real programs are allowed. If the command you are about to pass begins with one of those words, you have picked the wrong call.
 """
 
 RUN_NOTE_MUT = """

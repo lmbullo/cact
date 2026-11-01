@@ -1,4 +1,4 @@
-"""The agent package: kernel, loops, model client, tools, checks, traces.
+"""The agent package: kernel, loops, model client, checks, traces.
 
 Read in this order: kernel.py (action space) -> tool_loop.py (turn machine) ->
 state_loop.py (production observations) -> config.py (what production builds).

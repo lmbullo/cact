@@ -116,11 +116,12 @@ function detectChecks(root: string): CheckSpec[] {
       const parsed = JSON.parse(explicit) as unknown;
       if (!Array.isArray(parsed)) return [];
       return parsed
-        .map((item) => item as { name?: unknown; cmd?: unknown; cheap?: unknown })
+        .map((item) => item as { name?: unknown; cmd?: unknown; cheap?: unknown; scope?: unknown })
         .map((item) => ({
           name: String(item.name ?? item.cmd ?? "check"),
           cmd: String(item.cmd ?? "").trim(),
           cheap: Boolean(item.cheap),
+          scope: Array.isArray(item.scope) ? item.scope.map((entry) => String(entry)) : [],
         }))
         .filter((item) => item.cmd.length > 0);
     } catch {
@@ -132,10 +133,10 @@ function detectChecks(root: string): CheckSpec[] {
     return single.trim() ? [{ name: "check", cmd: single.trim(), cheap: false }] : [];
   }
   const out: CheckSpec[] = [];
-  const add = (name: string, cmd: string, cheap: boolean) => {
-    if (!out.some((item) => item.cmd === cmd)) out.push({ name, cmd, cheap });
+  const add = (name: string, cmd: string, cheap: boolean, scope: string[]) => {
+    if (!out.some((item) => item.cmd === cmd)) out.push({ name, cmd, cheap, scope });
   };
-  if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true);
+  if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true, ["bench"]);
   const prefix = (dir: string, command: string) => dir === root ? command : `cd ${relative(root, dir)} && ${command}`;
   for (const dir of [root, join(root, "tui")]) {
     let scripts: Record<string, string> = {};
@@ -145,8 +146,10 @@ function detectChecks(root: string): CheckSpec[] {
     } catch {
       continue;
     }
-    if (scripts.typecheck) add("typecheck", prefix(dir, "bun run typecheck"), true);
-    if (scripts.test || existsSync(join(dir, "tests"))) add("test", prefix(dir, "bun test"), false);
+    const rel = relative(root, dir);
+    const scope = rel ? [rel] : [];
+    if (scripts.typecheck) add("typecheck", prefix(dir, "bun run typecheck"), true, scope);
+    if (scripts.test || existsSync(join(dir, "tests"))) add("test", prefix(dir, "bun test"), false, scope);
   }
   return out;
 }

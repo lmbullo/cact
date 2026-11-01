@@ -10,11 +10,10 @@ ENTRY POINTS
   python3 bench/run.py ...            script mode (inserts the repo root on sys.path)
   python3 -m bench.run ...            package mode (relative imports)
   digest(root, budget)                whole-tree text dump for --context full
-  build_tools(root, read_chars, with_map, mutate) -> tools.Registry for --mode tools
   workspace(task) -> Path             fresh copy under bench/.tmp
   main() -> int                       0 only when every selected task passes
 
-  Flags: --suite read|mutation|all|edge, --mode tools|repl|tool|state, --tasks a,b, --steps,
+  Flags: --suite read|mutation|all|edge, --mode repl|tool|state, --tasks a,b, --steps,
   --wall, --max-output, --read-chars, --obs-chars, --map off|tool|inline, --context map|full,
   --allow-run off|on, --cell-timeout, --repl-*, --temperature, --seed, --no-cache, --traces.
 
@@ -37,7 +36,7 @@ WHERE TO CHANGE
   New suite .......................... the `pool` dict + the matching module's TASKS list
   New flag / budget wiring .......... the argparse block in main()
   What a run records ................. the `rows.append({...})` dict and summary write
-  Which loop a mode builds ........... the `if args.mode == "tools"` / else branch
+  Which loop a mode builds ........... the `if args.mode in ("tool", "state")` branch
 """
 from __future__ import annotations
 
@@ -52,24 +51,33 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from bench.agent.kernel import Kernel
     from bench.agent.llm import Client
-    from bench.agent.loop import RULES, AgentLoop, Budget
+    from bench.agent.loop import Budget
     from bench.agent.repl import BARE_RULES, REPL_RULES, ReplLoop
     from bench.agent.tool_loop import TOOL_RULES, ToolLoop
     from bench import edge as bench_edge
-    from bench.agent.tools import Registry, build_map, make_calc, make_edit, make_find, make_map, make_read, make_write, map_text
     from bench.agent.trace import Trace, render
     from bench import tasks as bench_tasks
 else:
     from .agent.kernel import Kernel
     from .agent.llm import Client
-    from .agent.loop import RULES, AgentLoop, Budget
+    from .agent.loop import Budget
     from .agent.repl import BARE_RULES, REPL_RULES, RUN_NOTE, RUN_NOTE_MUT, ReplLoop
     from .agent.state_loop import StateLoop
     from .agent.tool_loop import TOOL_RULES, ToolLoop
     from . import edge as bench_edge
-    from .agent.tools import Registry, build_map, make_calc, make_edit, make_find, make_map, make_read, make_write, map_text
     from .agent.trace import Trace, render
     from . import tasks as bench_tasks
+
+def _map_text(root: Path) -> str:
+    lines = []
+    skip = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
+    for path in sorted(root.rglob("*")):
+        if any(part in skip for part in path.relative_to(root).parts):
+            continue
+        if path.is_file():
+            lines.append(f"{path.stat().st_size:>7}  {path.relative_to(root)}")
+    return "\n".join(lines)
+
 
 LIB_NOTE = (
     "\nPRELOADED HELPERS (plain functions, each returns a dict with ok/kind and a note when action is needed): "
@@ -107,19 +115,6 @@ def digest(root: Path, budget: int = 60_000) -> str:
     return "\n\n".join(blocks)
 
 
-def build_tools(root: Path, read_chars: int = 16000, with_map: bool = False, mutate: bool = False):
-    registry = Registry()
-    registry.add(make_read(root, read_chars))
-    registry.add(make_find(root))
-    registry.add(make_calc())
-    if with_map:
-        registry.add(make_map(root))
-    if mutate:
-        registry.add(make_edit(root))
-        registry.add(make_write(root))
-    return registry
-
-
 def workspace(task) -> Path:
     base = HERE / ".tmp"
     base.mkdir(exist_ok=True)
@@ -136,7 +131,7 @@ def main() -> int:
     ap.add_argument("--key", default=os.environ.get("DEEPSEEK_API_KEY", ""))
     ap.add_argument("--model", default="deepseek-flash")
     ap.add_argument("--effort", default="low", choices=["low", "high", "max", "none"])
-    ap.add_argument("--mode", default="tools", choices=["tools", "repl", "tool", "state"])
+    ap.add_argument("--mode", default="state", choices=["repl", "tool", "state"])
     ap.add_argument("--tasks", default="all")
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--wall", type=float, default=3600.0)
@@ -197,16 +192,8 @@ def main() -> int:
         if args.context == "full":
             prefix = "WORKSPACE\n" + digest(ws, args.context_chars) + "\n\n"
         else:
-            prefix = map_text(build_map(ws)) + "\n\n" if args.map == "inline" else ""
-        if args.mode == "tools":
-            loop = AgentLoop(
-                client,
-                build_tools(ws, args.read_chars, args.map != "off", mutate),
-                budget,
-                rules=(RULES + "\n" + prefix) if prefix else RULES,
-            )
-            result = loop.run(task.id, task.prompt, Trace(trace_path))
-        else:
+            prefix = _map_text(ws) + "\n\n" if args.map == "inline" else ""
+        if True:
             allow_run = args.allow_run == "on"
             timeout = args.cell_timeout or (120.0 if allow_run else 15.0)
             kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=args.repl_lib,

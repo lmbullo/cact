@@ -15,10 +15,10 @@ ENTRY POINTS
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, supervise=True)
     .start()   spawn the child (lazy: .run() calls it)
-    .run(code) write one cell, wait for it, -> Cell
+    .run(code, check_cache=None) write one cell, wait for it, -> Cell
     .stop()    SIGKILL the process group
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
-        mutated, changed, delta, timeout
+        mutated, changed, delta, timeout, reads
   Inside the kernel namespace: read(), grep(), map(), write(), edit(), apply(), commit(),
         changes(), diff(), undo(), run() (when allow_run), final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
@@ -46,6 +46,16 @@ INVARIANTS
     Everything else in `_RUN_FILE_TOOLS`, `git show/ls-files/...`, redirection and
     `-c`/`-e` scripting is refused with `kind: "wrong_call"` plus a `use` hint. `python3 -c`
     is allowed only when the code is imports and nothing else (`_is_import_only`).
+  - Direct process spawning is gated by the same classifier. `sys.addaudithook` in
+    RUN_PRELUDE sees `subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn` and
+    `os.spawn`; a spawn whose argv begins with a file verb raises `_SpawnBlocked`, which the
+    driver turns into a `wrong_call` result with the helper hint. Allowed spawns are appended
+    to `Cell.runs`. Inside run() the gate classifies but does not double-log.
+  - `read()` is a ledger, not a firehose: `limit=0` returns the whole file only while it fits
+    400 lines / 9 KB; beyond that the result carries `next.offset`. Every delivered range is
+    returned as `Cell.reads = {path: {ranges, total}}`, so the loop can see holes.
+  - `check_cache` is sent with each cell (`{command: {text, ok}}`); `run()` answers a
+    matching command with `kind: "check_cached"` instead of spawning the same check twice.
   - run() enabled => the child is a plain `python3 -u -c DRIVER`. run() disabled => the child
     runs under bwrap with a read-only `/` (the root is bind-mounted writable only when
     `writable=True`).
@@ -63,6 +73,8 @@ WHERE TO CHANGE
                                             repl.py and the README contract list
   Change what run() redirects ............. `_redirect_file_command` + `_HINT` (keep both in
                                             step with the helper signatures)
+  The spawn gate .......................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
+  Read delivery budget .................... `_READ_MAX_LINES`, `_READ_MAX_CHARS` in PRELUDE
 """
 from __future__ import annotations
 
@@ -144,6 +156,8 @@ for line in sys.stdin:
         request = json.loads(line)
         code = request["code"]
         budget = float(request.get("timeout") or 15.0)
+        ns["_CHECK_CACHE"] = request.get("check_cache") or {}
+        ns["_READS_CELL"] = {}
     except Exception:
         emit({"stdout": "", "stderr": "kernel: bad request", "result": None, "final": None, "timeout": False})
         continue
@@ -175,8 +189,19 @@ for line in sys.stdin:
             "timeout: the cell exceeded %.0fs and was interrupted. "
             "The namespace, imports and variables are intact.\n" % budget
         )
-    except BaseException:
-        err.write(traceback.format_exc())
+    except BaseException as exc:
+        _blocked_cls = ns.get("_SpawnBlocked")
+        if _blocked_cls is not None and isinstance(exc, _blocked_cls):
+            _hint = (ns.get("_HINT") or {}).get(str(getattr(exc, "blocked", "")).split()[0], "read(), grep(), map(), write() or edit()")
+            result_repr = json.dumps({
+                "ok": False, "kind": "wrong_call",
+                "blocked": getattr(exc, "blocked", ""),
+                "command": getattr(exc, "command", ""),
+                "error": {"code": "file_access_via_run", "message": str(exc), "use": _hint},
+            })
+            err.write("run() blocked this process: " + str(exc) + "\n")
+        else:
+            err.write(traceback.format_exc())
     finally:
         _disarm()
         sys.stdin = saved_stdin
@@ -210,7 +235,8 @@ for line in sys.stdin:
     _obs_log = ns.setdefault("_OBS", [])
     _obs_log.append({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr})
     emit({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
-          "runs": emitted_runs, "obs_index": len(_obs_log) - 1, "mutated": _mutated,
+          "runs": emitted_runs, "reads": dict(ns.get("_READS_CELL") or {}),
+          "obs_index": len(_obs_log) - 1, "mutated": _mutated,
           "changed": _changed, "delta": _delta, "timeout": timed_out,
           "answer": None if answer is None else (answer if isinstance(answer, str) else repr(answer))})
 '''
@@ -221,6 +247,9 @@ PRELUDE = r"""
 import difflib as _difflib, hashlib as _hashlib, os as _os, re as _re
 
 _ROOT = _os.getcwd()
+_READS_CELL = {}
+_READ_MAX_CHARS = 9000
+_READ_MAX_LINES = 400
 _MUT = False
 _JOURNAL = []
 _SNAP = {}
@@ -530,8 +559,8 @@ def read(path, offset=1, limit=0, raw=False):
         budget = 0
         for n in range(start - 1, total):
             budget += len(lines[n]) + 1
-            if n - (start - 1) + 1 > 4000 or budget > 400000:
-                stop = n
+            if n - (start - 1) + 1 > _READ_MAX_LINES or budget > _READ_MAX_CHARS:
+                stop = max(start, n)
                 break
     else:
         stop = min(total, start + max(1, want) - 1)
@@ -539,6 +568,9 @@ def read(path, offset=1, limit=0, raw=False):
               "shown": [start, stop],
               "next": {"offset": stop + 1} if stop < total else None,
               "truncated": stop < total}
+    entry = _READS_CELL.setdefault(rel, {"ranges": [], "total": total})
+    entry["ranges"].append([start, stop])
+    entry["total"] = total
     chunk = "\n".join(lines[start - 1:stop])
     if raw:
         result["text"] = chunk
@@ -726,6 +758,16 @@ RUN_PRELUDE = r"""
 import os as _ros, re as _re, signal as _rsig, subprocess as _rsp
 _RUN_ROOT = _ros.getcwd()
 _RUN_LOG = []
+_CHECK_CACHE = {}
+_GATE_IN_RUN = 0
+_SPAWN_EVENTS = {"subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn"}
+
+
+class _SpawnBlocked(Exception):
+    def __init__(self, blocked, command):
+        super().__init__("`%s` inspects files through a process; use the helper instead" % blocked)
+        self.blocked = blocked
+        self.command = command
 _RUN_FILE_TOOLS = {
     "cat", "head", "tail", "less", "more", "wc", "stat", "grep", "rg", "ag",
     "sed", "awk", "find", "ls", "tree", "du", "tee", "touch", "cp", "mv",
@@ -841,8 +883,68 @@ def _run_protocol_error(command):
     return None
 
 
+def _norm_command(command):
+    return " ".join(str(command).split())
+
+
+def _spawn_command(event, args):
+    if event == "os.system":
+        return str(args[0]) if args else ""
+    if event == "subprocess.Popen":
+        argv = args[1] if len(args) > 1 else args[0]
+    elif event == "os.exec":
+        argv = args[1] if len(args) > 1 else args[0]
+    elif event == "os.posix_spawn":
+        argv = args[1] if len(args) > 1 else args[0]
+    elif event == "os.spawn":
+        argv = args[2] if len(args) > 2 else args[0]
+    else:
+        return ""
+    if isinstance(argv, (list, tuple)):
+        return " ".join(str(item) for item in argv)
+    return str(argv)
+
+
+def _gate_check(command):
+    text = str(command).strip()
+    if not text:
+        return None
+    inner = text
+    parts = text.split()
+    base = _ros.path.basename(parts[0]) if parts else ""
+    if base in ("bash", "sh", "zsh") and len(parts) > 2 and parts[1] in ("-c", "-lc"):
+        inner = " ".join(parts[2:]).strip().strip('"').strip("'")
+    return _run_protocol_error(inner)
+
+
+def _audit_spawn(event, args):
+    if event not in _SPAWN_EVENTS:
+        return
+    command = _spawn_command(event, args)
+    blocked = _gate_check(command)
+    if blocked:
+        raise _SpawnBlocked(blocked, command)
+    if not _GATE_IN_RUN:
+        _RUN_LOG.append(command)
+
+
+import sys as _sys
+_sys.addaudithook(_audit_spawn)
+
+
 def run(command, timeout=60, cwd=None):
+    global _GATE_IN_RUN
     _RUN_LOG.append(str(command))
+    cached = _CHECK_CACHE.get(_norm_command(command))
+    if cached:
+        if isinstance(cached, dict):
+            text = str(cached.get("text") or "")
+            ok = bool(cached.get("ok", True))
+        else:
+            text, ok = str(cached), True
+        return {"ok": True, "kind": "check_cached", "command": str(command),
+                "result": text, "exit_code": 0 if ok else 1, "stdout": text, "stderr": "",
+                "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."}
     blocked = _run_protocol_error(command)
     if blocked:
         redirected = _redirect_file_command(command)
@@ -864,12 +966,21 @@ def run(command, timeout=60, cwd=None):
     if extend is not None:
         extend(float(timeout) + 20)
     try:
-        proc = _rsp.Popen(
-            str(command), shell=True, cwd=cwd or _RUN_ROOT,
-            stdout=_rsp.PIPE, stderr=_rsp.PIPE, text=True,
-            encoding="utf-8", errors="replace", executable="/bin/bash",
-            start_new_session=True,
-        )
+        _GATE_IN_RUN += 1
+        try:
+            proc = _rsp.Popen(
+                str(command), shell=True, cwd=cwd or _RUN_ROOT,
+                stdout=_rsp.PIPE, stderr=_rsp.PIPE, text=True,
+                encoding="utf-8", errors="replace", executable="/bin/bash",
+                start_new_session=True,
+            )
+        finally:
+            _GATE_IN_RUN -= 1
+    except _SpawnBlocked as exc:
+        use = _HINT.get(str(exc.blocked).split()[0], "read(), grep(), map(), write() or edit()")
+        return {"ok": False, "kind": "wrong_call", "command": str(command),
+                "blocked": exc.blocked,
+                "error": {"code": "file_access_via_run", "message": str(exc), "use": use}}
     except OSError as exc:
         return {"ok": False, "kind": "spawn_error", "command": str(command),
                 "error": {"code": "spawn_failed", "message": str(exc)}}
@@ -913,6 +1024,7 @@ class Cell:
     changed: list[str] = field(default_factory=list)
     delta: str = ""
     timeout: bool = False
+    reads: dict = field(default_factory=dict)
 
 
 def _cap(text: str, limit: int = MAX_OUTPUT) -> str:
@@ -990,7 +1102,7 @@ class Kernel:
         self.stop()
         self.start()
 
-    def run(self, code: str) -> Cell:
+    def run(self, code: str, check_cache: dict | None = None) -> Cell:
         if self.proc is None:
             self.start()
         assert self.proc is not None and self.proc.stdin and self.proc.stdout
@@ -999,7 +1111,10 @@ class Kernel:
 
         started = time.perf_counter()
         try:
-            self.proc.stdin.write(json.dumps({"code": code, "timeout": float(self.timeout)}) + "\n")
+            request = {"code": code, "timeout": float(self.timeout)}
+            if check_cache:
+                request["check_cache"] = check_cache
+            self.proc.stdin.write(json.dumps(request) + "\n")
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError):
             self._restart()
@@ -1053,4 +1168,5 @@ class Kernel:
             payload.get("changed") or [],
             payload.get("delta") or "",
             bool(payload.get("timeout")),
+            payload.get("reads") or {},
         )

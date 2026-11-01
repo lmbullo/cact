@@ -47,6 +47,7 @@ HISTORY = "action"
 import os
 
 MODE = os.environ.get("CODE_TUI_MODE", "state")
+READ_GATE = os.environ.get("CODE_TUI_READ_GATE", "1") != "0"
 
 
 def budget(steps: int, wall_s: float, output: int = MAX_OUTPUT) -> Budget:
@@ -67,6 +68,7 @@ def build(
     goal_stops: bool = False,
     mode: str = MODE,
     health: Any = None,
+    read_gate: bool = READ_GATE,
 ):
     if mode == "state":
         return StateLoop(
@@ -80,6 +82,7 @@ def build(
             obs_chars=obs_chars,
             health=health,
             context_budget=COMPACT_AT_TOKENS,
+            read_gate=read_gate,
         )
     if mode == "tool":
         return ToolLoop(
@@ -92,6 +95,7 @@ def build(
             goal_stops=goal_stops,
             obs_chars=obs_chars,
             health=health,
+            read_gate=read_gate,
         )
     return ReplLoop(
         client,

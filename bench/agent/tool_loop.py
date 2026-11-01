@@ -96,6 +96,7 @@ class ToolLoop:
         goal_stops: bool = False,
         obs_chars: int = 0,
         health: Any = None,
+        read_gate: bool = False,
     ) -> None:
         self.client = client
         self.kernel = kernel
@@ -111,6 +112,8 @@ class ToolLoop:
         self.health = health
         self.last_check: Any = None
         self._health_at = 0.0
+        self.check_cache: dict[str, str] = {}
+        self.read_gate = read_gate
 
     def _observe(self, cell, steps: int) -> str:
         return observation(cell, self.obs_chars)
@@ -120,6 +123,12 @@ class ToolLoop:
 
     def _goal_state(self):
         return evaluate(self.goal)
+
+    def _note_cell(self, cell) -> None:
+        return None
+
+    def _read_rejection(self, final: str) -> str | None:
+        return None
 
     def _reject(self, check, prefix: str) -> str:
         if check is None:
@@ -246,8 +255,10 @@ class ToolLoop:
                     seen.add(code)
                 calls += 1
                 rec["code"] = code
-                cell = self.kernel.run(code)
+                cell = self.kernel.run(code, check_cache=self.check_cache)
                 rec["runs"] = (rec["runs"] or []) + (cell.runs or [])
+                rec["reads"] = cell.reads or {}
+                self._note_cell(cell)
                 rec["observation"] = {
                     "exit": "raise" if cell.stderr else "ok",
                     "result": cell.result,
@@ -258,19 +269,29 @@ class ToolLoop:
                 }
                 if cell.stderr:
                     errors += 1
-                if self.health is not None and cell.mutated:
-                    now = time.perf_counter()
-                    if now - self._health_at >= 20.0:
-                        self._health_at = now
-                        try:
-                            self.last_check = self.health()
-                        except Exception:
-                            self.last_check = None
-                        if self.last_check is not None:
-                            rec["check"] = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
+                if cell.mutated:
+                    self.check_cache = {}
+                    self.last_check = None
+                    if self.health is not None:
+                        now = time.perf_counter()
+                        if now - self._health_at >= 20.0:
+                            self._health_at = now
+                            try:
+                                outcome = self.health(sorted(cell.changed))
+                            except Exception:
+                                outcome = None
+                            if isinstance(outcome, tuple):
+                                self.last_check, results = outcome
+                                self.check_cache = {cmd: {"text": item.text(600), "ok": bool(item.ok)}
+                                                    for cmd, item in results.items() if item is not None}
+                            else:
+                                self.last_check = outcome
+                            if self.last_check is not None:
+                                rec["check"] = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
                 if cell.changed:
                     self.changed.update(cell.changed)
                 obs = self._observe(cell, steps)
+                rec["obs"] = obs
 
                 if cell.final is not None:
                     if cell.stdout.strip() or cell.stderr.strip():
@@ -284,6 +305,13 @@ class ToolLoop:
                                          "content": self._reject(check, "final_answer rejected")})
                         rec["stop"] = "GOAL_UNMET"
                         continue
+                    if self.read_gate:
+                        reason = self._read_rejection(cell.final)
+                        if reason:
+                            messages.append({"role": "tool", "tool_call_id": call_id,
+                                             "content": reason})
+                            rec["stop"] = "UNREAD"
+                            continue
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                     terminal = cell.final
                     continue

@@ -64,7 +64,7 @@ if str(ROOT) not in sys.path:
 
 from bench.agent import config  # noqa: E402
 from bench.agent.check import run_check  # noqa: E402
-from bench.agent.checks import CheckSpec, run_specs  # noqa: E402
+from bench.agent.checks import CheckSpec, run_plan, run_specs  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
 from bench.agent.repl import RUN_NOTE  # noqa: E402
@@ -138,10 +138,10 @@ class StreamingKernel(Kernel):
         self._emit_event = emit_event
         self._cell_no = 0
 
-    def run(self, code: str):
+    def run(self, code: str, check_cache: dict | None = None):
         self._cell_no += 1
         self._emit_event({"kind": "cell.start", "cell": self._cell_no, "code": code})
-        return super().run(code)
+        return super().run(code, check_cache=check_cache)
 
 
 class EventTrace:
@@ -160,6 +160,8 @@ class EventTrace:
             "tool_calls": record.get("tool_calls"),
             "finish": record.get("finish"),
             "observation": record.get("observation"),
+            "obs": record.get("obs"),
+            "reads": record.get("reads") or {},
             "runs": record.get("runs") or [],
             "cache": record.get("cache") or {},
             "check": record.get("check"),
@@ -234,7 +236,8 @@ def main() -> int:
         goal = plan_goal
         cheap = [spec for spec in specs if spec.cheap]
         if cheap:
-            health = lambda: run_specs(cheap, str(workspace))
+            def health(paths=None):
+                return run_plan(cheap, str(workspace), paths)
         goal_label = "verified: " + ", ".join(spec.name for spec in specs) + " passed"
 
     kernel: StreamingKernel | None = None

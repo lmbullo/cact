@@ -5,7 +5,7 @@ WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
   It imports every module, drives the kernel prelude end to end (read/write/edit/changes/
   diff/undo, run()'s redirect and refusal) and checks the pure helpers (reply parsing, state
-  digests, check parsing, tools registry).
+  digests, read coverage, the spawn gate, check plans).
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
 
@@ -37,7 +37,7 @@ import bench.agent.llm as llm
 import bench.agent.loop as loop
 import bench.agent.reply as reply
 import bench.agent.state_loop as state_loop
-import bench.agent.tools as tools
+import bench.agent.checks as checks
 import bench.agent.trace as trace
 import bench.edge as edge
 import bench.runs as runs
@@ -82,16 +82,20 @@ def main() -> int:
     check("runs: verbs", "final_answer" in runs.VERBS)
     check("ws: workspace helpers", callable(ws.manifest) and callable(ws.clone) and callable(ws.changed))
 
-    # --- tools registry (classic tools mode) ---------------------------------------------
+    # --- plans and coverage --------------------------------------------------------------
     root = Path(tempfile.mkdtemp(prefix="cact-smoke-"))
     (root / "a.txt").write_text("alpha\nbeta\n", encoding="utf-8")
-    registry = tools.Registry()
-    for factory in (tools.make_read(root), tools.make_find(root), tools.make_calc(), tools.make_map(root)):
-        registry.add(factory)
-    tool, argv, problem = registry.prepare("read", {"path": "a.txt"})
-    check("tools: prepare", problem is None and tool is not None)
-    env = registry.execute(tool, argv)
-    check("tools: read envelope", bool(env.get("ok")) and env.get("total_lines") == 2, str(env)[:120])
+    specs = checks.CheckSpec.parse([
+        {"name": "bench", "cmd": "true", "cheap": True, "scope": ["bench"]},
+        {"name": "tui", "cmd": "true", "cheap": True, "scope": ["tui"]},
+    ])
+    check("checks: scope filters by changed path",
+          [spec.name for spec in specs if spec.applies(["tui/src/x.ts"])] == ["tui"])
+    plan, results = checks.run_plan(specs, str(root), ["tui/src/x.ts"])
+    check("checks: plan runs only the scoped spec",
+          plan is not None and plan.cmd == "tui" and list(results) == ["true"], str(plan))
+    check("state: coverage gaps", state_loop.gaps([(1, 10), (30, 40)], 50) == [[11, 29], [41, 50]])
+    check("state: coverage count", state_loop.covered([(1, 10), (5, 20)]) == 20)
 
     # --- goal check ----------------------------------------------------------------------
     passed = check_mod.run_check("true", str(root))
@@ -156,6 +160,36 @@ def main() -> int:
         check("kernel: commit writes several files",
               (root / "x.txt").exists() and (root / "y.txt").exists(), str(cell.result)[:160])
         kernel.run("undo()")
+
+        big = root / "big.txt"
+        big.write_text("\n".join("line %d" % i for i in range(900)), encoding="utf-8")
+        cell = kernel.run("r=read('big.txt'); print(r['shown'], r['truncated'])")
+        check("kernel: read caps delivery and reports next",
+              "True" in cell.stdout and cell.reads.get("big.txt", {}).get("total") == 900, cell.stdout[:120])
+        cell = kernel.run("import subprocess; subprocess.run(['cat', 'a.txt'], capture_output=True)")
+        gate = str(cell.result)
+        check("kernel: spawn gate blocks a direct cat", "wrong_call" in gate and "read(path)" in gate, gate[:200])
+        cell = kernel.run("import subprocess; print(subprocess.run(['echo', 'ok'], capture_output=True, text=True).stdout.strip())")
+        check("kernel: spawn gate allows programs", "ok" in cell.stdout, cell.stdout[:120])
+        cell = kernel.run("run('echo cached-check')", check_cache={"echo cached-check": "PASSED"})
+        check("kernel: a plan check answers run() from the cache",
+              "check_cached" in str(cell.result) and "PASSED" in str(cell.result), str(cell.result)[:160])
+        probe = state_loop.StateLoop(object(), kernel, loop.Budget(), read_gate=True, keep_messages=4)
+        probe.coverage = {"big.txt": {"ranges": [[1, 10]], "total": 900}}
+        message = probe._read_rejection("see `big.txt`")
+        check("state: read gate rejects a cited file with holes",
+              message is not None and "unread 11-900" in message, str(message)[:160])
+        messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "p"}]
+        for i in range(6):
+            messages.append({"role": "assistant", "content": "", "tool_calls": [{"id": str(i)}]})
+            messages.append({"role": "tool", "tool_call_id": str(i), "content": "x"})
+        probe.last_prompt_tokens = 10 ** 9
+        probe.changed = {"a.txt"}
+        probe.deltas = {"a.txt": "@@ -1 +1 @@\n-a\n+b"}
+        probe._compact(messages)
+        folded = "\n".join(str(item.get("content") or "") for item in messages)
+        check("state: fold regenerates session state from the journal",
+              "[session state]" in folded and "[diff]" in folded and probe.compactions == 1, folded[:160])
 
         cell = kernel.run("final_answer('done')")
         check("kernel: final_answer", cell.final == "done" and not cell.stdout.strip(), str(cell.final))

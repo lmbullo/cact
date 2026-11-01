@@ -76,6 +76,7 @@ export type CheckSpec = {
   name: string;
   cmd: string;
   cheap: boolean;
+  scope?: string[];
 };
 
 export type Snapshot = {

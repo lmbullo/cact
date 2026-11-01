@@ -11,8 +11,10 @@ WHAT IT IS
             line of the state card (tool_loop `health=`, state_loop `_observe`)
 
 ENTRY POINTS
-  CheckSpec(name, cmd, cheap=False)       .parse(raw) -> list[CheckSpec]
-  run_specs(specs, cwd) -> Check | None   None when the plan is empty
+  CheckSpec(name, cmd, cheap=False, scope=())  .parse(raw) -> list[CheckSpec]
+                                               .applies(paths) filters by changed paths
+  run_plan(specs, cwd, paths=None) -> (Check | None, {cmd: Check})
+  run_specs(specs, cwd, paths=None) -> Check | None   the combined verdict
 
 INVARIANTS
   - Order is the contract: put the cheap, fast checks (smoke, typecheck) first so a broken
@@ -20,6 +22,8 @@ INVARIANTS
     are skipped.
   - `unrunnable` from check.py survives the plan: a command that cannot run is a broken
     check, never a broken project.
+  - `scope` is a list of path prefixes; a spec runs only when the cell changed a path under
+    one of them, so a docs-only edit does not typecheck the TUI.
   - A plan is data, never a shell string. server.ts detects the default plan
     (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts) and
     passes it to worker.py as `--checks <json>`; bench/live.py forwards `--checks` the same way.
@@ -42,6 +46,19 @@ class CheckSpec:
     name: str
     cmd: str
     cheap: bool = False
+    scope: tuple[str, ...] = ()
+
+    def applies(self, paths: Iterable[str] | None) -> bool:
+        if not self.scope or paths is None:
+            return True
+        for path in paths:
+            text = str(path).lstrip("./")
+            for prefix in self.scope:
+                if prefix in ("", "."):
+                    return True
+                if text == prefix or text.startswith(prefix + "/"):
+                    return True
+        return False
 
     @staticmethod
     def parse(raw: Any) -> list["CheckSpec"]:
@@ -56,26 +73,43 @@ class CheckSpec:
             cmd = str(item.get("cmd") or item.get("command") or "").strip()
             if not cmd:
                 continue
+            scope = item.get("scope") or item.get("paths") or []
+            if isinstance(scope, str):
+                scope = [scope]
             specs.append(CheckSpec(
                 name=str(item.get("name") or cmd[:40]),
                 cmd=cmd,
                 cheap=bool(item.get("cheap", False)),
+                scope=tuple(str(entry).strip().strip("/") for entry in scope if str(entry).strip()),
             ))
         return specs
 
 
-def run_specs(specs: Iterable[CheckSpec], cwd: str) -> Check | None:
-    specs = list(specs)
-    if not specs:
-        return None
+def run_plan(specs: Iterable[CheckSpec], cwd: str,
+             paths: Iterable[str] | None = None) -> tuple[Check | None, dict[str, Check]]:
+    ran: list[CheckSpec] = []
+    results: dict[str, Check] = {}
     for spec in specs:
+        if not spec.applies(paths):
+            continue
+        if spec.cmd in results:
+            continue
         result = run_check(spec.cmd, cwd)
+        results[spec.cmd] = result
+        ran.append(spec)
         if not result.ok:
             if result.state == "unrunnable":
                 return Check(cmd=f"{spec.name}: {spec.cmd}", state="unrunnable",
-                             stdout=result.stdout, stderr=result.stderr)
+                             stdout=result.stdout, stderr=result.stderr), results
             return Check(cmd=f"{spec.name}: {spec.cmd}", state="failed",
                          exit_code=result.exit_code, duration_ms=result.duration_ms,
-                         stdout=result.stdout, stderr=result.stderr, failures=result.failures)
-    return Check(cmd=", ".join(spec.name for spec in specs), state="passed",
-                 exit_code=0, duration_ms=0)
+                         stdout=result.stdout, stderr=result.stderr, failures=result.failures), results
+    if not ran:
+        return None, results
+    return Check(cmd=", ".join(spec.name for spec in ran), state="passed",
+                 exit_code=0, duration_ms=0), results
+
+
+def run_specs(specs: Iterable[CheckSpec], cwd: str,
+              paths: Iterable[str] | None = None) -> Check | None:
+    return run_plan(specs, cwd, paths)[0]

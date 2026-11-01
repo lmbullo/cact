@@ -10,9 +10,13 @@ WHAT IT IS
     [stderr] / [stdout]  digested: head, error lines, tail, plus an _OBS[n] handle
     [result] the last expression, clipped
 
-  Plus compaction: when the transcript grows past `context_budget`, the oldest turns are
-  folded into one `[history]` message so the model keeps working from the workspace rather
-  than from stale text.
+  Plus two ledgers and a fold:
+    coverage  every read() records the line ranges it delivered; the card prints
+              `[read] path ranges/total`, and final_answer is rejected (UNREAD) when it
+              cites a file whose delivered ranges leave holes.
+    fold      when the provider's real prompt count crosses `context_budget`, old turns are
+              replaced by one regenerated `[session state]` message built from the journal
+              (changed files, their diffs, coverage, check results), not a summary.
 
 ENTRY POINTS
   STATE_RULES = TOOL_RULES + the state-card contract (what the model is told)
@@ -47,6 +51,7 @@ WHERE TO CHANGE
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from .tool_loop import TOOL_RULES, ToolLoop
 
@@ -58,12 +63,57 @@ Every tool result is a state card, not a terminal transcript:
   [diff]   the exact hunks this cell changed; empty when nothing changed
   [stderr] and [stdout] are bounded: when the text is large you get the head, the tail, the error lines and a handle
   [result] the last expression, clipped
+  [read]   the file ranges this cell delivered; anything past them is not in your context
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read the diff after a mutation. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; citing a file whose ranges leave holes is rejected at finish, so page the rest with read(path, offset=next). changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
+_CITED = re.compile(r"`([^`\n]+)`")
+_PLAIN_PATH = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:py|ts|tsx|js|md|json|csv|txt|toml|yaml|yml))")
+_READ_GATE_MAX_LINES = 4000
+
+
+def merge_ranges(ranges) -> list[list[int]]:
+    out: list[list[int]] = []
+    for a, b in sorted((max(1, int(a)), int(b)) for a, b in ranges if int(b) >= int(a)):
+        if out and a <= out[-1][1] + 1:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out
+
+
+def gaps(ranges, total: int) -> list[list[int]]:
+    merged = merge_ranges(ranges)
+    out: list[list[int]] = []
+    cursor = 1
+    for a, b in merged:
+        if a > cursor:
+            out.append([cursor, min(total, a - 1)])
+        cursor = max(cursor, b + 1)
+    if total and cursor <= total:
+        out.append([cursor, total])
+    return [item for item in out if item[1] >= item[0]]
+
+
+def covered(ranges) -> int:
+    return sum(b - a + 1 for a, b in merge_ranges(ranges))
+
+
+def split_delta(delta: str) -> dict[str, str]:
+    out: dict[str, list[str]] = {}
+    current = None
+    for line in (delta or "").splitlines():
+        if line.startswith("+++ b/"):
+            current = line[6:].strip()
+            out.setdefault(current, [])
+        elif line.startswith("--- a/") or line.startswith("diff --git"):
+            continue
+        elif current is not None:
+            out[current].append(line)
+    return {path: "\n".join(lines) for path, lines in out.items()}
 
 
 def clip(text: str, limit: int) -> str:
@@ -99,13 +149,58 @@ class StateLoop(ToolLoop):
         output_budget: int = 12_000,
         context_budget: int = 891_289,
         keep_messages: int = 20,
+        read_gate: bool = True,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, read_gate=read_gate, **kwargs)
         self.output_budget = output_budget
         self.context_budget = context_budget
         self.keep_messages = keep_messages
         self.last_prompt_tokens = 0
+        self.coverage: dict[str, dict] = {}
+        self.deltas: dict[str, str] = {}
+
+    def _note_cell(self, cell) -> None:
+        for path, entry in (cell.reads or {}).items():
+            current = self.coverage.setdefault(path, {"ranges": [], "total": 0})
+            current["ranges"].extend(entry.get("ranges") or [])
+            current["total"] = int(entry.get("total") or current["total"] or 0)
+        for path, block in split_delta(cell.delta or "").items():
+            self.deltas[path] = block
+
+    def _read_rejection(self, final: str) -> str | None:
+        if not self.coverage:
+            return None
+        root = str(getattr(self.kernel, "root", ""))
+        cited = []
+        candidates = _CITED.findall(final or "") + _PLAIN_PATH.findall(final or "")
+        for raw in candidates:
+            path = raw.strip().strip(".,;:)").lstrip("./")
+            if path in self.coverage:
+                if path not in cited:
+                    cited.append(path)
+                continue
+            if root and Path(root, path).exists() and path not in cited:
+                cited.append(path)
+        seen = set()
+        for path in cited:
+            if path in seen:
+                continue
+            seen.add(path)
+            entry = self.coverage.get(path)
+            if not entry:
+                continue
+            total = int(entry.get("total") or 0)
+            if not total or total > _READ_GATE_MAX_LINES:
+                continue
+            missing = gaps(entry.get("ranges") or [], total)
+            if missing:
+                a, b = missing[0]
+                return (f"[observation] final_answer rejected: it cites `{path}` but only "
+                        f"{covered(entry.get('ranges') or [])} of {total} lines were delivered; "
+                        f"unread {a}-{b}. Read it with read(path={path!r}, offset={a}), "
+                        "or drop the citation and do not claim what you did not read.")
+        return None
 
     def _observe(self, cell, steps: int) -> str:
         parts = [f"[state] turn={steps} elapsed={cell.duration_ms}ms prompt_tokens={self.last_prompt_tokens}"]
@@ -120,6 +215,14 @@ class StateLoop(ToolLoop):
                 parts.append(f"[check] {self.last_check.cmd}: passed")
             else:
                 parts.append("[check] failing\n" + clip(self.last_check.text(1200), 1500))
+        for path, entry in sorted((cell.reads or {}).items()):
+            total = int(entry.get("total") or 0)
+            ranges = entry.get("ranges") or []
+            shown = ", ".join(f"{a}-{b}" for a, b in merge_ranges(ranges))
+            session = self.coverage.get(path) or {}
+            missing = gaps((session.get("ranges") or []) + ranges, total)
+            tail = f" (next {missing[0][0]})" if missing else ""
+            parts.append(f"[read] {path} {shown}/{total}{tail}")
         handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
         if cell.stderr:
             parts.append("[stderr]\n" + clip(digest(cell.stderr, self.output_budget, handle), self.output_budget))
@@ -142,15 +245,25 @@ class StateLoop(ToolLoop):
         dropped = body[:cut]
         if not dropped:
             return
-        changed = ", ".join(sorted(self.changed)) or "(none)"
-        summary = {
-            "role": "user",
-            "content": (
-                f"[history] {len(dropped)} earlier messages were folded to keep the context bounded; {self.compactions + 1} fold(s). "
-                f"Files changed this session: {changed}. "
-                "The workspace is authoritative: read(), grep(), diff() and changes() return the current state. "
-                "Do not re-derive what earlier turns already established."
-            ),
-        }
+        lines = [f"[session state] {len(dropped)} earlier messages were folded; the workspace is authoritative. "
+                 f"{self.compactions + 1} fold(s). Do not re-derive what earlier turns established."]
+        if self.changed:
+            lines.append("changed: " + ", ".join(sorted(self.changed)))
+        diffs = [self.deltas[path] for path in sorted(self.deltas) if self.deltas[path]]
+        if diffs:
+            lines.append("[diff] current change set\n" + clip("\n".join(diffs), 6000))
+        if self.coverage:
+            reads = []
+            for path in sorted(self.coverage)[:16]:
+                entry = self.coverage[path]
+                total = int(entry.get("total") or 0)
+                ranges = entry.get("ranges") or []
+                missing = gaps(ranges, total)
+                suffix = f" unread {missing[0][0]}-{missing[-1][1]}" if missing else ""
+                reads.append(f"{path} {covered(ranges)}/{total}{suffix}")
+            lines.append("reads: " + "; ".join(reads))
+        if self.last_check is not None:
+            lines.append(f"check: {self.last_check.cmd}: {'passed' if self.last_check.ok else 'failed'}")
+        summary = {"role": "user", "content": "\n".join(lines)}
         messages[:] = head + [summary] + body[cut:]
         self.compactions += 1
