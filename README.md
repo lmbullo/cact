@@ -18,9 +18,11 @@ task board in front of it.
 There is no root `package.json`, no `pyproject.toml`, no CI. The only install step is
 `bun install` inside `tui/`.
 
-Coding agents: start at `AGENTS.md` (short version, rules that must not break, how to
-verify). Every module under `bench/agent/` and `tui/src/` opens with a docstring header stating
-what it is, its entry points, its invariants and where to change what.
+Coding agents: run `python3 bench/map.py` first — it indexes the header of every source
+module (what it is, entry points, invariants, where to change it), `--query <topic>` names the
+owner of a topic and `--check` fails when a header is incomplete. `AGENTS.md` is the short
+version of this file plus the rules that must not break. Inside the agent's kernel the same
+index is the `guide()` verb.
 
 ---
 
@@ -28,7 +30,7 @@ what it is, its entry points, its invariants and where to change what.
 
 | File | Why |
 |---|---|
-| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `map`, `write`, `edit`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `final_answer`) |
+| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `guide`, `map`, `write`, `edit`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `final_answer`) |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, with output digests and context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
@@ -49,6 +51,7 @@ cact/
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
 │   ├── live.py              run ONE task through tui/python/worker.py and journal it
 │   ├── smoke.py             offline contract check: imports, kernel prelude, helpers, checks
+│   ├── map.py               contract CLI: the header index per module (`--query`, `--check`)
 │   ├── runs.py              summarise a task journal from a TUI state dir
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
@@ -68,6 +71,7 @@ cact/
 │       ├── check.py         run_check(): runs tsc/pytest/bun test, extracts failures into a Check
 │       ├── checks.py        the check plan (goal + cheap health subset), run_specs/run_plan
 │       ├── trace.py         Trace JSONL writer + render() for humans
+│       ├── headers.py       header index (index/guide/problems); shipped to kernel cells
 │       └── config.py        production defaults + build() factory (CODE_TUI_MODE)
 └── tui/
     ├── bin/code, bin/code-stop     shell entry points
@@ -98,7 +102,7 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per cell
-          ├─ PRELUDE: read/grep/map/write/edit/apply/commit, changes/diff/undo,
+          ├─ PRELUDE: read/grep/guide/map/write/edit/apply/commit, changes/diff/undo,
           │           recall, final_answer, emit
           └─ RUN_PRELUDE: run() — whole programs only
                   │
@@ -118,6 +122,12 @@ bench/run.py                        tui/bin/code
   group cannot reach it. The child journals the group leader (pid + `/proc` start id) and
   `Kernel.stop()`/`_restart()` kills those groups, so a timed-out cell or a crashed kernel
   does not leak a test server, browser or build process.
+- **The contract index:** `bench/agent/headers.py` parses the WHAT IT IS / ENTRY POINTS /
+  INVARIANTS / WHERE TO CHANGE header of every source module into rows. `bench/map.py` prints
+  them; `kernel.py` ships the file's *source* to the child in `KERNEL_HEADERS`, execs it into
+  a private `_HEADERS` namespace and exposes one verb, `guide(query|path)`, so an agent can ask
+  which module owns a topic from inside a cell. It only answers where the repo documents
+  itself; on a task workspace with no headers it returns a miss and says so.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list. `recall(pattern)` searches it — including turns the `[session state]` fold removed —
   and returns snippets plus the `_OBS[n]` handle to page the full text. `grep()` is for the
@@ -182,6 +192,10 @@ failure lines, and distinguishes `unrunnable` (broken check) from `failed` (real
 ### Benchmark
 
 ```bash
+python3 bench/map.py                   # the contract index: module -> what it is
+python3 bench/map.py --query checks    # which module owns "checks", with entry points
+python3 bench/map.py --check           # gate: every module header has its four sections
+
 export DEEPSEEK_API_KEY=...            # or --key
 python3 bench/run.py                                   # read suite, state mode, fixtures/
 python3 bench/run.py --suite all --mode state          # read + mutation, production loop
@@ -261,7 +275,13 @@ imports `bench.agent` from this repo, so the checkout path matters.
    journals. The `sweep/` files are batch summaries. `bench/ws/` (frozen workspaces and
    `runs/` journals) is gitignored measurement output — regenerate it with `bench/ws.py` and
    `bench/live.py`.
-7. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
+7. **Every module explains itself.** A source module opens with WHAT IT IS / ENTRY POINTS /
+   INVARIANTS / WHERE TO CHANGE; `bench/agent/headers.py` parses those into data and
+   `python3 bench/map.py --check` (also in `bench/smoke.py`) fails when one is missing. The
+   kernel ships that file's source to the child and exports only `guide()`, so it must stay
+   stdlib-only, `__file__`-free and read-only. Task fixtures and `bench/hard_hidden/` are not
+   indexed: they are graded input, not code an agent maintains.
+8. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
    `bench/.cache/` (LLM replies), `bench/ws/` (frozen workspaces), `tui/node_modules/`,
    `tmp8_w_n1sf/`, and the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is recreated
    by `edge.build()` whenever it is missing — if you add an edge task, add its fixture
@@ -273,6 +293,7 @@ imports `bench.agent` from this repo, so the checkout path matters.
 
 | Change | Touch |
 |---|---|
+| The header index, the map CLI or the `guide()` verb | `bench/agent/headers.py` (parsing, ranking, rendering), `bench/map.py` (flags), `kernel.PRELUDE` (`guide` is a one-line wrapper over `_HEADERS["guide"]`) |
 | What the agent can do (new file/exec helper) | `kernel.PRELUDE` or `RUN_PRELUDE`, plus the matching rule text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`; if it replaces a mutating shell verb, `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` + `_HINT` |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run` (and `repl.py` if REPL) |

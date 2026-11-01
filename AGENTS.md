@@ -1,9 +1,11 @@
 # AGENTS.md
 
 Orientation for coding agents. The human owner does not read this code; you do. Read this
-file first, then the docstring at the top of whatever module you are about to change — every
-module under `bench/agent/` and `tui/src/` opens with WHAT IT IS / ENTRY POINTS / INVARIANTS /
-WHERE TO CHANGE. `README.md` is the full prose reference; this file is the short version.
+file first, then run `python3 bench/map.py`: it parses the header of every source module
+(WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE) and prints which module owns what.
+`python3 bench/map.py --query <topic>` answers "where do I change this?"; `--module <path>`
+prints one module whole. Inside a kernel cell the same index is the `guide()` verb.
+`README.md` is the full prose reference; this file is the short version.
 
 ## What this repo is
 
@@ -27,6 +29,7 @@ inside `tui/`.
 | File | Why |
 |---|---|
 | `bench/agent/kernel.py` | `DRIVER` + `PRELUDE` + `RUN_PRELUDE` define the agent's entire action space, and `Kernel` is the subprocess that enforces it |
+| `bench/agent/headers.py` | The header index: `index()`, `guide()`, `problems()`. Shipped as source to every kernel child, so `python3 bench/map.py` and the `guide()` verb run the same code |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
@@ -74,7 +77,15 @@ inside `tui/`.
    rebuilt by `edge.build()` when missing.
 9. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
    mode (`python3 -m bench.run`). Keep both working.
-10. **`run()` children are journalled and reaped.** Each command starts in its own session;
+10. **Every module explains itself, and something checks.** A source module carries all four
+    header sections; `bench/agent/headers.py` parses them into data and
+    `python3 bench/map.py --check` (also a `bench/smoke.py` check) exits 1 when one is
+    missing. `kernel.py` ships `headers.py`'s *source* to the child in `KERNEL_HEADERS` and
+    execs it into a private `_HEADERS` namespace, exporting only `guide()`: keep that file
+    stdlib-only, free of `__file__`, and read-only, or the verb breaks where `bench` is not
+    importable. Do not inline the index into `PRELUDE` again — a shared namespace let its
+    `_walk` shadow the prelude's.
+11. **`run()` children are journalled and reaped.** Each command starts in its own session;
     the child writes its group leader to `KERNEL_ORPHAN_JOURNAL`, and `Kernel.stop()` /
     `_restart()` kill those groups. Removing the journal or the reap leaks processes when a
     cell times out or the kernel dies. `recall(pattern)` is the session-side search over
@@ -83,9 +94,12 @@ inside `tui/`.
 ## Verify a change
 
 ```bash
+python3 bench/map.py --check               # every module header has its four sections
+python3 bench/map.py                       # the map: module -> what it is
 python3 bench/smoke.py                     # offline contract check: imports, kernel prelude,
                                            # run() allow + refusal, apply/commit,
-                                           # envelopes, reply parsing, check parsing
+                                           # envelopes, reply parsing, check parsing,
+                                           # the header index and the guide() verb
 python3 -m compileall -q bench tui/python  # syntax
 cd tui && bun run typecheck && bun test    # TS: 12 tests, 5 files
 ```
@@ -109,6 +123,9 @@ the trace format.
 - Commit style: `area(scope): lowercase summary`, e.g. `bench(agent/kernel): add grep, write, edit`.
 - Prose is for agents: state the contract, the entry point and the failure mode; skip
   tutorials.
+- When you add a module, give it the four-section header and run `python3 bench/map.py
+  --check`. A header is the module's only introduction: state the contract, the entry point
+  and the failure mode, and skip the tutorial.
 - When you add a helper to the kernel, add the matching rule text to `tool_loop.TOOL_RULES` /
   `repl.REPL_RULES` / `state_loop.STATE_RULES`, or the model will not know it exists. If it
   replaces a mutating shell verb, add it to `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` and
