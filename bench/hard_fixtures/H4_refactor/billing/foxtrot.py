@@ -3,4 +3,4 @@ from .api import parse
 
 def describe_foxtrot(text):
     row = parse(text)
-    return "foxtrot: %s %s" % (row["name"], row["currency"])
+    return "foxtrot: %s %s %s" % (row["name"], row["amount"], row["currency"])

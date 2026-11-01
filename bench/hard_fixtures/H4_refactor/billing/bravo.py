@@ -3,4 +3,4 @@ from .api import parse
 
 def describe_bravo(text):
     row = parse(text)
-    return "bravo: %s %s" % (row["name"], row["currency"])
+    return "bravo: %s %s %s" % (row["name"], row["amount"], row["currency"])

@@ -3,7 +3,7 @@
 WHAT IT IS
   Four workspaces that punish a loop that only runs the visible tests:
     H1_spec      SPEC.md is the contract; the visible suite is green but incomplete.
-    H2_bughunt   five modules with latent bugs; SPEC.md states the invariants.
+    H2_bughunt   ten modules with latent bugs; SPEC.md states the invariants.
     H3_bigcsv    200k rows; four aggregates that require code, not reading.
     H4_refactor  rename an API across nine files; the old name must disappear.
 
@@ -133,7 +133,7 @@ H1_PROMPT = (
 )
 
 
-# --- H2: five latent bugs behind a green visible suite ------------------------------------
+# --- H2: ten latent bugs behind a green visible suite ------------------------------------
 H2_SPEC = '''# ledger invariants
 
 `tax.with_tax(cents, rate_bp)` -> `cents` plus tax, where `rate_bp` is basis points
@@ -150,6 +150,18 @@ space; leading and trailing spaces are removed.
 
 `stats.median(xs)` -> the middle value when the length is odd, the mean of the two middle
 values (a float) when even. Empty input raises `ValueError`.
+
+`sequence.unique(xs)` -> the distinct values in first-seen order (not sorted, not arbitrary).
+
+`parse.ints(text)` -> the integer tokens in `text`, in order; tokens that are not integers
+are ignored.
+
+`window.chunks(seq, n)` -> every chunk of length `n`, in order, last one possibly short.
+`n <= 0` raises `ValueError`.
+
+`names.ext(name)` -> the extension after the last dot, or `""` when there is no dot.
+
+`rounding.round_half_up(x)` -> the nearest integer, halves going up: `floor(x + 0.5)`.
 '''
 
 H2_FILES = {
@@ -170,6 +182,21 @@ H2_FILES = {
     "ledger/stats.py": '''def median(xs):
     xs = sorted(xs)
     return xs[len(xs) // 2]
+''',
+    "ledger/sequence.py": '''def unique(xs):
+    return list(set(xs))
+''',
+    "ledger/parse.py": '''def ints(text):
+    return [int(token) for token in str(text).split()]
+''',
+    "ledger/window.py": '''def chunks(seq, n):
+    return [seq[i:i + n] for i in range(n)]
+''',
+    "ledger/names.py": '''def ext(name):
+    return str(name).split(".")[-1]
+''',
+    "ledger/rounding.py": '''def round_half_up(x):
+    return int(x)
 ''',
     "tests/test_visible.py": '''import unittest
 import sys, os
@@ -197,13 +224,13 @@ H2_PROMPT = (
 H4_SPEC = '''# billing API
 
 `billing.api.parse_row(text, *, strict=False)` splits one row on commas into
-`{"name": str, "amount": str, "currency": str}`.
+`{"name": str, "cents": str, "currency": str}`.
 
 - Non-strict: missing trailing fields become `""`.
 - Strict: fewer than three fields raises `ValueError`.
-- The old name `parse` no longer exists.
+- The old name `parse` no longer exists, and the old `amount` field is now `cents`.
 
-Every module in `billing/` must call `parse_row`.
+Every module in `billing/` must call `parse_row` and read the `cents` field.
 '''
 
 H4_API = '''def parse(text):
@@ -219,10 +246,13 @@ H4_MODULE = '''from .api import parse
 
 def describe_{name}(text):
     row = parse(text)
-    return "{name}: %s %s" % (row["name"], row["currency"])
+    return "{name}: %s %s %s" % (row["name"], row["amount"], row["currency"])
 '''
 
-H4_MODULES = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+H4_MODULES = [
+    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+    "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa",
+]
 
 H4_VISIBLE = '''import unittest
 import sys, os
@@ -232,7 +262,7 @@ from billing.alpha import describe_alpha
 
 class Visible(unittest.TestCase):
     def test_alpha(self):
-        self.assertEqual(describe_alpha("widget,10,USD"), "alpha: widget USD")
+        self.assertEqual(describe_alpha("widget,10,USD"), "alpha: widget 10 USD")
 
 
 if __name__ == "__main__":
@@ -240,10 +270,10 @@ if __name__ == "__main__":
 '''
 
 H4_PROMPT = (
-    "SPEC.md describes the new billing API. Rename `billing.api.parse` to `parse_row`, make "
-    "`strict` keyword-only with default False (strict raises ValueError when fewer than three "
-    "comma-separated fields are present), update every call site in the package, and delete "
-    "the old name. Do not modify the tests."
+    "SPEC.md describes the new billing API. Rename `billing.api.parse` to `parse_row`, rename "
+    "the `amount` field to `cents`, make `strict` keyword-only with default False (strict "
+    "raises ValueError when fewer than three comma-separated fields are present), update every "
+    "call site in the package, and delete the old name. Do not modify the tests."
 )
 
 
@@ -390,7 +420,7 @@ HARD_TASKS: list[HardTask] = [
         "H2_bughunt",
         H2_PROMPT,
         _grade_hidden("H2_bughunt"),
-        "five latent bugs, one spec",
+        "ten latent bugs, one spec",
         HARD / "H2_bughunt",
         mutates=True,
         check=lambda ws: hidden_check("H2_bughunt", ws),

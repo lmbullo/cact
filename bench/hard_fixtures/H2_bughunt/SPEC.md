@@ -14,3 +14,15 @@ space; leading and trailing spaces are removed.
 
 `stats.median(xs)` -> the middle value when the length is odd, the mean of the two middle
 values (a float) when even. Empty input raises `ValueError`.
+
+`sequence.unique(xs)` -> the distinct values in first-seen order (not sorted, not arbitrary).
+
+`parse.ints(text)` -> the integer tokens in `text`, in order; tokens that are not integers
+are ignored.
+
+`window.chunks(seq, n)` -> every chunk of length `n`, in order, last one possibly short.
+`n <= 0` raises `ValueError`.
+
+`names.ext(name)` -> the extension after the last dot, or `""` when there is no dot.
+
+`rounding.round_half_up(x)` -> the nearest integer, halves going up: `floor(x + 0.5)`.
