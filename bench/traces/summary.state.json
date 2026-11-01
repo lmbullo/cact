@@ -4,30 +4,33 @@
   "mode": "state",
   "rows": [
     {
-      "task": "T1_count",
+      "task": "H4_refactor",
       "mix": {},
       "mode": "state",
-      "shape": "single file, aggregate",
+      "shape": "rename across nine files",
       "ok": true,
-      "detail": "got '15 rows have amount greater than 100 (out of 40 rows in ledger.csv).'; expected 15",
-      "stop": "DONE",
-      "steps": 3,
-      "llm_calls": 3,
-      "calls": 3,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H4_refactor: passed (73ms)",
+      "stop": "VERIFIED",
+      "steps": 4,
+      "llm_calls": 4,
+      "calls": 4,
       "errors": 0,
       "usage": {
-        "prompt_tokens": 2627,
-        "completion_tokens": 236,
-        "total_tokens": 2863,
-        "reasoning_tokens": 19,
-        "prompt_cache_hit_tokens": 2048,
-        "prompt_cache_miss_tokens": 579,
+        "prompt_tokens": 5699,
+        "completion_tokens": 735,
+        "total_tokens": 6434,
+        "reasoning_tokens": 203,
+        "prompt_cache_hit_tokens": 4224,
+        "prompt_cache_miss_tokens": 1475,
         "local_hits": 0
       },
-      "wall_ms": 3917,
-      "runs": [],
-      "final": "15 rows have amount greater than 100 (out of 40 rows in ledger.csv).",
-      "trace": "/home/lmbullo/code/bench/traces/T1_count.state.jsonl"
+      "wall_ms": 7435,
+      "runs": [
+        "ls -la",
+        "grep -rn parse --include=*.py ."
+      ],
+      "final": "verified",
+      "trace": "/home/lmbullo/code/bench/traces/H4_refactor.state.jsonl"
     }
   ]
 }

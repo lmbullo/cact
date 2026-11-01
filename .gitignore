@@ -9,3 +9,6 @@ tmp8_w_n1sf/
 
 # measurement fixtures: regenerate with bench/ws.py
 bench/ws/
+
+# generated hard-suite artifact (200k rows)
+bench/hard_fixtures/H3_bigcsv/

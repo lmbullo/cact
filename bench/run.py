@@ -13,7 +13,7 @@ ENTRY POINTS
   workspace(task) -> Path             fresh copy under bench/.tmp
   main() -> int                       0 only when every selected task passes
 
-  Flags: --suite read|mutation|all|edge, --mode repl|tool|state, --tasks a,b, --steps,
+  Flags: --suite read|mutation|all|edge|hard, --mode repl|tool|state|bare, --tasks a,b, --steps,
   --wall, --max-output, --read-chars, --obs-chars, --map off|tool|inline, --context map|full,
   --allow-run off|on, --cell-timeout, --repl-*, --temperature, --seed, --no-cache, --traces.
 
@@ -36,7 +36,8 @@ WHERE TO CHANGE
   New suite .......................... the `pool` dict + the matching module's TASKS list
   New flag / budget wiring .......... the argparse block in main()
   What a run records ................. the `rows.append({...})` dict and summary write
-  Which loop a mode builds ........... the `if args.mode in ("tool", "state")` branch
+  Which loop a mode builds ........... the `if args.mode in ("tool", "state")` / `bare` branch
+  The hard suite and its held-out oracle ... bench/hard.py
 """
 from __future__ import annotations
 
@@ -56,6 +57,7 @@ if __package__ in (None, ""):
     from bench.agent.state_loop import StateLoop
     from bench.agent.tool_loop import TOOL_RULES, ToolLoop
     from bench import edge as bench_edge
+    from bench import hard as bench_hard
     from bench.agent.trace import Trace, render
     from bench import tasks as bench_tasks
 else:
@@ -66,6 +68,7 @@ else:
     from .agent.state_loop import StateLoop
     from .agent.tool_loop import TOOL_RULES, ToolLoop
     from . import edge as bench_edge
+    from . import hard as bench_hard
     from .agent.trace import Trace, render
     from . import tasks as bench_tasks
 
@@ -91,6 +94,8 @@ LIB_MUT_NOTE = (
     "write(path, content), edit(path, old, new, all=False). write always replaces. "
     "Reading is ordinary Python; open() decodes with errors='replace'.\n"
 )
+
+BARE_TOOL_RULES = """You act by calling the python tool, which executes the code in a persistent kernel. Variables and imports persist between calls; stdout, stderr and the last expression come back as the tool result. To finish, call final_answer(<value>) in a cell that prints nothing, or reply with no tool call."""
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
@@ -132,7 +137,7 @@ def main() -> int:
     ap.add_argument("--key", default=os.environ.get("DEEPSEEK_API_KEY", ""))
     ap.add_argument("--model", default="deepseek-flash")
     ap.add_argument("--effort", default="low", choices=["low", "high", "max", "none"])
-    ap.add_argument("--mode", default="state", choices=["repl", "tool", "state"])
+    ap.add_argument("--mode", default="state", choices=["repl", "tool", "state", "bare"])
     ap.add_argument("--tasks", default="all")
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--wall", type=float, default=3600.0)
@@ -143,7 +148,8 @@ def main() -> int:
     ap.add_argument("--cell-timeout", type=float, default=0.0)
     ap.add_argument("--repl-stop", default="call", choices=["call", "var"])
     ap.add_argument("--repl-history", default="full", choices=["full", "obs", "drop", "action"])
-    ap.add_argument("--suite", default="read", choices=["read", "mutation", "all", "edge"])
+    ap.add_argument("--suite", default="read", choices=["read", "mutation", "all", "edge", "hard"])
+    ap.add_argument("--health", default="on", choices=["on", "off"])
     ap.add_argument("--repl-lib", default="off", choices=["off", "all", "mut"])
     ap.add_argument("--obs-chars", type=int, default=4000)
     ap.add_argument("--map", default="off", choices=["off", "tool", "inline"])
@@ -174,8 +180,9 @@ def main() -> int:
         "mutation": bench_tasks.MUTATION_TASKS,
         "all": bench_tasks.ALL_TASKS,
         "edge": bench_edge.EDGE_TASKS,
+        "hard": bench_hard.HARD_TASKS,
     }[args.suite]
-    lookup = bench_edge.by_id if args.suite == "edge" else bench_tasks.by_id
+    lookup = {"edge": bench_edge.by_id, "hard": bench_hard.by_id}.get(args.suite, bench_tasks.by_id)
     selected = pool if args.tasks == "all" else [lookup(t) for t in args.tasks.split(",")]
 
     TRACES.mkdir(parents=True, exist_ok=True)
@@ -203,7 +210,9 @@ def main() -> int:
             kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=lib,
                             allow_run=allow_run)
             try:
-                base = TOOL_RULES if args.mode in ("tool", "state") else {"full": REPL_RULES, "bare": BARE_RULES, "none": ""}[args.repl_rules]
+                base = (TOOL_RULES if args.mode in ("tool", "state")
+                        else BARE_TOOL_RULES if args.mode == "bare"
+                        else {"full": REPL_RULES, "bare": BARE_RULES, "none": ""}[args.repl_rules])
                 rules = base
                 if args.mode not in ("tool", "state") and lib == "all":
                     rules = rules + LIB_NOTE
@@ -212,13 +221,27 @@ def main() -> int:
                 if allow_run and args.repl_rules != "none" and args.mode not in ("tool", "state"):
                     rules = rules + (RUN_NOTE_MUT if lib == "mut" else RUN_NOTE)
                 check = getattr(task, "check", None)
+                goal = (lambda: check(ws)) if check and args.mode != "bare" else None
+                health = None
+                if check and args.health == "on" and args.mode in ("tool", "state"):
+                    health = lambda paths: (check(ws), {})
                 if args.mode in ("tool", "state"):
                     loop = (StateLoop if args.mode == "state" else ToolLoop)(
                         client, kernel, budget,
                         rules=rules + prefix,
-                        goal=(lambda: check(ws)) if check else None,
+                        goal=goal,
                         goal_stops=True,
                         obs_chars=args.obs_chars,
+                        health=health,
+                    )
+                elif args.mode == "bare":
+                    loop = ToolLoop(
+                        client, kernel, budget,
+                        rules=rules + prefix,
+                        goal=None,
+                        goal_stops=False,
+                        obs_chars=args.obs_chars,
+                        read_gate=False,
                     )
                 else:
                     loop = ReplLoop(
