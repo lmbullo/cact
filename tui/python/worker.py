@@ -27,7 +27,8 @@ INVARIANTS
     The whole plan becomes the goal callable, so it re-runs on every finish attempt and
     `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
     never ends the run by itself. The `cheap` entries also become the loop's `health`
-    check, which is what the `[check]` card line reports.
+    check, which is what the `[check]` card line reports; each `scope` keeps a health run
+    to the paths that changed, while the goal runs the whole plan.
   - CODE_TUI_LEGACY_CHECK=1 makes the goal answer with a bare pass/fail (no Check text);
     CODE_TUI_LEGACY_TIMEOUT=1 turns off the in-child cell alarm.
   - Status mapping is fixed: DONE|VERIFIED -> done, STEP_LIMIT|WALL_LIMIT with a non-empty

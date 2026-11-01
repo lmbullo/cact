@@ -1,13 +1,15 @@
 /**
  * The wire contract shared by server.ts, client.tsx, launcher.ts and stop.ts.
  *
- * Task          one queued/running/finished agent task (the board row and the detail view)
- * TaskEvent     one line of events/<id>.jsonl: {seq, ts, kind, text?, data?, ...}
- * ServerInfo    server.json and GET /health: workspace, port, pid, model, check, checks, hasKey
- * CheckSpec     one entry of the verification plan: {name, cmd, cheap}
- * Snapshot      WebSocket open message: {type:"snapshot", server, tasks}
- * WsMessage     server -> client: snapshot | task | event | ping
- * WorkerMessage server <- worker: the `@@TUI@@` payloads emitted by python/worker.py
+ * WHAT IT IS
+ *  Types only. `Task` is one queued/running/finished agent task (the board row and the
+ *  detail view); `TaskEvent` is one line of events/<id>.jsonl; `ServerInfo` is server.json
+ *  and GET /health; `CheckSpec` is one entry of the verification plan;
+ *  `Snapshot`/`WsMessage` are the WebSocket messages; `WorkerMessage` is the `@@TUI@@`
+ *  payload emitted by python/worker.py.
+ *
+ * ENTRY POINTS
+ *  Task, TaskStatus, TaskEvent, ServerInfo, CheckSpec, Snapshot, WsMessage, WorkerMessage
  *
  * INVARIANTS
  *  - Types only: no runtime code, nothing to import at runtime. Changing a field here means
@@ -16,8 +18,15 @@
  *    from stop reason to status lives in tui/python/worker.py, not here.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
- *  - `CheckSpec` mirrors `bench.agent.checks.CheckSpec` and is parsed in server.ts
- *    (detectChecks) from CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
+ *  - `CheckSpec` mirrors `bench.agent.checks.CheckSpec`: {name, cmd, cheap, scope?}, where
+ *    `scope` is a list of path prefixes. It is parsed in server.ts (detectChecks) from
+ *    CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
+ *
+ * WHERE TO CHANGE
+ *  The task shape ................. Task / TaskStatus
+ *  The journal line shape ......... TaskEvent
+ *  The detection plan ............ CheckSpec; detectChecks in server.ts
+ *  A worker message .............. WorkerMessage + handleWorkerLine in server.ts
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 

@@ -1,9 +1,22 @@
 /**
  * `bin/code-stop`: SIGTERM this workspace's server and clear its server.json.
  *
- * Resolves the same state dir as launcher.ts (CODE_TUI_STATE_ROOT, else
- * $XDG_STATE_HOME/code-tui, then workspaces/<sha256(cwd)[:16]>/), reads server.json, kills
- * the pid, and removes the file. A missing file or dead pid exits 0: stopping twice is fine.
+ * WHAT IT IS
+ *  The stop half of the launcher: resolve the workspace's state dir, read server.json, kill
+ *  the pid, remove the file.
+ *
+ * ENTRY POINTS
+ *  (no exports) — side-effect entry point, imported by tui/bin/code-stop.
+ *
+ * INVARIANTS
+ *  - Resolves the same state dir as launcher.ts (CODE_TUI_STATE_ROOT, else
+ *    $XDG_STATE_HOME/code-tui, then workspaces/<sha256(cwd)[:16]>/). Change it in all three
+ *    files or the pieces stop finding each other.
+ *  - A missing file or dead pid exits 0: stopping twice is fine.
+ *
+ * WHERE TO CHANGE
+ *  The state-dir formula ... here, launcher.ts and server.ts together
+ *  The kill signal .......... stop.ts (SIGTERM, then the server shuts down)
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";

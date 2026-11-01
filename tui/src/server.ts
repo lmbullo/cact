@@ -28,11 +28,13 @@
  *  - Port 0 means an OS-chosen port, published in server.json. Two servers for one workspace
  *    would race on those files, so launcher.ts always reuses a healthy one.
  *  - detectChecks() decides the verification plan once at startup and never again:
- *    CODE_TUI_CHECKS (JSON [{name, cmd, cheap}]) wins, else CODE_TUI_CHECK as one entry,
- *    else `python3 bench/smoke.py` (cheap) plus "typecheck"/"test" from the root and
- *    tui/package.json. An empty CODE_TUI_CHECK disables it. The plan travels to the worker
- *    as `--checks <json>` and is published in ServerInfo.checks; `cheap` entries become the
- *    agent's post-mutation health check.
+ *    CODE_TUI_CHECKS (JSON [{name, cmd, cheap, scope}]) wins, else CODE_TUI_CHECK as one
+ *    entry, else `python3 bench/smoke.py` (cheap, scope bench) plus "typecheck"/"test"
+ *    from the root and tui/package.json (scope tui). An empty CODE_TUI_CHECK disables it.
+ *    The plan travels to the worker as `--checks <json>` and is published in
+ *    ServerInfo.checks; `cheap` entries become the agent's post-mutation health check and
+ *    `scope` keeps a health run to specs whose paths changed. The goal runs the whole
+ *    plan without a paths filter.
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask

@@ -2,6 +2,10 @@
  * Pure list model: ordering, rows, selection stepping, scroll window. No React, no I/O —
  * this is what tui/tests/list.test.tsx exercises directly.
  *
+ * WHAT IT IS
+ *  The board's layout logic as pure functions: task grouping, section order, selection
+ *  stepping and the visible scroll window.
+ *
  * ENTRY POINTS
  *  STATUS_ORDER                         running -> queued -> done -> partial -> failed -> cancelled
  *  orderTasks(tasks)                    stable sort by rank, then createdAt (oldest first)
