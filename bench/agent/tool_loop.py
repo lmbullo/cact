@@ -43,7 +43,7 @@ import json
 import time
 from typing import Any
 
-from .check import evaluate
+from .check import Check, evaluate
 from .kernel import Kernel
 from .llm import Client, LLMError
 from .loop import Budget, RunResult, _usage_add
@@ -300,6 +300,9 @@ class ToolLoop:
                                                     for cmd, item in results.items() if item is not None}
                             else:
                                 self.last_check = outcome
+                            if isinstance(self.last_check, bool):
+                                self.last_check = Check(
+                                    cmd="health", state="passed" if self.last_check else "failed")
                             if self.last_check is not None:
                                 rec["check"] = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
                 if cell.changed:

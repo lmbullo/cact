@@ -114,6 +114,11 @@ def main() -> int:
         cell = kernel.run("write('b.txt', 'one\\ntwo\\n')")
         check("kernel: write is journalled", cell.changed == ["b.txt"], str(cell.changed))
 
+        cell = kernel.run("open('c.txt', 'w').write('written\\n')")
+        check("kernel: an unclosed open() write is journalled",
+              (root / "c.txt").exists() and "c.txt" in cell.changed,
+              f"{cell.changed} {cell.result}")
+
         cell = kernel.run("edit('b.txt', 'one', 'uno')")
         check("kernel: edit reports the file", cell.changed == ["b.txt"], str(cell.changed))
         check("kernel: diff shows the hunk", "-one" in cell.delta and "+uno" in cell.delta, cell.delta[:120])

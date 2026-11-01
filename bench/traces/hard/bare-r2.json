@@ -1,0 +1,122 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "bare",
+  "rows": [
+    {
+      "task": "H1_spec",
+      "mix": {},
+      "mode": "bare",
+      "shape": "contract over stale tests",
+      "ok": true,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H1_spec: passed (163ms)",
+      "stop": "DONE",
+      "steps": 5,
+      "llm_calls": 5,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 8409,
+        "completion_tokens": 1824,
+        "total_tokens": 10233,
+        "reasoning_tokens": 696,
+        "prompt_cache_hit_tokens": 6784,
+        "prompt_cache_miss_tokens": 1625,
+        "local_hits": 0
+      },
+      "wall_ms": 14076,
+      "runs": [
+        "python -m pytest -q"
+      ],
+      "final": "Implemented all behaviors in `textkit/strings.py`:\n\n- **`slugify`** \u2014 already conformed; verified non-alphanumeric runs collapse, edges stripped.\n- **`truncate`** \u2014 now trims to `limit - len(suffix)` before appending the suffix (exact length), and returns `suffix[:limit]` when `limit < len(suffix)`.\n- **`parse_duration`** \u2014 parses one or more `<n><h|m|s>` components, rejects duplicates, non-descending units, empty/malformed input, and any trailing garbage with `ValueError`.\n- **`chunk`** \u2014 returns a list of lists (not a generator), `[]` for empty input, raises `ValueError` for `size <= 0`.\n- **`word_count`** \u2014 counts whitespace-separated tokens containing at least one alphanumeric character.\n\nVisible tests still pass (`1 passed`), and manual checks confirm the additional spec cases.",
+      "trace": "/home/lmbullo/code/bench/traces/H1_spec.bare.jsonl"
+    },
+    {
+      "task": "H2_bughunt",
+      "mix": {},
+      "mode": "bare",
+      "shape": "ten latent bugs, one spec",
+      "ok": true,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H2_bughunt: passed (166ms)",
+      "stop": "DONE",
+      "steps": 10,
+      "llm_calls": 10,
+      "calls": 9,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 27243,
+        "completion_tokens": 3643,
+        "total_tokens": 30886,
+        "reasoning_tokens": 1627,
+        "prompt_cache_hit_tokens": 24704,
+        "prompt_cache_miss_tokens": 2539,
+        "local_hits": 0
+      },
+      "wall_ms": 28600,
+      "runs": [
+        "python -m unittest discover -s tests -v",
+        "python -m unittest discover -s tests -v"
+      ],
+      "final": "All invariants from `SPEC.md` are now satisfied. I fixed the latent bugs in:\n\n- `tax.with_tax` \u2014 correct basis-point rounding formula\n- `dates.days_between` \u2014 absolute day difference, no off-by-one\n- `money.split` \u2014 remainder distribution and `ValueError` for `n <= 0`\n- `text.normalize` \u2014 lowercase plus collapse/strip non-alphanumeric runs\n- `stats.median` \u2014 proper even-length mean, float result, empty raises\n- `sequence.unique` \u2014 preserves first-seen order\n- `parse.ints` \u2014 ignores non-integer tokens\n- `window.chunks` \u2014 correct chunk stride and `ValueError` for `n <= 0`\n- `names.ext` \u2014 returns `\"\"` when there is no dot\n- `rounding.round_half_up` \u2014 uses `floor(x + 0.5)`\n- `ledger/__init__.py` \u2014 exposes all modules\n\nVerified with property-style edge-case checks and the visible test suite; no tests were modified.",
+      "trace": "/home/lmbullo/code/bench/traces/H2_bughunt.bare.jsonl"
+    },
+    {
+      "task": "H3_bigcsv",
+      "mix": {},
+      "mode": "bare",
+      "shape": "200k rows, four aggregates",
+      "ok": true,
+      "detail": "expected refund=9997548871 region=South reps=40 mod=201; got '9997548871 | South | 40 | 201'",
+      "stop": "DONE",
+      "steps": 5,
+      "llm_calls": 5,
+      "calls": 5,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 5456,
+        "completion_tokens": 511,
+        "total_tokens": 5967,
+        "reasoning_tokens": 106,
+        "prompt_cache_hit_tokens": 4480,
+        "prompt_cache_miss_tokens": 976,
+        "local_hits": 0
+      },
+      "wall_ms": 8629,
+      "runs": [
+        "ls -la",
+        "head -3 sales.csv"
+      ],
+      "final": "9997548871 | South | 40 | 201",
+      "trace": "/home/lmbullo/code/bench/traces/H3_bigcsv.bare.jsonl"
+    },
+    {
+      "task": "H4_refactor",
+      "mix": {},
+      "mode": "bare",
+      "shape": "rename across nine files",
+      "ok": true,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H4_refactor: passed (170ms)",
+      "stop": "DONE",
+      "steps": 6,
+      "llm_calls": 6,
+      "calls": 5,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 12876,
+        "completion_tokens": 943,
+        "total_tokens": 13819,
+        "reasoning_tokens": 80,
+        "prompt_cache_hit_tokens": 10112,
+        "prompt_cache_miss_tokens": 2764,
+        "local_hits": 0
+      },
+      "wall_ms": 9878,
+      "runs": [
+        "python -m unittest discover -s tests -v",
+        "python -m unittest discover -s tests -v"
+      ],
+      "final": "Done. `billing.api.parse` is now `parse_row(text, *, strict=False)`, returning `{\"name\", \"cents\", \"currency\"}`. All 16 module call sites import and call `parse_row`, reading `row[\"cents\"]`; the old `parse` name is gone. Tests pass unchanged.",
+      "trace": "/home/lmbullo/code/bench/traces/H4_refactor.bare.jsonl"
+    }
+  ]
+}

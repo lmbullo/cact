@@ -220,17 +220,15 @@ for line in sys.stdin:
             _delta = "\n".join(_delta_fn())[:12000]
         except Exception:
             _delta = ""
-    _changed_fn = ns.get("_changed")
-    if callable(_changed_fn):
-        try:
-            _changed = [rel for rel, _before, _after in _changed_fn()]
-        except Exception:
-            _changed = list(ns.get("_CELL_CHANGED") or [])
-    else:
-        _changed = list(ns.get("_CELL_CHANGED") or [])
-    _prev_changed = set(ns.get("_LAST_CHANGED") or [])
-    _mutated = _mutated or bool(set(_changed) - _prev_changed)
-    ns["_LAST_CHANGED"] = set(_changed)
+    # `changed` is THIS cell, not the session: typed commits are in _CELL_CHANGED and a
+    # program that wrote through open()/subprocess shows up in the tree delta.
+    _changed = list(ns.get("_CELL_CHANGED") or [])
+    for _line in _delta.splitlines():
+        if _line.startswith("+++ b/"):
+            _rel = _line[6:].strip()
+            if _rel not in _changed:
+                _changed.append(_rel)
+    _mutated = _mutated or bool(_changed)
     _obs_log = ns.setdefault("_OBS", [])
     _obs_log.append({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr})
     emit({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
@@ -280,30 +278,48 @@ class _Writer:
         self.target = target
         self.rel = rel
         self._parts = [base]
+        self._dirty = False
         self.closed = False
 
     def write(self, text):
-        self._parts.append(text)
+        self._parts.append(str(text))
+        self._dirty = True
+        self._flush_to_journal()
         return len(text)
 
     def writelines(self, lines):
-        for line in lines:
-            self.write(line)
+        self._parts.extend(str(line) for line in lines)
+        self._dirty = True
+        self._flush_to_journal()
+
+    def _flush_to_journal(self):
+        if not self._dirty:
+            return
+        _commit(self.target, self.rel, "".join(self._parts), "open()")
+        self._dirty = False
 
     def flush(self):
-        return None
+        self._flush_to_journal()
 
     def close(self):
         if self.closed:
             return
         self.closed = True
-        _commit(self.target, self.rel, "".join(self._parts), "open()")
+        self._flush_to_journal()
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         self.close()
+
+    def __del__(self):
+        # `open(path, "w").write(text)` has no name to close; commit when the writer is
+        # collected so the journal does not silently miss a write the model just made.
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 def open(file, mode="r", *args, **kwargs):

@@ -4,32 +4,115 @@
   "mode": "state",
   "rows": [
     {
-      "task": "H2_bughunt",
+      "task": "E1_tests",
       "mix": {},
       "mode": "state",
-      "shape": "ten latent bugs, one spec",
-      "ok": false,
-      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H2_bughunt: failed (exit 1, 171ms)\n  - test_h2_bughunt.Dates.test_absolute: AssertionError: -8 != 9\n  - test_h2_bughunt.Dates.test_forward: AssertionError: 10 != 9\n  - test_h2_bughunt.Dates.test_same: AssertionError: 1 != 0\n  - test_h2_bughunt.Money.test_remainder_is_kept: AssertionError: 9 != 10\n  - test_h2_bughunt.Names.test_extension: - README\n  - test_h2_bughunt.Rounding.test_half_up: AssertionError: 2 != 3\n  - test_h2_bughunt.Sequence.test_first_seen_order: + [3, 1, 2]\n  - test_h2_bughunt.Stats.test_even: AssertionError: 3 != 2.5\n  - test_h2_bughunt.Tax.test_half_up: AssertionError: 51 != 2\n  - test_h2_bughunt.Tax.test_rate: AssertionError: 13500 != 1125\n  - test_h2_bughunt.Text.test_normalize: + hello world\n  - test_h2_bughunt.Window.test_all_chunks: ?           ^  ^^^^^^\n  - test_h2_bughunt.Window.test_bad_n: AssertionError: ValueError not raised\n  - test_h2_bughunt.Money.test_bad_n: ZeroDivisionError: integer division or modulo by zero\n  - test_h2_bughunt.Parse.test_ignores_non_integers: ValueError: invalid literal for int() with base 10: 'x'\n  - test_h2_bughunt.Stats.test_empty: IndexError: list index out of range",
-      "stop": "STEP_LIMIT",
+      "shape": "multi-turn repair, verification",
+      "ok": true,
+      "detail": "suite passes, tests untouched",
+      "stop": "VERIFIED",
       "steps": 4,
       "llm_calls": 4,
       "calls": 4,
       "errors": 0,
       "usage": {
-        "prompt_tokens": 7054,
-        "completion_tokens": 596,
-        "total_tokens": 7650,
-        "reasoning_tokens": 0,
-        "prompt_cache_hit_tokens": 4224,
-        "prompt_cache_miss_tokens": 2830,
+        "prompt_tokens": 7433,
+        "completion_tokens": 653,
+        "total_tokens": 8086,
+        "reasoning_tokens": 42,
+        "prompt_cache_hit_tokens": 4096,
+        "prompt_cache_miss_tokens": 3337,
         "local_hits": 0
       },
-      "wall_ms": 5606,
+      "wall_ms": 6267,
       "runs": [
-        "find . -type f -not -path ./.git/*"
+        "ls -la",
+        "find . -type f -not -name events.log -not -path ./.git/*",
+        "python -m pytest -q",
+        "python -m pytest -q"
       ],
-      "final": "I ran out of step budget before applying fixes. Findings from reading SPEC.md and the sources \u2014 every module violates its invariant:\n\n- `tax.with_tax`: uses `// 100` (truncating, wrong divisor) instead of `(cents*rate_bp + 5000) // 10000`.\n- `dates.days_between`: adds `+ 1`; should be `abs((b - a).days)`.\n- `money.split`: returns `[cents // n] * n`, which loses the remainder; needs remainder distribution and `ValueError` for `n <= 0`.\n- `text.normalize`: only lowercases; lacks collapsing non-`[a-z0-9]` runs to spaces and stripping.\n- `stats.median`: always returns the upper middle element; needs even-length mean (float) and `ValueError` on empty.\n- `sequence.unique`: uses `set`, losing first-seen order; needs order-preserving dedup.\n- `parse.ints`: `int(token)` raises on non-integer tokens; should ignore invalid tokens.\n- `window.chunks`: `range(n)` yields `n` chunks of wrong size and no `ValueError` for `n <= 0`; should step by `n`.\n- `names.ext`: returns the whole name when there is no dot; should return `\"\"`.\n- `rounding.round_half_up`: `int(x)` truncates; should be `math.floor(x + 0.5)`.\n\nNo files were modified.",
-      "trace": "/home/lmbullo/code/bench/traces/H2_bughunt.state.jsonl"
+      "final": "verified",
+      "trace": "/home/lmbullo/code/bench/traces/E1_tests.state.jsonl"
+    },
+    {
+      "task": "E6_repair",
+      "mix": {},
+      "mode": "state",
+      "shape": "batch repair, step budget",
+      "ok": true,
+      "detail": "suite passes, tests untouched",
+      "stop": "VERIFIED",
+      "steps": 3,
+      "llm_calls": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2970,
+        "completion_tokens": 442,
+        "total_tokens": 3412,
+        "reasoning_tokens": 39,
+        "prompt_cache_hit_tokens": 2176,
+        "prompt_cache_miss_tokens": 794,
+        "local_hits": 0
+      },
+      "wall_ms": 3882,
+      "runs": [
+        "python -m pytest -q test_calc2.py 2>&1 || python -m unittest -v test_calc2 2>&1"
+      ],
+      "final": "verified",
+      "trace": "/home/lmbullo/code/bench/traces/E6_repair.state.jsonl"
+    },
+    {
+      "task": "E2_log",
+      "mix": {},
+      "mode": "state",
+      "shape": "large artifact, offset",
+      "ok": true,
+      "detail": "expected SEQ 19000; got 'The most recent checkpoint is SEQ=19000 (line 19001, timestamp 2025-03-01T05:16:40Z, host=node-2, pa'",
+      "stop": "DONE",
+      "steps": 6,
+      "llm_calls": 6,
+      "calls": 6,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 19135,
+        "completion_tokens": 1052,
+        "total_tokens": 20187,
+        "reasoning_tokens": 368,
+        "prompt_cache_hit_tokens": 14720,
+        "prompt_cache_miss_tokens": 4415,
+        "local_hits": 0
+      },
+      "wall_ms": 10496,
+      "runs": [],
+      "final": "The most recent checkpoint is SEQ=19000 (line 19001, timestamp 2025-03-01T05:16:40Z, host=node-2, payload=row-019000). It is the last checkpoint in the append-only log; all 20 checkpoints run from SEQ=0 to SEQ=19000 in 1000-step increments.",
+      "trace": "/home/lmbullo/code/bench/traces/E2_log.state.jsonl"
+    },
+    {
+      "task": "E4_cents",
+      "mix": {},
+      "mode": "state",
+      "shape": "exact arithmetic",
+      "ok": true,
+      "detail": "expected 127320; got '127320'",
+      "stop": "DONE",
+      "steps": 4,
+      "llm_calls": 4,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4025,
+        "completion_tokens": 259,
+        "total_tokens": 4284,
+        "reasoning_tokens": 23,
+        "prompt_cache_hit_tokens": 3072,
+        "prompt_cache_miss_tokens": 953,
+        "local_hits": 0
+      },
+      "wall_ms": 4883,
+      "runs": [],
+      "final": "127320",
+      "trace": "/home/lmbullo/code/bench/traces/E4_cents.state.jsonl"
     }
   ]
 }
