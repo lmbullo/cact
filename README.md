@@ -272,7 +272,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
   root and `tui/package.json`. Cheap entries run after every mutating cell; the whole plan
   gates `final_answer`. An empty `CODE_TUI_CHECK` opts out.
 - `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — do not edit
-  them in place; clone with `bench.ws.clone` first. They are gitignored; regenerate them.
+  them in place; clone with `bench.ws.clone` first. `bench/ws/` is gitignored: recreate
+  `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and `tui-broken` as
+  that tree with `tests/log.test.tsx` failing.
 - Tests are TS only (`bun test` = 5 passing tests across 4 files). Python has no test
   framework: `python3 bench/smoke.py` is the offline contract check (kernel prelude, `Cell`
   fields, tool envelopes, reply parsing), and a real change is then confirmed by running a

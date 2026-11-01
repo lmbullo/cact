@@ -61,7 +61,8 @@ inside `tui/`.
    Editing a fixture silently redefines the expected answers.
 7. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
    `bench/ws/` (frozen workspaces + `runs/` journals) is gitignored measurement output:
-   regenerate it with `bench/ws.py` / `bench/live.py` instead of expecting it in a fresh clone.
+   rebuild `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and let
+   `bench/live.py` create `runs/<tag>`; do not expect either in a fresh clone.
 8. **Generated, not source:** `bench/.tmp/` (per-run workspaces), `bench/.cache/` (cached LLM
    replies), `bench/ws/` (frozen workspaces, rebuilt on demand), `tui/node_modules/`, and the
    TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is

@@ -13,6 +13,9 @@ ENTRY POINTS
           [--legacy r1|r3|both]
   load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env}
 
+  The base must already exist: `bench/ws/` is gitignored, so build it first with
+  `python3 -m bench.ws freeze tui bench/ws/tui-base`.
+
 INVARIANTS
   - `--tag` names a new directory under bench/ws/runs/. That tree and its journals are
     append-only evidence: never reuse a tag, never rewrite an old run.
