@@ -1340,7 +1340,7 @@ class Kernel:
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError):
             self._restart()
-            return Cell("", "kernel died; restarted with an empty namespace", None, None, 0, True)
+            return Cell("", "kernel died; restarted with an empty namespace (earlier output survives in recall())", None, None, 0, True)
 
         sel = selectors.DefaultSelector()
         sel.register(self.proc.stdout, selectors.EVENT_READ)
@@ -1354,7 +1354,7 @@ class Kernel:
                     self._restart()
                     return Cell(
                         "",
-                        f"kernel did not answer within {self.timeout:.0f}s; killed and restarted with an empty namespace",
+                        f"kernel did not answer within {self.timeout:.0f}s; killed and restarted with an empty namespace (earlier output survives in recall())",
                         None, None,
                         int((time.perf_counter() - started) * 1000),
                         True, timeout=True,
@@ -1364,10 +1364,10 @@ class Kernel:
                 line = self.proc.stdout.readline()
                 if not line:
                     self._restart()
-                    return Cell("", "kernel died; restarted with an empty namespace", None, None, 0, True)
+                    return Cell("", "kernel died; restarted with an empty namespace (earlier output survives in recall())", None, None, 0, True)
                 if not line.startswith(MARKER):
                     self._restart()
-                    return Cell("", "kernel protocol desync; restarted with an empty namespace", None, None, 0, True)
+                    return Cell("", "kernel protocol desync; restarted with an empty namespace (earlier output survives in recall())", None, None, 0, True)
                 message = json.loads(line[len(MARKER):])
                 if "extend" in message:
                     deadline = time.monotonic() + float(message["extend"]) + 30.0
