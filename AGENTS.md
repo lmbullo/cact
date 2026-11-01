@@ -41,9 +41,9 @@ inside `tui/`.
    grades `result.final`; a prose reply with no tool call is the summary.
 2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
    read-only git work (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`). Shell verbs
-   that change the tree (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
+   that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
    `>` redirection) are refused by `_mutating_command` as `kind: "wrong_call"` with a `use`
-   hint, because they bypass the journal. A program can still write files; the journal is a
+   hint, because they bypass the journal. `git add/commit/push/fetch/init/clone` are allowed. A program can still write files; the journal is a
    typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
    **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and

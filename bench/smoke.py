@@ -158,6 +158,16 @@ def main() -> int:
         check("kernel: the refused mutation did not run",
               "alpha" in (root / "a.txt").read_text(), (root / "a.txt").read_text()[:80])
 
+        cell = kernel.run("run('git add a.txt')")
+        allowed = str(cell.result)
+        check("kernel: run() allows git add/commit",
+              "wrong_call" not in allowed and "command" in allowed, allowed[:200])
+
+        cell = kernel.run("run('git checkout -- a.txt')")
+        refusal = str(cell.result)
+        check("kernel: run() refuses a working-tree overwrite",
+              "wrong_call" in refusal and "git checkout" in refusal, refusal[:200])
+
         cell = kernel.run("run('echo x > z.txt')")
         refusal = str(cell.result)
         check("kernel: run() refuses redirection into a file",

@@ -229,9 +229,11 @@ imports `bench.agent` from this repo, so the checkout path matters.
    passes. `run.py` grades `result.final`; a prose reply with no tool call is the summary.
 2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
    read-only git work as written (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`).
-   Shell verbs that change the tree (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/...`,
-   `>` redirection) are refused with `kind: "wrong_call"` and a `use` hint, because they
-   would bypass the journal and make `diff()`/`undo()` lie. A program can still write files;
+   Shell verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
+   `git checkout/reset/apply/...`, `>` redirection) are refused with `kind: "wrong_call"`
+   and a `use` hint, because they would bypass the journal and make `diff()`/`undo()` lie.
+   `git add`, `commit`, `push`, `fetch`, `init` and `clone` are allowed: they do not
+   overwrite working-tree content. A program can still write files;
    the journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT`
    and the RUN_NOTE text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without

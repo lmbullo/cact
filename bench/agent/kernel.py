@@ -196,7 +196,7 @@ for line in sys.stdin:
                 "ok": False, "kind": "wrong_call",
                 "blocked": getattr(exc, "blocked", ""),
                 "command": getattr(exc, "command", ""),
-                "error": {"code": "file_access_via_run", "message": str(exc), "use": _hint},
+                "error": {"code": "mutation_via_run", "message": str(exc), "use": _hint},
             })
             err.write("run() blocked this process: " + str(exc) + "\n")
         else:
@@ -789,10 +789,12 @@ _RUN_SHELL_MUTATORS = {
     "tee", "touch", "cp", "mv", "rm", "truncate", "shred", "dd", "install",
     "ln", "mkdir", "rmdir", "chmod", "chown", "chgrp", "patch",
 }
+# Git index/history verbs (add, commit, push, fetch, init, clone) are allowed: they do not
+# overwrite working-tree files, and an agent asked to "commit and push" must be able to do it.
+# Only verbs that can replace tracked content stay gated.
 _RUN_GIT_MUTATORS = {
-    "apply", "checkout", "reset", "clean", "stash", "rm", "mv", "add",
-    "commit", "merge", "rebase", "cherry-pick", "revert", "am", "switch",
-    "restore", "init", "clone", "pull", "push", "fetch",
+    "apply", "checkout", "reset", "clean", "stash", "rm", "mv", "pull",
+    "merge", "rebase", "cherry-pick", "revert", "am", "switch", "restore",
 }
 _HINT = {
     "tee": "write(path, content)", "touch": "write(path, '')",
@@ -800,7 +802,8 @@ _HINT = {
     "mv": "write(new_path, read(path)['text']) then os.remove(path)",
     "rm": "os.remove(path)", "truncate": "write(path, '')",
     "sed -i": "edit(path, old, new)", "mkdir": "os.makedirs(path, exist_ok=True)",
-    "patch": "apply(patch)", "git": "mutate with apply()/commit(); read-only git is allowed",
+    "patch": "apply(patch)",
+    "git": "git add/commit/push are allowed; edit files with write/edit/apply/commit",
     ">": "write(path, content)", "find -delete": "map() then os.remove(path)",
     "xargs": "a Python loop",
 }
@@ -947,7 +950,7 @@ def run(command, timeout=60, cwd=None):
         use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "write(), edit(), apply() or commit()")
         return {"ok": False, "kind": "wrong_call", "command": str(command),
                 "blocked": exc.blocked,
-                "error": {"code": "file_access_via_run", "message": str(exc), "use": use}}
+                "error": {"code": "mutation_via_run", "message": str(exc), "use": use}}
     except OSError as exc:
         return {"ok": False, "kind": "spawn_error", "command": str(command),
                 "error": {"code": "spawn_failed", "message": str(exc)}}
