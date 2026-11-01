@@ -10,7 +10,7 @@ ENTRY POINTS
   PYTHON_TOOL .. the single tool spec sent to the client
   TOOL_RULES ... system prompt: use the kernel for everything, finish with final_answer
   ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
-           health)
+           health, read_gate)
     .run(task_id, prompt, trace) -> RunResult
   Hooks subclasses override: `_observe(cell, steps)` (cell -> text), `_compact(messages)`
     (context management), `_goal_state()` (goal -> (ok, Check)).
@@ -21,12 +21,15 @@ INVARIANTS
     and read gates), so output is never lost and no extra empty cell is required.
   - With a goal, finishing before the check passes is rejected (GOAL_UNMET).
     `goal_stops=True` ends the run itself once a mutating cell passes the goal (VERIFIED).
-  - `health` is an optional cheap check plan (checks.run_specs over the `cheap` specs). After
-    a mutating cell, at most once every 20s, its result lands in `self.last_check` and is
-    rendered as the `[check]` line of the next card. It never ends the run; the full goal does.
+  - `health` is an optional callable built from the plan's `cheap` specs (worker.py uses
+    checks.run_plan, which respects each spec's `scope`). After a mutating cell, at most once
+    every 20s, its result lands in `self.last_check` and is rendered as the `[check]` line of
+    the next card. It never ends the run; the full goal does.
+  - `read_gate=True` rejects a finish that cites a file whose delivered `Cell.reads` ranges
+    leave holes (UNREAD). ReplLoop has no read ledger.
   - BAD_ARGS / TRUNCATED mean nothing ran and the model is told why.
-  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET,
-    TRUNCATED, BAD_ARGS (this loop never emits NO_PROGRESS/TOOL_LIMIT).
+  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, UNREAD,
+    TRUNCATED, BAD_ARGS.
   - `changed` accumulates every file the kernel reports; worker.py records it as history.
 
 WHERE TO CHANGE

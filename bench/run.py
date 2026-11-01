@@ -1,9 +1,9 @@
-"""The benchmark CLI. Scores the agent on the read, mutation and edge suites.
+"""The benchmark CLI. Scores the agent on the read, mutation, edge and hard suites.
 
 WHAT IT IS
   For each selected task: copy the task's fixtures into `bench/.tmp/<task>/fixtures`, build
   the loop for `--mode`, run the task, grade `result.final` (or the workspace, for mutation
-  tasks), print one row, and write `bench/traces/<task>.<mode>.jsonl` plus
+  and hard tasks), print one row, and write `bench/traces/<task>.<mode>.jsonl` plus
   `bench/traces/summary.<mode>.json`.
 
 ENTRY POINTS
@@ -13,9 +13,11 @@ ENTRY POINTS
   workspace(task) -> Path             fresh copy under bench/.tmp
   main() -> int                       0 only when every selected task passes
 
-  Flags: --suite read|mutation|all|edge|hard, --mode repl|tool|state|bare, --tasks a,b, --steps,
-  --wall, --max-output, --read-chars, --obs-chars, --map off|tool|inline, --context map|full,
-  --allow-run off|on, --cell-timeout, --repl-*, --temperature, --seed, --no-cache, --traces.
+  Flags: --suite read|mutation|all|edge|hard, --mode repl|tool|state|bare, --tasks a,b,
+  --steps, --wall, --max-output, --obs-chars, --map off|tool|inline, --context map|full,
+  --context-chars, --allow-run off|on, --cell-timeout, --health on|off, --repl-rules,
+  --repl-stop, --repl-history, --repl-lib, --model, --effort, --temperature, --seed,
+  --no-cache, --traces.
 
 WHAT IT IS NOT
   It is not the production path. The TUI builds loops through bench/agent/config.build; this
@@ -24,8 +26,9 @@ WHAT IT IS NOT
 INVARIANTS
   - Two import blocks (see `if __package__ in (None, "")`), both must keep working. Anything
     new that needs the repo root must be imported in both.
-  - Mutation/edge tasks set mutates=True: the kernel gets write/edit, a writable root, and
-    `--allow-run` decides whether the child is sandboxed under bwrap.
+  - Mutation/edge tasks and the mutating hard tasks (H1/H2/H4) set mutates=True: the kernel
+    gets the file helpers, a writable root, and `--allow-run` decides whether the child is
+    sandboxed under bwrap.
   - `Trace(trace_path)` is opened with mode "w" per task per mode; `summary.<mode>.json` is
     rewritten on every run. Never hand-edit either.
   - Exit code is 0 only on a full pass: use it as the CI signal when a key is available.

@@ -23,7 +23,7 @@ ENTRY POINTS
   clip(text, limit)                  bounded text
   digest(text, budget, handle)       head + error lines + "[n lines, m chars; full text is
                                      _OBS[i]" + tail
-  StateLoop(..., output_budget, context_budget, keep_messages)
+  StateLoop(..., output_budget, context_budget, keep_messages, read_gate)
     ._observe(cell, steps) -> str    the card
     ._compact(messages)              fold old turns into a [history] message; gated on
                                      `last_prompt_tokens`, the provider's real count

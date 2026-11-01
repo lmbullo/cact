@@ -13,8 +13,9 @@ ENTRY POINTS
                                the journal" contract the model must obey
   observation(cell, cap) ..... one cell -> the text the model sees (the ToolLoop default)
   history_entry(action) ...... a parsed action -> the line kept in the transcript
-  ReplLoop(client, kernel, budget, rules, stop="call"|"var", history="full"|"action"|
-           "drop", obs_chars, goal, goal_label, goal_stops, wrap_up_at)
+  ReplLoop(client, kernel, budget, rules, stop="call"|"var",
+           history="full"|"obs"|"drop"|"action", obs_chars, goal, goal_label, goal_stops,
+           wrap_up_at)
     .run(task_id, prompt, trace) -> RunResult
 
 INVARIANTS

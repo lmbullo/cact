@@ -1,7 +1,19 @@
 """The benchmark half of cact: agent, suites, fixtures, traces.
 
-bench/agent/  the agent
-bench/run.py  CLI that scores it (read + mutation + edge suites)
-bench/tasks.py, bench/edge.py  task definitions and graders
-bench/ws.py, bench/live.py, bench/runs.py  workspace freezing, end-to-end runs, journals
+WHAT IT IS
+  `bench/agent/` is the agent; every other module here is a suite, a grader, a workspace
+  tool, or recorded evidence. `bench/run.py` scores the agent on read, mutation, edge and
+  hard tasks and writes `bench/traces/`.
+
+ENTRY POINTS
+  python3 bench/run.py --suite read|mutation|all|edge|hard [--mode ...]
+  python3 bench/live.py ...       one end-to-end task through tui/python/worker.py
+  python3 bench/smoke.py          offline contract check
+  bench/tasks.py, bench/edge.py, bench/hard.py  task definitions and graders
+  bench/ws.py, bench/runs.py     workspace manifests / journal summaries
+
+WHERE TO CHANGE
+  A new suite ............... its module (`tasks.py`, `edge.py`, `hard.py`) + `run.py` pool
+  A new task in a suite .... that module's TASKS list and its `grade_*`
+  Workspace freezing ....... bench/ws.py
 """

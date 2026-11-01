@@ -2,8 +2,10 @@
 
 WHAT IT IS
   `CheckSpec.parse(raw)` reads the plan from a command string or a JSON list of
-  `{name, cmd, cheap}`; `run_specs(specs, cwd)` runs it and returns the first failure as a
-  `Check`, or a synthetic `passed` when every command passes.
+  `{name, cmd, cheap, scope}`; `run_plan(specs, cwd, paths)` runs it and returns the first
+  failure as a `Check` plus the per-command results (or `None` when no spec applied),
+  `run_specs` returns just the combined verdict, and a synthetic `passed` means every
+  command that ran passed.
 
   One plan, two roles:
     goal    the whole plan is what `final_answer` must satisfy (tool_loop: GOAL_UNMET)
@@ -22,15 +24,17 @@ INVARIANTS
     are skipped.
   - `unrunnable` from check.py survives the plan: a command that cannot run is a broken
     check, never a broken project.
-  - `scope` is a list of path prefixes; a spec runs only when the cell changed a path under
-    one of them, so a docs-only edit does not typecheck the TUI.
+  - `scope` is a list of path prefixes; when a caller passes `paths` (the health run), a
+    spec runs only if one changed path is under its scope, so a docs-only edit does not
+    typecheck the TUI. The goal calls run_specs without paths, so it runs every spec.
   - A plan is data, never a shell string. server.ts detects the default plan
     (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts) and
     passes it to worker.py as `--checks <json>`; bench/live.py forwards `--checks` the same way.
 
 WHERE TO CHANGE
   Plan parsing .................... CheckSpec.parse
-  How a plan runs and what it returns ... run_specs
+  Scope matching .................. CheckSpec.applies
+  How a plan runs and what it returns ... run_plan / run_specs
   The default plan for a workspace ...... tui/src/server.ts::detectChecks
 """
 from __future__ import annotations

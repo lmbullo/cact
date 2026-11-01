@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
 """Run a hidden test directory against the workspace in the current directory.
 
-Used by bench/hard.py as the held-out oracle: the tests live outside the workspace, so the
-agent can see pass/fail and failure text but cannot read or edit them. Stdout is one
-`FAILED <test>: <message>` line per failure plus a `SUMMARY n/m passed` line, which is what
-check.py already parses.
+WHAT IT IS
+  The held-out oracle for the hard suite. `bench/hard.py::hidden_check` runs this script
+  with a directory under `bench/hard_hidden/` and cwd=the task workspace.
+
+ENTRY POINTS
+  python3 bench/hard_runner.py <hidden-test-dir>
+
+INVARIANTS
+  - The tests live outside the workspace, so the agent can see pass/fail and failure text
+    but cannot read or edit them.
+  - Stdout is one `FAILED <test>: <message>` line per failure plus a `SUMMARY n/m passed`
+    line, which is what check.py already parses.
+  - Exit status is 0 only when every test passes.
+
+WHERE TO CHANGE
+  Failure-line shape ... keep it in sync with check.py::_PATTERNS
+  Test discovery ....... the unittest loader below
 """
 from __future__ import annotations
 

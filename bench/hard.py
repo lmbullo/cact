@@ -5,7 +5,7 @@ WHAT IT IS
     H1_spec      SPEC.md is the contract; the visible suite is green but incomplete.
     H2_bughunt   ten modules with latent bugs; SPEC.md states the invariants.
     H3_bigcsv    200k rows; four aggregates that require code, not reading.
-    H4_refactor  rename an API across nine files; the old name must disappear.
+    H4_refactor  rename an API across sixteen call-site modules; the old name must disappear.
 
   H1/H2/H4 are graded by a held-out unittest tree under `bench/hard_hidden/`. The agent can
   see pass/fail and the failing test names (that is the `[check]` line when health is on),
@@ -436,7 +436,7 @@ HARD_TASKS: list[HardTask] = [
         "H4_refactor",
         H4_PROMPT,
         _grade_hidden("H4_refactor"),
-        "rename across nine files",
+        "rename across sixteen modules",
         HARD / "H4_refactor",
         mutates=True,
         check=lambda ws: hidden_check("H4_refactor", ws),

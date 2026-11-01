@@ -19,8 +19,8 @@ INVARIANTS
   - `failures` is a bounded, de-duplicated list of {line, text} parsed by `_PATTERNS`
     (bun `(fail)`, pytest `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines).
   - A goal that raises becomes `unrunnable`, not an exception in the loop.
-  - Goals are callables, not command strings: tui/python/worker.py builds
-    `lambda: run_specs(specs, workspace)` so the plan re-runs on every finish attempt.
+  - Goals are callables, not command strings: tui/python/worker.py builds a `plan_goal`
+    that calls `run_specs(specs, workspace)` so the plan re-runs on every finish attempt.
     Several commands (a cheap health subset plus the full suite) live in checks.py.
 
 WHERE TO CHANGE

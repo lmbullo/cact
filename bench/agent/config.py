@@ -6,6 +6,7 @@ WHAT IT IS
 
 ENTRY POINTS
   CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY ... production constants
+  READ_GATE ................. CODE_TUI_READ_GATE (default on)
   budget(steps, wall_s, output=MAX_OUTPUT) -> Budget         clamped to MAX_OUTPUT
   build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
         goal_stops, mode=MODE, health=None) -> StateLoop | ToolLoop | ReplLoop

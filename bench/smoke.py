@@ -4,8 +4,8 @@ touched.
 WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
   It imports every module, drives the kernel prelude end to end (read/write/edit/changes/
-  diff/undo, run()'s redirect and refusal) and checks the pure helpers (reply parsing, state
-  digests, read coverage, the spawn gate, check plans).
+  diff/undo, run() allowing reads and refusing mutation) and checks the pure helpers (reply
+  parsing, state digests, read coverage, the spawn gate, check plans).
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
 
