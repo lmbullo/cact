@@ -44,6 +44,7 @@ cact/
 │   ├── run.py               benchmark CLI (also `python3 -m bench.run`)
 │   ├── tasks.py             READ suite T1-T5 (answer in text) + MUTATION suite M1-M3 (grade the workspace)
 │   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
+│   ├── hard.py              HARD suite H1-H4 with a held-out oracle; `bench/HARD.md` has the numbers
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
 │   ├── live.py              run ONE task through tui/python/worker.py and journal it
 │   ├── smoke.py             offline contract check: imports, kernel prelude, tools, checks
@@ -167,6 +168,7 @@ export DEEPSEEK_API_KEY=...            # or --key
 python3 bench/run.py                                   # read suite, tools mode, fixtures/
 python3 bench/run.py --suite all --mode state          # read + mutation, production loop
 python3 bench/run.py --suite edge --tasks E1_tests,E6_repair --mode state --traces
+python3 bench/run.py --suite hard --mode state           # envelope vs `--mode bare`; see bench/HARD.md
 python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-lib all
 ```
 
@@ -228,7 +230,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
 4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or
    `test_calc2.py` scores zero — repair the source.
 5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the
-   fixtures. Editing a fixture silently redefines the expected answers.
+   fixtures. Editing a fixture silently redefines the expected answers. The hard suite's
+   held-out tests live in `bench/hard_hidden/`, never in the workspace; `H3_bigcsv`'s CSV is
+   generated and gitignored.
 6. **`bench/traces/` is append-only evidence.** Add new runs; never rewrite recorded
    journals. The `sweep/` files are batch summaries. `bench/ws/` (frozen workspaces and
    `runs/` journals) is gitignored measurement output — regenerate it with `bench/ws.py` and

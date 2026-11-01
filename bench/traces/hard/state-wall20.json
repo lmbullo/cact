@@ -1,0 +1,115 @@
+{
+  "model": "deepseek-flash",
+  "effort": "low",
+  "mode": "state",
+  "rows": [
+    {
+      "task": "H1_spec",
+      "mix": {},
+      "mode": "state",
+      "shape": "contract over stale tests",
+      "ok": true,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H1_spec: passed (80ms)",
+      "stop": "VERIFIED",
+      "steps": 3,
+      "llm_calls": 3,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 3172,
+        "completion_tokens": 1208,
+        "total_tokens": 4380,
+        "reasoning_tokens": 568,
+        "prompt_cache_hit_tokens": 2048,
+        "prompt_cache_miss_tokens": 1124,
+        "local_hits": 0
+      },
+      "wall_ms": 8726,
+      "runs": [],
+      "final": "verified",
+      "trace": "/home/lmbullo/code/bench/traces/H1_spec.state.jsonl"
+    },
+    {
+      "task": "H2_bughunt",
+      "mix": {},
+      "mode": "state",
+      "shape": "ten latent bugs, one spec",
+      "ok": true,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H2_bughunt: passed (79ms)",
+      "stop": "VERIFIED",
+      "steps": 4,
+      "llm_calls": 4,
+      "calls": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 5024,
+        "completion_tokens": 1858,
+        "total_tokens": 6882,
+        "reasoning_tokens": 852,
+        "prompt_cache_hit_tokens": 3712,
+        "prompt_cache_miss_tokens": 1312,
+        "local_hits": 0
+      },
+      "wall_ms": 12554,
+      "runs": [],
+      "final": "verified",
+      "trace": "/home/lmbullo/code/bench/traces/H2_bughunt.state.jsonl"
+    },
+    {
+      "task": "H3_bigcsv",
+      "mix": {},
+      "mode": "state",
+      "shape": "200k rows, four aggregates",
+      "ok": true,
+      "detail": "expected refund=9997548871 region=South reps=40 mod=201; got '9997548871|South|40|201'",
+      "stop": "DONE",
+      "steps": 4,
+      "llm_calls": 4,
+      "calls": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4621,
+        "completion_tokens": 428,
+        "total_tokens": 5049,
+        "reasoning_tokens": 37,
+        "prompt_cache_hit_tokens": 3840,
+        "prompt_cache_miss_tokens": 781,
+        "local_hits": 0
+      },
+      "wall_ms": 6196,
+      "runs": [],
+      "final": "9997548871|South|40|201",
+      "trace": "/home/lmbullo/code/bench/traces/H3_bigcsv.state.jsonl"
+    },
+    {
+      "task": "H4_refactor",
+      "mix": {},
+      "mode": "state",
+      "shape": "rename across nine files",
+      "ok": true,
+      "detail": "/home/lmbullo/.local/share/mise/installs/python/3.12/bin/python3 /home/lmbullo/code/bench/hard_runner.py /home/lmbullo/code/bench/hard_hidden/H4_refactor: passed (73ms)",
+      "stop": "VERIFIED",
+      "steps": 8,
+      "llm_calls": 8,
+      "calls": 8,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 45945,
+        "completion_tokens": 1523,
+        "total_tokens": 47468,
+        "reasoning_tokens": 226,
+        "prompt_cache_hit_tokens": 37632,
+        "prompt_cache_miss_tokens": 8313,
+        "local_hits": 0
+      },
+      "wall_ms": 16575,
+      "runs": [
+        "grep -rn \"parse\\|amount\\|cents\" billing/",
+        "python -m pytest -q tests 2>&1 | tail -5",
+        "python -c \"from billing.api import parse_row; print(parse_row('a,1'));\nimport billing.api as a; print(hasattr(a,'parse'))\ntry: parse_row('a,1', strict=True)\nexcept ValueError as e: print('VE',e)\""
+      ],
+      "final": "verified",
+      "trace": "/home/lmbullo/code/bench/traces/H4_refactor.state.jsonl"
+    }
+  ]
+}

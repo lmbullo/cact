@@ -30,6 +30,7 @@ inside `tui/`.
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
+| `bench/HARD.md` | Why the envelope exists: hard-suite results against `--mode bare` |
 | `tui/python/worker.py` | The seam between the TUI and `bench`: builds the loop, streams `@@TUI@@` JSON lines to `server.ts` |
 
 ## Rules that must not break
@@ -49,7 +50,8 @@ inside `tui/`.
    `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
    them. All of them go through `_commit`, which is what makes the journal honest.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
-   `test_calc2.py` scores zero; the source must be repaired.
+   `test_calc2.py` scores zero; the source must be repaired. The hard suite's oracle lives
+   outside the workspace (`bench/hard_hidden/`), so the agent cannot read or edit it.
 5. **The check plan is the goal** (`bench/agent/checks.py`). `run_specs` runs the ordered
    plan and returns the first failure; the `cheap` subset re-runs after a mutating cell and
    is printed as the `[check]` line of the state card. `final_answer` is rejected

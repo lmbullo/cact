@@ -1,0 +1,80 @@
+# Does the envelope pay?
+
+`bench/read`, `mutation` and `edge` are saturated: every ablation in `traces/sweep/` lands
+within one task of every other, including a bare loop. They cannot tell you whether the
+kernel's envelope (state cards, journal, check plan, batched commits) is worth its
+complexity. The `hard` suite exists to answer that question, and `--mode bare` is the
+control: one `python` tool, no helpers, no check plan, no read gate.
+
+## The suite
+
+| task | what it asks | oracle |
+|---|---|---|
+| `H1_spec` | `SPEC.md` is the contract; the visible suite is green but incomplete | held-out tests |
+| `H2_bughunt` | ten modules with latent bugs behind a green visible suite | held-out tests |
+| `H3_bigcsv` | four aggregates over 200k rows | exact answer |
+| `H4_refactor` | rename an API and a field across sixteen files, delete the old name | held-out tests |
+
+Held-out tests live in `bench/hard_hidden/`, outside the workspace, and run through
+`bench/hard_runner.py`. The agent sees pass/fail and failing test names (the `[check]` line
+when `--health on`) but cannot read or edit them. `H3_bigcsv` regenerates its CSV on import
+and is gitignored.
+
+```bash
+DEEPSEEK_API_KEY=... python3 bench/run.py --suite hard --mode state --tasks all --steps 40
+DEEPSEEK_API_KEY=... python3 bench/run.py --suite hard --mode bare  --tasks all --steps 40
+```
+
+## Measured (deepseek-flash, effort low, 2 runs per mode, temperature 0.7)
+
+| mode | pass | steps | prompt+completion tokens | cell errors | wall |
+|---|---|---|---|---|---|
+| `state` (envelope) | 8/8 | 30 | 55,265 | 1 | 79.6s |
+| `bare` (control) | 8/8 | 76 | 303,978 | 15 | 203.9s |
+
+Per task, the gap concentrates where the envelope has something to say:
+
+| task | state steps | bare steps | why |
+|---|---|---|---|
+| `H1_spec` | 3, 3 | 9, 8 | per-cell `changed` and the check line stop the model from re-reading its own work |
+| `H2_bughunt` | 5, 4 | 17, 9 | one batched `commit` plus the failing-test names beats ten discover-edit cycles |
+| `H3_bigcsv` | 3, 4 | 5, 3 | no envelope advantage; both write one program |
+| `H4_refactor` | 4, 4 | 11, 14 | `commit({path: text})` edits sixteen files in one journalled cell |
+
+With a 20s per-task wall budget the same suite still passes 4/4 in both modes, but the
+envelope spends 19 steps to the control's 29. This is the honest claim: **the envelope does
+not make the model smarter, it makes the same work cheaper and more reliable.** Pass/fail
+is already saturated for this model on tasks this small; the measured difference is steps,
+tokens, errors and latency.
+
+## What earned its keep, and what did not
+
+Earned:
+
+- **Per-cell `changed`/`delta`** from the tree snapshot. This used to be session-cumulative
+  by mistake, which made `[state] changed:` lie and re-triggered health checks. Fixing it
+  cut `H1_spec` from 7-9 steps to 3 and `E6_repair` from 9 to 3.
+- **Batched, journalled mutation** (`commit`/`apply`). The control has to rediscover that it
+  can edit many files in one cell; the rules tell the envelope, and `diff()`/`undo()` cover
+  the batch.
+- **Held-out verification** (`check` plan / `[check]` line). The control stops when the
+  visible tests are green; the envelope is rejected until the real oracle passes.
+- **A staged finish** instead of the `UNREVIEWED` rejection: output is shown, the answer is
+  held, and the next no-tool reply accepts it. This removed a whole class of wasted turns.
+- **Reliable `open(path, "w").write(text)` journalling**. The model writes this way even when
+  told to use `write()`, and a deferred commit used to land in the next cell.
+
+Did not earn its keep:
+
+- **The shell-verb wall.** Refusing `cat`/`grep`/`sed` while allowing `open().read()` was
+  incoherent. `run()` now allows reads, searches, tests and read-only git, and refuses only
+  verbs that mutate files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply`, `>`), because
+  those would make `diff()`/`undo()` lie. Cell errors on the edge suite fell from 8 to 0.
+- **Read-coverage gating at finish.** It is still there (`--read-gate` in production) but it
+  never fires on these tasks; it guards against a specific kind of unsupported citation
+  rather than improving the work.
+
+## Reproducing the comparison
+
+The per-run summaries are in `bench/traces/hard/` (`state-r*.json`, `bare-r*.json`,
+`*-wall20.json`) and the per-turn journals are `bench/traces/H*.{state,bare}.jsonl`.
