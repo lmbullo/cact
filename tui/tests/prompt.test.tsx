@@ -1,6 +1,27 @@
 /**
- * The prompt box: Enter inserts a newline and the box grows row by row; text that wraps past
- * the terminal width grows it too. This is the layout regression suite for measurePrompt().
+ * The prompt box: Enter inserts a newline and the box grows row by row; text that wraps past the terminal width grows it too. This is the layout regression suite for measurePrompt().
+ *
+ * WHAT IT IS
+ *  Renders the real `App` with a stub server that serves an empty snapshot and drives the
+ *  input through `mockInput`: Enter adds a row, wrapping words add rows, the box stops growing
+ *  at its cap, and clearing the text shrinks it back. `promptBlock(frame)` slices the box out
+ *  of the captured frame so the assertions compare geometry, not prose.
+ *
+ * ENTRY POINTS
+ *  App from ../src/client; testRender at 80x24; mockInput for keystrokes
+ *  promptBlock(frame) -> the rows between the `›` marker and the next rule
+ *
+ * INVARIANTS
+ *  - The terminal size is fixed at 80x24 on purpose: the measurements are only meaningful
+ *    against a known width.
+ *  - The assertions read the rendered frame; changing the box's border characters or the
+ *    cursor marker breaks them, which is correct — they are the visible contract.
+ *  - No worker runs and nothing is enqueued; the stub returns an empty snapshot.
+ *  - React `act(...)` warnings in `bun test` are expected noise.
+ *
+ * WHERE TO CHANGE
+ *  Prompt measurement .... src/client.tsx (measurePrompt, box growth cap)
+ *  A new keyboard rule .... the mockInput cases here
  */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";

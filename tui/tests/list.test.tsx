@@ -1,7 +1,27 @@
 /**
  * Board rendering and keyboard: arrow keys move the marker, Enter opens the selected task.
- * Uses a fake Bun server serving GET /api/snapshot plus a WebSocket, then renders the real
- * App through @opentui/react/test-utils. Assertions read the rendered frame as text.
+ *
+ * WHAT IT IS
+ *  The real `App` is rendered through `@opentui/react/test-utils` against a fake `Bun.serve`
+ *  that answers GET with a snapshot and upgrades `/ws`, so the board is exercised end to end
+ *  without a worker. Assertions read the captured character frame as text: the marker moves to
+ *  the next row, Enter opens the task under it, and the log for that task appears.
+ *
+ * ENTRY POINTS
+ *  App from ../src/client; Bun.serve stub bound to 127.0.0.1:0 (port never fixed)
+ *  testRender(<App httpUrl=... workspace="/tmp/ws" />, {width: 100, height: 24})
+ *  snapshot(tasks) / `tasks` ... the fixtures the stub serves
+ *
+ * INVARIANTS
+ *  - The stub is stopped in afterAll and binds port 0: no fixed port, no leftover process.
+ *  - Assertions are on rendered text, not on component internals or styling.
+ *  - `FakeTask` is a local subset of `Task`: this file asserts layout, so a new field on `Task`
+ *    does not break it (views.test.tsx and log.test.tsx cover the real shapes).
+ *  - React `act(...)` warnings in `bun test` are expected noise.
+ *
+ * WHERE TO CHANGE
+ *  Key bindings ......... src/client.tsx (arrow/enter handling)
+ *  Snapshot shape ........ src/server.ts (producer), src/types.ts (`Snapshot`)
  */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";

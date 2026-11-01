@@ -1,6 +1,26 @@
 /**
- * Live log: one line per event, long payloads truncated, the log keeps following the task
- * over the WebSocket while the board stays mounted.
+ * Live log: one line per event, long payloads truncated, the log keeps following the task over the WebSocket while the board stays mounted.
+ *
+ * WHAT IT IS
+ *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
+ *  over the WebSocket exactly as python/worker.py emits them. The frame must show one line per
+ *  event, collapse a long `run(...)` argument and a 200-line stdout to a bounded digest, keep
+ *  the prompt box where it was, and end on the stop line.
+ *
+ * ENTRY POINTS
+ *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
+ *  captureCharFrame() for text, captureSpans() when a span (not a row) is the subject
+ *
+ * INVARIANTS
+ *  - Event fixtures mirror the `emit({...})` payloads of python/worker.py; a new kind added
+ *    there without a case here means the panel can drop it silently.
+ *  - Truncation is part of the contract: a cell that prints 200 lines must not push the board
+ *    off the frame, so the digest assertions are load-bearing.
+ *  - React `act(...)` warnings in `bun test` are expected noise.
+ *
+ * WHERE TO CHANGE
+ *  How an event renders .... src/client.tsx (log panel)
+ *  A new event kind ........ python/worker.py emit(), src/types.ts, a case here
  */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";

@@ -1,6 +1,26 @@
 /**
- * View switching: the board and a run log share one prompt box, and the log falls back to the
- * board when its task disappears from a snapshot.
+ * View switching: the board and a run log share one prompt box, and the log falls back to the board when its task disappears from a snapshot.
+ *
+ * WHAT IT IS
+ *  A stub server serves one task, then snapshots that drop it. The frame must carry exactly
+ *  one prompt box whether the board or the log is showing, opening a task must move the input
+ *  with the view instead of duplicating it, and a task vanishing from a snapshot must return
+ *  the user to the board rather than stranding an empty log.
+ *
+ * ENTRY POINTS
+ *  App from ../src/client; Bun.serve stub with `snapshot(tasks)` and `sockets[]`
+ *  testRender at 80x24; assertions scan the captured frame for prompt and rule rows
+ *
+ * INVARIANTS
+ *  - Exactly one prompt row per frame is the invariant: a second input box is a regression, not
+ *    a layout preference.
+ *  - The fallback is driven by the snapshot, not by a timer, so the test never sleeps to observe
+ *    it.
+ *  - React `act(...)` warnings in `bun test` are expected noise.
+ *
+ * WHERE TO CHANGE
+ *  View switching ....... src/client.tsx (board/log state)
+ *  Snapshot shape ....... src/server.ts (producer), src/types.ts (`Task`, `Snapshot`)
  */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";

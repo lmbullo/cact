@@ -26,6 +26,12 @@ INVARIANTS
   - H3's ground truth is computed from the generated CSV at import; the CSV itself is
     generated (gitignored), never committed.
   - build() only writes missing files, so an edited workspace is never silently reset.
+
+WHERE TO CHANGE
+  A new hard task ......... HARD_TASKS, its fixture builder in build(), and its oracle under
+                            `bench/hard_hidden/` (never inside `hard_fixtures/`)
+  What the goal check is ... hidden_check() / the H3 grader
+  A failure line's shape ... bench/hard_runner.py, kept in step with check.py::_PATTERNS
 """
 from __future__ import annotations
 
