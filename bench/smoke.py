@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -207,6 +208,24 @@ def main() -> int:
         allowed = str(cell.result)
         check("kernel: run() allows copying out of the workspace",
               "wrong_call" not in allowed and (root / "a.txt").exists(), allowed[:200])
+
+        kernel.run("print('needle-42')")
+        cell = kernel.run("print(recall('needle-42'))")
+        check("kernel: recall finds earlier cell output with its handle",
+              "needle-42" in cell.stdout and "handle" in cell.stdout, cell.stdout[:200])
+
+        cell = kernel.run("print(run('sleep 300 >/dev/null 2>&1 & echo $!')['stdout'].strip())")
+        orphan = int(cell.stdout.strip().splitlines()[-1])
+        alive = Path(f"/proc/{orphan}").exists()
+        kernel._restart()
+        gone = False
+        for _ in range(50):
+            if not Path(f"/proc/{orphan}").exists():
+                gone = True
+                break
+            time.sleep(0.02)
+        check("kernel: restart reaps an orphaned run() process group",
+              alive and gone, f"pid={orphan} alive_before={alive} gone_after={gone}")
 
         cell = kernel.run("apply('--- a/a.txt\\n+++ b/a.txt\\n@@ -1,2 +1,2 @@\\n alpha\\n-beta\\n+delta\\n')")
         check("kernel: apply a unified diff",

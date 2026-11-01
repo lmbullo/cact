@@ -72,6 +72,11 @@ Earned:
   held, and the next no-tool reply accepts it. This removed a whole class of wasted turns.
 - **Reliable `open(path, "w").write(text)` journalling**. The model writes this way even when
   told to use `write()`, and a deferred commit used to land in the next cell.
+- **Process-group journalling for `run()`**. A cell that times out kills the kernel's group,
+  but `run()` children are in their own sessions; they used to survive and hold ports. Each
+  group leader is now journaled and reaped on stop/restart. Contract test: `bench/smoke.py`.
+- **`recall()` over `_OBS`**. The `[session state]` fold drops old messages, but the full
+  cell output stays in the kernel; the model can search it instead of re-running a command.
 
 Did not earn its keep:
 

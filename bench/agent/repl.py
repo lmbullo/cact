@@ -54,7 +54,8 @@ REPL_RULES = """PYTHON REPL CONTRACT
 5. The kernel imports only the standard library; do not install packages into it.
 6. Print only what the answer needs. Output is returned in full.
 7. Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. Read diff() before you finish.
-8. This is not tools mode. Never emit DSML, XML, <|...|>, or tool-call markup. Your reply must contain only prose and at most one fenced python block.
+8. Earlier cells keep their full output in _OBS. recall(pattern) searches it, including turns a fold removed, and returns matching snippets plus the handle to page the full text; grep() is for the tree, recall() is for the session.
+9. This is not tools mode. Never emit DSML, XML, <|...|>, or tool-call markup. Your reply must contain only prose and at most one fenced python block.
 """
 
 RUN_NOTE = """

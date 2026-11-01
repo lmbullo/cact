@@ -74,6 +74,11 @@ inside `tui/`.
    rebuilt by `edge.build()` when missing.
 9. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
    mode (`python3 -m bench.run`). Keep both working.
+10. **`run()` children are journalled and reaped.** Each command starts in its own session;
+    the child writes its group leader to `KERNEL_ORPHAN_JOURNAL`, and `Kernel.stop()` /
+    `_restart()` kill those groups. Removing the journal or the reap leaks processes when a
+    cell times out or the kernel dies. `recall(pattern)` is the session-side search over
+    `_OBS`; `grep()` is the tree-side search.
 
 ## Verify a change
 

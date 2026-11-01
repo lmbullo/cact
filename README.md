@@ -99,7 +99,7 @@ bench/run.py                        tui/bin/code
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per cell
           ├─ PRELUDE: read/grep/map/write/edit/apply/commit, changes/diff/undo,
-          │           final_answer, emit
+          │           recall, final_answer, emit
           └─ RUN_PRELUDE: run() — whole programs only
                   │
                   ▼
@@ -114,6 +114,14 @@ bench/run.py                        tui/bin/code
   `answer`, `runs`, `obs_index`, `mutated`, `changed`, `delta`, `timeout`, `reads`). A dead
   or hung kernel is killed and restarted **with an empty namespace**; the loop tells the
   model rather than hiding it.
+- **Orphan reaping:** `run()` starts each command in its own session, so killing the kernel
+  group cannot reach it. The child journals the group leader (pid + `/proc` start id) and
+  `Kernel.stop()`/`_restart()` kills those groups, so a timed-out cell or a crashed kernel
+  does not leak a test server, browser or build process.
+- **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
+  list. `recall(pattern)` searches it — including turns the `[session state]` fold removed —
+  and returns snippets plus the `_OBS[n]` handle to page the full text. `grep()` is for the
+  tree; `recall()` is for the session.
 - **Sandbox:** `run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
   `run()` disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
   bind of the root only when `writable=True`).

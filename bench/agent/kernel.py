@@ -5,8 +5,9 @@ WHAT IT IS
   1. Source strings executed *inside* the child interpreter:
        DRIVER       loop: one JSON line per cell on stdin -> exec() in a namespace that
                     survives between cells -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects read/grep/map/write/edit/changes/diff/undo into that namespace
-                    and journals every mutation (snapshot at start, tree diff after each cell).
+       PRELUDE      injects read/grep/map/write/edit/changes/diff/undo/recall into that
+                    namespace and journals every mutation (snapshot at start, tree diff
+                    after each cell).
        RUN_PRELUDE  injects run(): whole programs only, behind the file-verb protocol check.
   2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
      when it dies, hangs or desynchronises, and returns a `Cell`.
@@ -16,11 +17,11 @@ ENTRY POINTS
          allow_run=False, supervise=True)
     .start()   spawn the child (lazy: .run() calls it)
     .run(code, check_cache=None) write one cell, wait for it, -> Cell
-    .stop()    SIGKILL the process group
+    .stop()    SIGKILL the process group, then reap run() groups from the orphan journal
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
         mutated, changed, delta, timeout, reads
   Inside the kernel namespace: read(), grep(), map(), write(), edit(), apply(), commit(),
-        changes(), diff(), undo(), run() (when allow_run), final_answer(), emit()
+        changes(), diff(), undo(), recall(), run() (when allow_run), final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish protocol).
 
@@ -31,6 +32,10 @@ INVARIANTS
   - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and
     restarted with an EMPTY namespace, and the model is told so. Never pretend state
     survived. `supervise=False` disables the in-child alarm (legacy behaviour).
+  - run() starts each command in a NEW session, so killing the kernel group does not reach
+    it. The child journals its group leader (pid + /proc start id) to
+    `KERNEL_ORPHAN_JOURNAL`; `stop()`/`_restart()` kill those groups before starting a new
+    child. Without this, a timed-out or crashed cell leaks whatever run() started.
   - `final_answer(v)` raises `Final`; the driver reports the value as `Cell.final`
     unconditionally, and also reports `Cell.answer` (the `ANSWER` variable, used when a repl
     loop stops on "var"). It is the LOOP, not the kernel, that decides what an answer from a
@@ -68,7 +73,8 @@ WHERE TO CHANGE
   Change what a helper returns ............ the helper's dict shape in PRELUDE; the loops
                                             only pass the text through
   Change the cell result shape ............ `Cell` + the driver's final `emit({...})` payload
-  Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`
+  Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`,
+                                            `_reap_orphans` + `_journal_orphan`
   Change what run() refuses .............. `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` /
                                             `_mutating_command` + `_HINT`, then the RUN_NOTE
                                             text in repl.py and the README contract list
@@ -83,6 +89,7 @@ import selectors
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -639,6 +646,28 @@ def grep(pattern, path=".", max_results=50, regex=False):
             "occurrences": occurrences, "truncated": False}
 
 
+def recall(pattern, limit=10, context=100):
+    # Search the full output of earlier cells, including turns a fold removed. Every cell
+    # keeps its raw stdout/stderr/result in _OBS; this returns matching snippets plus the
+    # handle to page the full text. grep is for the tree, recall is for the session.
+    try:
+        rx = _re.compile(pattern)
+    except _re.error:
+        rx = _re.compile(_re.escape(pattern))
+    out = []
+    for i, entry in enumerate(globals().get("_OBS") or []):
+        for field in ("stdout", "stderr", "result"):
+            text = entry.get(field) or ""
+            for match in rx.finditer(text):
+                start = max(0, match.start() - int(context))
+                end = min(len(text), match.end() + int(context))
+                out.append({"obs": i, "field": field, "text": text[start:end],
+                            "handle": "_OBS[%d]['%s']" % (i, field)})
+                if len(out) >= int(limit):
+                    return out
+    return out
+
+
 def write(path, content, force=False):
     target, rel = _resolve(path)
     if target is None:
@@ -784,8 +813,29 @@ _snapshot()
 
 # --- child side 3/3: RUN_PRELUDE, run() for whole programs, behind the protocol check -----
 RUN_PRELUDE = r"""
-import os as _ros, re as _re, signal as _rsig, subprocess as _rsp
+import json as _json, os as _ros, re as _re, signal as _rsig, subprocess as _rsp
 _RUN_ROOT = _ros.getcwd()
+# run() children get their own session, so killing the kernel group does not reach them.
+# Journal each group leader here; the parent reaps leftovers when the kernel stops/restarts.
+_ORPHAN_JOURNAL = _ros.environ.get("KERNEL_ORPHAN_JOURNAL")
+
+
+def _proc_start(pid):
+    try:
+        with open("/proc/%s/stat" % pid) as fh:
+            return fh.read().rsplit(")", 1)[1].split()[19]
+    except Exception:
+        return None
+
+
+def _journal_orphan(pid):
+    if not _ORPHAN_JOURNAL:
+        return
+    try:
+        with open(_ORPHAN_JOURNAL, "a") as fh:
+            fh.write(_json.dumps({"pid": int(pid), "start": _proc_start(pid)}) + "\n")
+    except Exception:
+        pass
 _RUN_LOG = []
 _CHECK_CACHE = {}
 _GATE_IN_RUN = 0
@@ -993,6 +1043,7 @@ def run(command, timeout=60, cwd=None):
                 encoding="utf-8", errors="replace", executable="/bin/bash",
                 start_new_session=True,
             )
+            _journal_orphan(proc.pid)
         finally:
             _GATE_IN_RUN -= 1
     except _SpawnBlocked as exc:
@@ -1064,6 +1115,7 @@ class Kernel:
         self.allow_run = allow_run
         self.supervise = supervise
         self.proc: subprocess.Popen | None = None
+        self.orphan_journal: str | None = None
         self._python = shutil.which("python3") or "/usr/bin/python3"
 
     def _argv(self) -> list[str]:
@@ -1082,7 +1134,54 @@ class Kernel:
             self._python, "-u", "-c", DRIVER,
         ]
 
+    def _start_id(self, pid: int) -> str | None:
+        try:
+            data = Path(f"/proc/{pid}/stat").read_text()
+            return data.rsplit(")", 1)[1].split()[19]
+        except OSError:
+            return None
+
+    def _reap_orphans(self) -> None:
+        """Kill run() process groups the dead/stopped kernel left behind.
+
+        `run()` starts each command in its own session, so `_kill_group()` (the kernel's
+        group) never reaches it. The child journals its group leader; reaping is best-effort
+        and identity-checked so a reused pid is not killed by mistake.
+        """
+        path = self.orphan_journal
+        self.orphan_journal = None
+        if not path:
+            return
+        seen: set[int] = set()
+        try:
+            lines = Path(path).read_text().splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            try:
+                record = json.loads(line)
+                pid = int(record.get("pid") or 0)
+            except (ValueError, TypeError):
+                continue
+            if pid <= 0 or pid in seen:
+                continue
+            seen.add(pid)
+            start = record.get("start")
+            if start and self._start_id(pid) not in (None, start):
+                continue
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
     def start(self) -> None:
+        if self.allow_run:
+            fd, self.orphan_journal = tempfile.mkstemp(prefix="cact-orphans-", suffix=".jsonl")
+            os.close(fd)
         self.proc = subprocess.Popen(
             self._argv(),
             stdin=subprocess.PIPE,
@@ -1097,7 +1196,9 @@ class Kernel:
                 "HOME": os.environ.get("HOME", "/tmp"),
                 "PYTHONIOENCODING": "utf-8",
                 "KERNEL_SUPERVISE": "1" if self.supervise else "0",
-                **({"KERNEL_ALLOW_RUN": "1", "KERNEL_RUN_PRELUDE": RUN_PRELUDE} if self.allow_run else {}),
+                **({"KERNEL_ALLOW_RUN": "1", "KERNEL_RUN_PRELUDE": RUN_PRELUDE,
+                    **({"KERNEL_ORPHAN_JOURNAL": self.orphan_journal} if self.orphan_journal else {})}
+                   if self.allow_run else {}),
                 **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude}
                    if self.prelude != "off" else {}),
             },
@@ -1111,6 +1212,7 @@ class Kernel:
             except subprocess.TimeoutExpired:
                 pass
         self.proc = None
+        self._reap_orphans()
 
     def _kill_group(self) -> None:
         if self.proc and self.proc.poll() is None:
