@@ -10,10 +10,10 @@ WHAT IT IS
     [stderr] / [stdout]  digested: head, error lines, tail, plus an _OBS[n] handle
     [result] the last expression, clipped
 
-  Plus two ledgers and a fold:
+  Plus a ledger and a fold:
     coverage  every read() records the line ranges it delivered; the card prints
-              `[read] path ranges/total`, and final_answer is rejected (UNREAD) when it
-              cites a file whose delivered ranges leave holes.
+              `[read] path ranges/total` and the next unread offset. This is guidance, not
+              a finish gate: reads through run()/open() are equally valid and are not tracked.
     fold      when the provider's real prompt count crosses `context_budget`, old turns are
               replaced by one regenerated `[session state]` message built from the journal
               (changed files, their diffs, coverage, check results), not a summary.
@@ -23,7 +23,7 @@ ENTRY POINTS
   clip(text, limit)                  bounded text
   digest(text, budget, handle)       head + error lines + "[n lines, m chars; full text is
                                      _OBS[i]" + tail
-  StateLoop(..., output_budget, context_budget, keep_messages, read_gate)
+  StateLoop(..., output_budget, context_budget, keep_messages)
     ._observe(cell, steps) -> str    the card
     ._compact(messages)              fold old turns into a [history] message; gated on
                                      `last_prompt_tokens`, the provider's real count
@@ -70,10 +70,7 @@ Read the diff after a mutation. A file is only "read" up to the ranges shown by 
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
-_CITED = re.compile(r"`([^`\n]+)`")
 _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
-_PLAIN_PATH = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:py|ts|tsx|js|md|json|csv|txt|toml|yaml|yml))")
-_READ_GATE_MAX_LINES = 4000
 
 
 def merge_ranges(ranges) -> list[list[int]]:
@@ -150,10 +147,9 @@ class StateLoop(ToolLoop):
         output_budget: int = 12_000,
         context_budget: int = 891_289,
         keep_messages: int = 20,
-        read_gate: bool = True,
         **kwargs,
     ) -> None:
-        super().__init__(*args, read_gate=read_gate, **kwargs)
+        super().__init__(*args, **kwargs)
         self.output_budget = output_budget
         self.context_budget = context_budget
         self.keep_messages = keep_messages
@@ -211,40 +207,6 @@ class StateLoop(ToolLoop):
                 current["ranges"].extend(kept)
                 current["total"] = total or current["total"]
         return out
-
-    def _read_rejection(self, final: str) -> str | None:
-        if not self.coverage:
-            return None
-        root = str(getattr(self.kernel, "root", ""))
-        cited = []
-        candidates = _CITED.findall(final or "") + _PLAIN_PATH.findall(final or "")
-        for raw in candidates:
-            path = raw.strip().strip(".,;:)").lstrip("./")
-            if path in self.coverage:
-                if path not in cited:
-                    cited.append(path)
-                continue
-            if root and Path(root, path).exists() and path not in cited:
-                cited.append(path)
-        seen = set()
-        for path in cited:
-            if path in seen:
-                continue
-            seen.add(path)
-            entry = self.coverage.get(path)
-            if not entry:
-                continue
-            total = int(entry.get("total") or 0)
-            if not total or total > _READ_GATE_MAX_LINES:
-                continue
-            missing = gaps(entry.get("ranges") or [], total)
-            if missing:
-                a, b = missing[0]
-                return (f"[observation] final_answer rejected: it cites `{path}` but only "
-                        f"{covered(entry.get('ranges') or [])} of {total} lines were delivered; "
-                        f"unread {a}-{b}. Read it with read(path={path!r}, offset={a}), "
-                        "or drop the citation and do not claim what you did not read.")
-        return None
 
     def _observe(self, cell, steps: int) -> str:
         parts = [f"[state] turn={steps} elapsed={cell.duration_ms}ms prompt_tokens={self.last_prompt_tokens}"]

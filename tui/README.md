@@ -225,7 +225,6 @@ Environment variables are read by the server (and inherited by workers), plus
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per model reply (clamped to 393216) |
 | `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
-| `CODE_TUI_READ_GATE` | `1` | `0` disables the read-coverage gate on `final_answer` |
 | `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `run()` and runs the kernel under bwrap |
 | `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
 | `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |

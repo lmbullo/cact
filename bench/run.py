@@ -244,7 +244,6 @@ def main() -> int:
                         goal=None,
                         goal_stops=False,
                         obs_chars=args.obs_chars,
-                        read_gate=False,
                     )
                 else:
                     loop = ReplLoop(

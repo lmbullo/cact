@@ -177,7 +177,6 @@ the `Client`. `loop.py` now holds only those shared types, after the JSON tool-c
 | `STEP_LIMIT` / `WALL_LIMIT` | budget exhausted (a non-empty summary still counts) | `partial` |
 | `GOAL_UNMET` | model tried to finish while the check failed | continues |
 | `STAGED` | `final_answer` in a cell that also printed; accepted on the next no-tool reply | continues |
-| `UNREAD` | state/tool loops: a cited file has undelivered line ranges | continues |
 | `UNREVIEWED` | ReplLoop only: `final_answer` in a printing cell is rejected | continues |
 | `PROTOCOL` | ReplLoop only: reply had neither a python block nor an ANSWER line | continues |
 | `TRUNCATED` / `BAD_ARGS` | cut-off or unparsable call; nothing ran | continues |

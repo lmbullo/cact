@@ -285,11 +285,18 @@ def main() -> int:
         check("kernel: the blocked spawn did not run", (root / "a.txt").exists(), str((root / "a.txt").exists()))
         cell = kernel.run("import subprocess; print(subprocess.run(['echo', 'ok'], capture_output=True, text=True).stdout.strip())")
         check("kernel: spawn gate allows programs", "ok" in cell.stdout, cell.stdout[:120])
+        cell = kernel.run("import subprocess, sys; r=subprocess.run([sys.executable, '-c', \"print('a > b')\"], capture_output=True, text=True); print(r.returncode, r.stdout.strip())")
+        check("kernel: a list argv does not treat > as a shell redirect",
+              "0 a > b" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.run("import subprocess; subprocess.run(['bash', '-c', 'echo x > q.txt'])")
+        check("kernel: bash -c redirection is still refused",
+              "changes files through a process" in cell.stderr and not (root / "q.txt").exists(),
+              (cell.stderr + cell.stdout)[:200])
         cell = kernel.run("run('echo cached-check')", check_cache={"echo cached-check": "PASSED"})
         check("kernel: a plan check answers run() from the cache",
               "check_cached" in str(cell.result) and "PASSED" in str(cell.result), str(cell.result)[:160])
         from bench.agent.kernel import Cell
-        probe = state_loop.StateLoop(object(), kernel, loop.Budget(), read_gate=True, keep_messages=4)
+        probe = state_loop.StateLoop(object(), kernel, loop.Budget(), keep_messages=4)
         shown = Cell("[stdout]\nalpha\nbeta\n", "", None, None, 1, reads={"a.txt": {"ranges": [[1, 2]], "total": 2}})
         probe._observe(shown, 1)
         check("state: a printed read counts as delivered",
@@ -297,20 +304,17 @@ def main() -> int:
         clipped = Cell("[stdout]\nalpha\n...[2 lines]...\n", "", None, None, 1, reads={"b.txt": {"ranges": [[1, 2]], "total": 2}})
         (root / "b.txt").write_text("alpha\nbeta\n", encoding="utf-8")
         probe._observe(clipped, 2)
-        hole = probe._read_rejection("see `b.txt`")
-        check("state: a clipped read leaves a hole", hole is not None and "unread 2-2" in hole, str(hole)[:120])
+        check("state: a clipped read leaves the rest unread",
+              probe.coverage.get("b.txt", {}).get("ranges") == [[1, 1]]
+              and probe.coverage.get("b.txt", {}).get("total") == 2,
+              str(probe.coverage.get("b.txt"))[:120])
         (root / "blank.txt").write_text("a\n\nb\n", encoding="utf-8")
         blank = Cell("[stdout]\n     1| a\n     2| \n     3| b\n", "", None, None, 1,
                      reads={"blank.txt": {"ranges": [[1, 3]], "total": 3}})
         probe._observe(blank, 3)
-        hole = probe._read_rejection("see `blank.txt`")
-        check("state: a blank delivered line is not a hole",
-              hole is None and probe.coverage.get("blank.txt", {}).get("ranges") == [[1, 3]],
-              str(hole or probe.coverage.get("blank.txt"))[:120])
-        probe.coverage = {"big.txt": {"ranges": [[1, 10]], "total": 900}}
-        message = probe._read_rejection("see `big.txt`")
-        check("state: read gate rejects a cited file with holes",
-              message is not None and "unread 11-900" in message, str(message)[:160])
+        check("state: a blank delivered line still counts as delivered",
+              probe.coverage.get("blank.txt", {}).get("ranges") == [[1, 3]],
+              str(probe.coverage.get("blank.txt"))[:120])
         messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "p"}]
         for i in range(6):
             messages.append({"role": "assistant", "content": "", "tool_calls": [{"id": str(i)}]})

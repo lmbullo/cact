@@ -87,9 +87,11 @@ Did not earn its keep:
   (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed, so a temp build
   (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. Cell
   errors on the edge suite fell from 8 to 0.
-- **Read-coverage gating at finish.** It stays (`CODE_TUI_READ_GATE`, on by default): a real
-  run hit five `UNREAD` rejections because a blank line could never count as delivered. The
-  numbered-line fix closes that false positive; the gate still guards unsupported citations.
+- **Read-coverage gating at finish.** Removed after the 142-turn docs run hit five `UNREAD`
+  rejections and the 83-turn guide run never engaged the gate at all: it only saw `read()`,
+  while the model read through `run("sed ...")` and `Path.read_text()`. A partial `read()`
+  could therefore block a finish that a shell read of the same file would not. The `[read]`
+  ledger stays (it is useful guidance); the finish no longer depends on which API was used.
 
 ## Reproducing the comparison
 

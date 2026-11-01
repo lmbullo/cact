@@ -10,7 +10,7 @@ ENTRY POINTS
   PYTHON_TOOL .. the single tool spec sent to the client
   TOOL_RULES ... system prompt: use the kernel for everything, finish with final_answer
   ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
-           health, read_gate)
+           health)
     .run(task_id, prompt, trace) -> RunResult
   Hooks subclasses override: `_observe(cell, steps)` (cell -> text), `_compact(messages)`
     (context management), `_goal_state()` (goal -> (ok, Check)).
@@ -25,10 +25,11 @@ INVARIANTS
     checks.run_plan, which respects each spec's `scope`). After a mutating cell, at most once
     every 20s, its result lands in `self.last_check` and is rendered as the `[check]` line of
     the next card. It never ends the run; the full goal does.
-  - `read_gate=True` rejects a finish that cites a file whose delivered `Cell.reads` ranges
-    leave holes (UNREAD). ReplLoop has no read ledger.
+  - A finish is never rejected for citation coverage: `read()` records ranges for the
+    `[read]` card, but reads through `run()`/`open()` are equally valid and the ledger cannot
+    see them, so gating the finish on it was inconsistent.
   - BAD_ARGS / TRUNCATED mean nothing ran and the model is told why.
-  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, UNREAD,
+  - Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET,
     TRUNCATED, BAD_ARGS.
   - `changed` accumulates every file the kernel reports; worker.py records it as history.
 
@@ -102,7 +103,6 @@ class ToolLoop:
         goal_stops: bool = False,
         obs_chars: int = 0,
         health: Any = None,
-        read_gate: bool = False,
     ) -> None:
         self.client = client
         self.kernel = kernel
@@ -119,7 +119,6 @@ class ToolLoop:
         self.last_check: Any = None
         self._health_at = 0.0
         self.check_cache: dict[str, str] = {}
-        self.read_gate = read_gate
 
     def _observe(self, cell, steps: int) -> str:
         return observation(cell, self.obs_chars)
@@ -131,9 +130,6 @@ class ToolLoop:
         return evaluate(self.goal)
 
     def _note_cell(self, cell) -> None:
-        return None
-
-    def _read_rejection(self, final: str) -> str | None:
         return None
 
     def _reject(self, check, prefix: str) -> str:
@@ -222,17 +218,6 @@ class ToolLoop:
                         trace.write(rec)
                     pending = None
                     continue
-                if pending is not None and self.read_gate:
-                    reason = self._read_rejection(pending)
-                    if reason:
-                        messages.append({"role": "user", "content": reason})
-                        rec["notice"] = reason[:2000]
-                        rec["stop"] = "UNREAD"
-                        turns.append(rec)
-                        if trace:
-                            trace.write(rec)
-                        pending = None
-                        continue
                 final = candidate
                 stop = "DONE"
                 rec["stop"] = stop
@@ -337,14 +322,6 @@ class ToolLoop:
                         rec["notice"] = notice[:2000]
                         rec["stop"] = "GOAL_UNMET"
                         continue
-                    if self.read_gate:
-                        reason = self._read_rejection(cell.final)
-                        if reason:
-                            messages.append({"role": "tool", "tool_call_id": call_id,
-                                             "content": reason})
-                            rec["notice"] = reason[:2000]
-                            rec["stop"] = "UNREAD"
-                            continue
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                     terminal = cell.final
                     continue
