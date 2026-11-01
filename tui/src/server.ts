@@ -211,7 +211,7 @@ function capString(value: unknown, limit: number): unknown {
 
 function capValue(value: any, depth = 0): any {
   if (depth > 5) return "[depth]";
-  if (typeof value === "string") return capString(value, 8000);
+  if (typeof value === "string") return capString(value, 16000);
   if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
   if (Array.isArray(value)) return value.slice(0, 40).map((item) => capValue(item, depth + 1));
   if (typeof value === "object") {
@@ -336,7 +336,7 @@ function handleWorkerLine(task: Task, raw: string): void {
       task.errors = message.errors;
       task.usage = message.usage;
       task.wallMs = message.wallMs;
-      task.final = capString(message.final ?? "", 12000) as string;
+      task.final = capString(message.final ?? "", 64000) as string;
       appendEvent(task, {
         kind: "final",
         text: task.final,
