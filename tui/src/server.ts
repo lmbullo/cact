@@ -27,21 +27,23 @@
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
  *  - Port 0 means an OS-chosen port, published in server.json. Two servers for one workspace
  *    would race on those files, so launcher.ts always reuses a healthy one.
- *  - detectChecks() decides the verification plan once at startup and never again:
- *    CODE_TUI_CHECKS (JSON [{name, cmd, cheap, scope}]) wins, else CODE_TUI_CHECK as one
- *    entry, else `python3 bench/smoke.py` (cheap, scope bench) plus "typecheck"/"test"
- *    from the root and tui/package.json (scope tui). An empty CODE_TUI_CHECK disables it.
- *    The plan travels to the worker as `--checks <json>` and is published in
- *    ServerInfo.checks; `cheap` entries become the agent's post-mutation health check and
- *    `scope` keeps a health run to specs whose paths changed. The goal runs the whole
- *    plan without a paths filter.
+ *  - detectChecks() runs when a task starts, not once at boot, so a script an earlier
+ *    task added to package.json is picked up without a server restart. CODE_TUI_CHECKS
+ *    (JSON [{name, cmd, cheap, scope}]) wins, else CODE_TUI_CHECK as one entry, else
+ *    `python3 bench/smoke.py` (cheap, scope bench) plus "typecheck"/"test" (or "build"
+ *    when neither exists) from the root and tui/package.json (scope tui). The package
+ *    manager follows the lockfile (bun.lock -> bun, package-lock.json -> npm). An empty
+ *    CODE_TUI_CHECK disables it. The plan travels to the worker as `--checks <json>` and
+ *    is published in ServerInfo.checks; `cheap` entries become the agent's post-mutation
+ *    health check and `scope` keeps a health run to specs whose paths changed. The goal
+ *    runs the whole plan without a paths filter.
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask
  *  Worker message handling ............... handleWorkerLine
  *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
  *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
- *  Verification plan detection .......... detectChecks, and ServerInfo.checks
+ *  Verification plan detection .......... detect-checks.ts, and ServerInfo.checks
  *  Task shape ............................ tui/src/types.ts
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -58,6 +60,7 @@ import {
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import type { CheckSpec, ServerInfo, Snapshot, Task, TaskEvent, WorkerMessage } from "./types";
+import { detectChecks } from "./detect-checks";
 
 const VERSION = "0.1.0";
 const ROOT = resolve(import.meta.dir, "..");
@@ -111,53 +114,7 @@ const cellTimeout = Math.max(5, Number(process.env.CODE_TUI_CELL_TIMEOUT ?? 120)
 const allowRun = process.env.CODE_TUI_ALLOW_RUN !== "0";
 const python = process.env.CODE_TUI_PYTHON ?? "python3";
 
-function detectChecks(root: string): CheckSpec[] {
-  const explicit = process.env.CODE_TUI_CHECKS;
-  if (explicit !== undefined) {
-    try {
-      const parsed = JSON.parse(explicit) as unknown;
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .map((item) => item as { name?: unknown; cmd?: unknown; cheap?: unknown; scope?: unknown })
-        .map((item) => ({
-          name: String(item.name ?? item.cmd ?? "check"),
-          cmd: String(item.cmd ?? "").trim(),
-          cheap: Boolean(item.cheap),
-          scope: Array.isArray(item.scope) ? item.scope.map((entry) => String(entry)) : [],
-        }))
-        .filter((item) => item.cmd.length > 0);
-    } catch {
-      return [];
-    }
-  }
-  const single = process.env.CODE_TUI_CHECK;
-  if (single !== undefined) {
-    return single.trim() ? [{ name: "check", cmd: single.trim(), cheap: false }] : [];
-  }
-  const out: CheckSpec[] = [];
-  const add = (name: string, cmd: string, cheap: boolean, scope: string[]) => {
-    if (!out.some((item) => item.cmd === cmd)) out.push({ name, cmd, cheap, scope });
-  };
-  if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true, ["bench"]);
-  const prefix = (dir: string, command: string) => dir === root ? command : `cd ${relative(root, dir)} && ${command}`;
-  for (const dir of [root, join(root, "tui")]) {
-    let scripts: Record<string, string> = {};
-    try {
-      const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { scripts?: Record<string, string> };
-      scripts = pkg.scripts ?? {};
-    } catch {
-      continue;
-    }
-    const rel = relative(root, dir);
-    const scope = rel ? [rel] : [];
-    if (scripts.typecheck) add("typecheck", prefix(dir, "bun run typecheck"), true, scope);
-    if (scripts.test || existsSync(join(dir, "tests"))) add("test", prefix(dir, "bun test"), false, scope);
-  }
-  return out;
-}
-
-const checks = detectChecks(workspace);
-const check = checks[0]?.cmd ?? "";
+const initialChecks = detectChecks(workspace);
 const initialKey = Boolean(process.env.DEEPSEEK_API_KEY);
 
 let server: any = null;
@@ -176,9 +133,20 @@ let info: ServerInfo = {
   allowRun,
   hasKey: initialKey,
   python,
-  check,
-  checks,
+  check: initialChecks[0]?.cmd ?? "",
+  checks: initialChecks,
 };
+
+function refreshChecks(): CheckSpec[] {
+  const next = detectChecks(workspace);
+  info = { ...info, checks: next, check: next[0]?.cmd ?? "" };
+  try {
+    writeFileSync(serverFile, JSON.stringify(info, null, 2));
+  } catch {
+    /* the plan still reaches the worker even if the state file is unwritable */
+  }
+  return next;
+}
 
 const tasks: Task[] = [];
 const taskById = new Map<string, Task>();
@@ -365,6 +333,7 @@ function startTask(task: Task): void {
   task.startedAt = Date.now();
   task.model = model;
   task.effort = effort;
+  const checks = refreshChecks();
   saveTask(task);
   appendEvent(task, { kind: "started", text: `agent started (${model}, effort=${effort})` });
   broadcast({ type: "task", task });

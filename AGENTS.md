@@ -43,7 +43,9 @@ inside `tui/`.
    read-only git work (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`). Shell verbs
    that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
    `>` redirection) are refused by `_mutating_command` as `kind: "wrong_call"` with a `use`
-   hint, because they bypass the journal. `git add/commit/push/fetch/init/clone` are allowed. A program can still write files; the journal is a
+   hint, because they bypass the journal. `git add/commit/push/fetch/init/clone` are allowed,
+   as is mutating an absolute path outside the workspace (`/tmp`), which the journal never
+   covered. A program can still write files; the journal is a
    typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
    **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and

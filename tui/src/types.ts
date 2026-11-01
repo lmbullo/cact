@@ -19,13 +19,13 @@
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
  *  - `CheckSpec` mirrors `bench.agent.checks.CheckSpec`: {name, cmd, cheap, scope?}, where
- *    `scope` is a list of path prefixes. It is parsed in server.ts (detectChecks) from
+ *    `scope` is a list of path prefixes. It is parsed in detect-checks.ts from
  *    CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
  *
  * WHERE TO CHANGE
  *  The task shape ................. Task / TaskStatus
  *  The journal line shape ......... TaskEvent
- *  The detection plan ............ CheckSpec; detectChecks in server.ts
+ *  The detection plan ............ CheckSpec; detectChecks in detect-checks.ts
  *  A worker message .............. WorkerMessage + handleWorkerLine in server.ts
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";

@@ -816,11 +816,35 @@ def _segments(command):
     return [part for part in _re.split(r"\|\||&&|\||;|\n", str(command)) if part.strip()]
 
 
+def _abs_outside(token):
+    # A path the journal does not cover: absolute, outside the root, with no shell/escape
+    # tricks. Mutating /tmp is fine; mutating the workspace is not.
+    text = str(token).strip().strip("'\"")
+    if not text.startswith("/") or "$" in text or ".." in text:
+        return False
+    path = _ros.path.normpath(text)
+    return path != _RUN_ROOT and not path.startswith(_RUN_ROOT + _ros.sep)
+
+
+def _mutator_targets_outside(parts):
+    base = _ros.path.basename(parts[0])
+    paths = [part for part in parts[1:] if not part.startswith("-")]
+    if not paths:
+        return False
+    # cp/ln/install only read the source; the destination is the mutation.
+    if base in ("cp", "ln", "install"):
+        return _abs_outside(paths[-1])
+    return all(_abs_outside(path) for path in paths)
+
+
 def _writes_stdout(segment):
     for match in _re.finditer(r"(?<![0-9])>>?\s*([^\s|;&]+)", segment):
         target = match.group(1).strip("'\"")
-        if target not in ("/dev/null", "/dev/stdout", "/dev/stderr", "&1", "&2"):
-            return True
+        if target in ("/dev/null", "/dev/stdout", "/dev/stderr", "&1", "&2"):
+            continue
+        if _abs_outside(target):
+            continue
+        return True
     return False
 
 
@@ -839,6 +863,8 @@ def _mutating_command(command):
         args = parts[1:]
         names = [_ros.path.basename(arg) for arg in args]
         if base in _RUN_SHELL_MUTATORS:
+            if _mutator_targets_outside(parts):
+                continue
             return base
         if base == "sed" and any(arg.startswith("-i") or arg.startswith("--in-place") for arg in args):
             return "sed -i"
@@ -934,6 +960,9 @@ def run(command, timeout=60, cwd=None):
                            "journal and diff()/undo() could not see it. Use the helper.",
                 "use": use,
             },
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "",
         }
     extend = globals().get("_CELL_EXTEND")
     if extend is not None:
@@ -953,10 +982,12 @@ def run(command, timeout=60, cwd=None):
         use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "write(), edit(), apply() or commit()")
         return {"ok": False, "kind": "wrong_call", "command": str(command),
                 "blocked": exc.blocked,
-                "error": {"code": "mutation_via_run", "message": str(exc), "use": use}}
+                "error": {"code": "mutation_via_run", "message": str(exc), "use": use},
+                "exit_code": None, "stdout": "", "stderr": ""}
     except OSError as exc:
         return {"ok": False, "kind": "spawn_error", "command": str(command),
-                "error": {"code": "spawn_failed", "message": str(exc)}}
+                "error": {"code": "spawn_failed", "message": str(exc)},
+                "exit_code": None, "stdout": "", "stderr": ""}
     try:
         out, err = proc.communicate(timeout=float(timeout))
     except _rsp.TimeoutExpired:
@@ -969,7 +1000,7 @@ def run(command, timeout=60, cwd=None):
         except Exception:
             out, err = "", ""
         return {"ok": True, "kind": "timeout", "command": str(command), "timeout_s": float(timeout),
-                "stdout": out or "", "stderr": err or "",
+                "exit_code": None, "stdout": out or "", "stderr": err or "",
                 "note": "the command hit its own timeout and its process group was killed; the kernel is intact"}
     return {"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
             "stdout": out or "", "stderr": err or ""}

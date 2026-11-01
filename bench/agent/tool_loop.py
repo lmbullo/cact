@@ -79,7 +79,7 @@ Prefer one large call over many small ones. A single call can loop over files, r
 
 Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
 
-For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() runs any command, including cat/grep/sed/tests/git; only shell verbs that mutate files (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal.
+For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. run() runs any command, including cat/grep/sed/tests/git; only shell verbs that mutate files inside the workspace (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal; /tmp and other paths outside the project are not gated.
 
 Finish by calling the python tool with a cell that calls final_answer("<summary>") and prints nothing. If a cell prints output and also calls final_answer, the answer is rejected and the output is returned to you to read first. When the task asks for a specific value, put that value in final_answer, not in prose.
 

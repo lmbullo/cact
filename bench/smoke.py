@@ -177,6 +177,23 @@ def main() -> int:
         check("kernel: run() refuses redirection into a file",
               "wrong_call" in refusal and not (root / "z.txt").exists(), refusal[:200])
 
+        cell = kernel.run("run('rm -rf /tmp/cact-smoke-outside')")
+        allowed = str(cell.result)
+        check("kernel: run() allows a mutation outside the workspace",
+              "wrong_call" not in allowed and "'ok': True" in allowed, allowed[:200])
+
+        cell = kernel.run("run('rm -rf a.txt')")
+        refusal = str(cell.result)
+        check("kernel: run() still refuses a workspace mutation",
+              "wrong_call" in refusal and (root / "a.txt").exists(), refusal[:200])
+        check("kernel: a refused run() still carries exit_code",
+              "'exit_code': None" in refusal, refusal[:200])
+
+        cell = kernel.run("run('cp a.txt /tmp/cact-smoke-copy')")
+        allowed = str(cell.result)
+        check("kernel: run() allows copying out of the workspace",
+              "wrong_call" not in allowed and (root / "a.txt").exists(), allowed[:200])
+
         cell = kernel.run("apply('--- a/a.txt\\n+++ b/a.txt\\n@@ -1,2 +1,2 @@\\n alpha\\n-beta\\n+delta\\n')")
         check("kernel: apply a unified diff",
               "apply" in str(cell.result) and "delta" in (root / "a.txt").read_text(), str(cell.result)[:160])
