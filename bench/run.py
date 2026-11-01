@@ -52,7 +52,8 @@ if __package__ in (None, ""):
     from bench.agent.kernel import Kernel
     from bench.agent.llm import Client
     from bench.agent.loop import Budget
-    from bench.agent.repl import BARE_RULES, REPL_RULES, ReplLoop
+    from bench.agent.repl import BARE_RULES, REPL_RULES, RUN_NOTE, RUN_NOTE_MUT, ReplLoop
+    from bench.agent.state_loop import StateLoop
     from bench.agent.tool_loop import TOOL_RULES, ToolLoop
     from bench import edge as bench_edge
     from bench.agent.trace import Trace, render
