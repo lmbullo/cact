@@ -11,8 +11,10 @@ server and the same task board.
 
 ### For coding agents
 
-Start at `../AGENTS.md`. Every file in `src/` and `python/` opens with a header stating what
-it is, its entry points, its invariants and where to change what. The source map:
+Start at `../AGENTS.md`, then run `python3 ../bench/map.py --query tui` to hear it from the
+headers themselves. Every file here opens with a header stating what it is, its entry points,
+its invariants and where to change what; `../bench/map.py --check` fails when one is
+incomplete. The source map:
 
 | File | Owns |
 |---|---|
@@ -24,7 +26,7 @@ it is, its entry points, its invariants and where to change what. The source map
 | `src/types.ts` | the wire contract shared by all of the above |
 | `src/stop.ts` | SIGTERM the workspace's server |
 | `python/worker.py` | one task = one worker = one agent loop; `@@TUI@@` streams to the server |
-| `tests/*.test.tsx` | rendering tests against a fake Bun server |
+| `tests/*.test.ts(x)` | rendering/detection tests; the fake Bun server lives in each file |
 
 Two contract tests live outside this directory: `python3 ../bench/smoke.py` (agent/kernel
 interface, no key needed) and `python3 ../bench/live.py` (a real end-to-end task).
