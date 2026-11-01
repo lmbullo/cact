@@ -18,7 +18,7 @@ ENTRY POINTS
          allow_run=False, supervise=True)
     .start()   spawn the child (lazy: .run() calls it)
     .run(code, check_cache=None) write one cell, wait for it, -> Cell
-    .stop()    SIGKILL the process group, then reap run() groups from the orphan journal
+    .stop()    SIGKILL the process group, reap run() groups, delete the observation log
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
         mutated, changed, delta, timeout, reads
   Inside the kernel namespace: read(), grep(), guide(), map(), write(), edit(), apply(),
@@ -34,6 +34,9 @@ INVARIANTS
   - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and
     restarted with an EMPTY namespace, and the model is told so. Never pretend state
     survived. `supervise=False` disables the in-child alarm (legacy behaviour).
+  - The session's observation log (`_OBS`) is the exception: it is appended to
+    `KERNEL_OBS_LOG` after each cell and reloaded by the new child, so `recall()` survives
+    a crash/restart even though variables do not. `stop()` deletes the log.
   - run() starts each command in a NEW session, so killing the kernel group does not reach
     it. The child journals its group leader (pid + /proc start id) to
     `KERNEL_ORPHAN_JOURNAL`; `stop()`/`_restart()` kill those groups before starting a new
@@ -80,7 +83,7 @@ WHERE TO CHANGE
                                             only pass the text through
   Change the cell result shape ............ `Cell` + the driver's final `emit({...})` payload
   Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`,
-                                            `_reap_orphans` + `_journal_orphan`
+                                            `_reap_orphans` + `_journal_orphan`, `obs_log`
   Change what run() refuses .............. `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` /
                                             `_mutating_command` + `_HINT`, then the RUN_NOTE
                                             text in repl.py and the README contract list
@@ -155,6 +158,16 @@ def final_answer(value):
     raise Final(value)
 
 ns["final_answer"] = final_answer
+
+# _OBS is the session's only L2/L3 history. Persist it so a restart (crash, timeout,
+# protocol desync) loses variables but not the earlier cell output recall() searches.
+_OBS_PATH = os.environ.get("KERNEL_OBS_LOG")
+if _OBS_PATH:
+    try:
+        with open(_OBS_PATH, encoding="utf-8") as _fh:
+            ns["_OBS"] = [json.loads(_line) for _line in _fh if _line.strip()]
+    except (OSError, ValueError):
+        ns["_OBS"] = []
 
 def emit(payload):
     sys.__stdout__.write("@@K@@" + json.dumps(payload) + "\n")
@@ -255,6 +268,12 @@ for line in sys.stdin:
     _mutated = _mutated or bool(_changed)
     _obs_log = ns.setdefault("_OBS", [])
     _obs_log.append({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr})
+    if _OBS_PATH:
+        try:
+            with open(_OBS_PATH, "a", encoding="utf-8") as _fh:
+                _fh.write(json.dumps(_obs_log[-1]) + "\n")
+        except OSError:
+            pass
     emit({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
           "runs": emitted_runs, "reads": dict(ns.get("_READS_CELL") or {}),
           "obs_index": len(_obs_log) - 1, "mutated": _mutated,
@@ -1144,6 +1163,7 @@ class Kernel:
         self.supervise = supervise
         self.proc: subprocess.Popen | None = None
         self.orphan_journal: str | None = None
+        self.obs_log: str | None = None
         self._python = shutil.which("python3") or "/usr/bin/python3"
 
     def _argv(self) -> list[str]:
@@ -1207,6 +1227,9 @@ class Kernel:
             pass
 
     def start(self) -> None:
+        if self.prelude != "off" and not self.obs_log:
+            fd, self.obs_log = tempfile.mkstemp(prefix="cact-obs-", suffix=".jsonl")
+            os.close(fd)
         if self.allow_run:
             fd, self.orphan_journal = tempfile.mkstemp(prefix="cact-orphans-", suffix=".jsonl")
             os.close(fd)
@@ -1227,13 +1250,14 @@ class Kernel:
                 **({"KERNEL_ALLOW_RUN": "1", "KERNEL_RUN_PRELUDE": RUN_PRELUDE,
                     **({"KERNEL_ORPHAN_JOURNAL": self.orphan_journal} if self.orphan_journal else {})}
                    if self.allow_run else {}),
+                **({"KERNEL_OBS_LOG": self.obs_log} if self.obs_log else {}),
                 **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude,
                     "KERNEL_HEADERS": HEADERS_SOURCE}
                    if self.prelude != "off" else {}),
             },
         )
 
-    def stop(self) -> None:
+    def _stop(self, keep_history: bool) -> None:
         if self.proc and self.proc.poll() is None:
             self._kill_group()
             try:
@@ -1242,6 +1266,15 @@ class Kernel:
                 pass
         self.proc = None
         self._reap_orphans()
+        if not keep_history and self.obs_log:
+            try:
+                os.unlink(self.obs_log)
+            except OSError:
+                pass
+            self.obs_log = None
+
+    def stop(self) -> None:
+        self._stop(keep_history=False)
 
     def _kill_group(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -1251,7 +1284,8 @@ class Kernel:
                 self.proc.kill()
 
     def _restart(self) -> None:
-        self.stop()
+        # Keep the observation log: the new child reloads it, so recall() survives the crash.
+        self._stop(keep_history=True)
         self.start()
 
     def run(self, code: str, check_cache: dict | None = None) -> Cell:

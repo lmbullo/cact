@@ -32,7 +32,8 @@ ENTRY POINTS
 INVARIANTS
   - Output is never silently dropped: the card always names the `_OBS[n]` entry holding the
     full text, and the kernel keeps `_OBS` in the namespace so `print(_OBS[n]['stdout'])`
-    works. That is why the handle, not the text, is the contract.
+    works. That is why the handle, not the text, is the contract. The kernel persists `_OBS`
+    across a restart, so `recall()` keeps working when a cell kills the kernel.
   - `_compact` cuts only on an assistant tool-call boundary, so no tool result is orphaned
     from its call.
   - The `[state] changed:` line and `[diff]` both come from `Cell.changed` / `Cell.delta`,

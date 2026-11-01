@@ -129,9 +129,10 @@ bench/run.py                        tui/bin/code
   which module owns a topic from inside a cell. It only answers where the repo documents
   itself; on a task workspace with no headers it returns a miss and says so.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
-  list. `recall(pattern)` searches it — including turns the `[session state]` fold removed —
-  and returns snippets plus the `_OBS[n]` handle to page the full text. `grep()` is for the
-  tree; `recall()` is for the session.
+  list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —
+  including turns the `[session state]` fold removed — and returns snippets plus the
+  `_OBS[n]` handle to page the full text. `grep()` is for the tree; `recall()` is for the
+  session, and a crash does not erase it.
 - **Sandbox:** `run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
   `run()` disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
   bind of the root only when `writable=True`).

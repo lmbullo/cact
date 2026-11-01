@@ -262,6 +262,9 @@ def main() -> int:
             time.sleep(0.02)
         check("kernel: restart reaps an orphaned run() process group",
               alive and gone, f"pid={orphan} alive_before={alive} gone_after={gone}")
+        cell = kernel.run("print(recall('needle-42'))")
+        check("kernel: recall survives a kernel restart",
+              "needle-42" in cell.stdout and "handle" in cell.stdout, cell.stdout[:200])
 
         cell = kernel.run("apply('--- a/a.txt\\n+++ b/a.txt\\n@@ -1,2 +1,2 @@\\n alpha\\n-beta\\n+delta\\n')")
         check("kernel: apply a unified diff",

@@ -76,7 +76,8 @@ Earned:
   but `run()` children are in their own sessions; they used to survive and hold ports. Each
   group leader is now journaled and reaped on stop/restart. Contract test: `bench/smoke.py`.
 - **`recall()` over `_OBS`**. The `[session state]` fold drops old messages, but the full
-  cell output stays in the kernel; the model can search it instead of re-running a command.
+  cell output stays in the kernel (and is persisted across a restart); the model can search
+  it instead of re-running a command.
 
 Did not earn its keep:
 

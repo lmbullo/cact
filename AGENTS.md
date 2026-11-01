@@ -89,7 +89,8 @@ inside `tui/`.
     the child writes its group leader to `KERNEL_ORPHAN_JOURNAL`, and `Kernel.stop()` /
     `_restart()` kill those groups. Removing the journal or the reap leaks processes when a
     cell times out or the kernel dies. `recall(pattern)` is the session-side search over
-    `_OBS`; `grep()` is the tree-side search.
+    `_OBS`; `grep()` is the tree-side search. `_OBS` is persisted to `KERNEL_OBS_LOG` and
+    reloaded on restart, so `recall()` must survive a crash; variables do not.
 
 ## Verify a change
 
