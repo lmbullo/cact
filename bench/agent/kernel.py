@@ -5,9 +5,10 @@ WHAT IT IS
   1. Source strings executed *inside* the child interpreter:
        DRIVER       loop: one JSON line per cell on stdin -> exec() in a namespace that
                     survives between cells -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects read/grep/map/write/edit/changes/diff/undo/recall into that
-                    namespace and journals every mutation (snapshot at start, tree diff
-                    after each cell).
+       PRELUDE      injects read/grep/guide/map/write/edit/changes/diff/undo/recall into
+                    that namespace and journals every mutation (snapshot at start, tree diff
+                    after each cell). `guide()` is headers.py, shipped as source and exec'd
+                    into a private `_HEADERS` namespace (see HEADERS_SOURCE).
        RUN_PRELUDE  injects run(): whole programs only, behind the file-verb protocol check.
   2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
      when it dies, hangs or desynchronises, and returns a `Cell`.
@@ -20,8 +21,9 @@ ENTRY POINTS
     .stop()    SIGKILL the process group, then reap run() groups from the orphan journal
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
         mutated, changed, delta, timeout, reads
-  Inside the kernel namespace: read(), grep(), map(), write(), edit(), apply(), commit(),
-        changes(), diff(), undo(), recall(), run() (when allow_run), final_answer(), emit()
+  Inside the kernel namespace: read(), grep(), guide(), map(), write(), edit(), apply(),
+        commit(), changes(), diff(), undo(), recall(), run() (when allow_run),
+        final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish protocol).
 
@@ -52,6 +54,10 @@ INVARIANTS
     with `kind: "wrong_call"` plus a `use` hint, because they would bypass the journal and
     make diff()/undo() lie. That is a correctness boundary, not a capability boundary: a
     program can still write files, and the docs say so.
+  - `guide()` is the only new name the header index adds, and it is read-only: headers.py is
+    passed to the child in KERNEL_HEADERS, exec'd into `_HEADERS`, and called with `_ROOT`.
+    Never inline that source again: a shared namespace let its private `_walk` overwrite the
+    prelude's, which silently indexed every file instead of the source tree.
   - Direct process spawning is gated by the same classifier. `sys.addaudithook` in
     RUN_PRELUDE sees `subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn` and
     `os.spawn`; a spawn containing a mutating verb raises `_SpawnBlocked`, which the driver
@@ -258,8 +264,27 @@ for line in sys.stdin:
 
 
 # --- child side 2/3: PRELUDE, the file helpers and the mutation journal the model calls ----
+# The header index is shipped to the child as source, not imported: a cell runs in a task
+# workspace with a bare `python3 -c`, where `bench` is not importable. The source is exec'd
+# into its own namespace `_HEADERS`, so its helpers can never collide with the prelude's (that
+# namespace is why a private `_walk` here and one there stay two different functions), and the
+# model sees exactly one new verb: guide().
+HEADERS_SOURCE = Path(__file__).with_name("headers.py").read_text(encoding="utf-8")
+
 PRELUDE = r"""
 import difflib as _difflib, hashlib as _hashlib, os as _os, re as _re
+
+_HEADERS = {}
+exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
+
+
+def guide(query=None, path=None, limit=6):
+    fn = _HEADERS.get("guide")
+    if fn is None:
+        return {"ok": False, "error": {"code": "no_index",
+                "message": "the header index is not loaded; use map() and grep() instead"}}
+    return fn(_ROOT, query=query, path=path, limit=limit)
+
 
 _ROOT = _os.getcwd()
 _READS_CELL = {}
@@ -1199,7 +1224,8 @@ class Kernel:
                 **({"KERNEL_ALLOW_RUN": "1", "KERNEL_RUN_PRELUDE": RUN_PRELUDE,
                     **({"KERNEL_ORPHAN_JOURNAL": self.orphan_journal} if self.orphan_journal else {})}
                    if self.allow_run else {}),
-                **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude}
+                **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude,
+                    "KERNEL_HEADERS": HEADERS_SOURCE}
                    if self.prelude != "off" else {}),
             },
         )

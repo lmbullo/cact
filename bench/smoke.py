@@ -5,9 +5,14 @@ WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
   It imports every module, drives the kernel prelude end to end (read/write/edit/changes/
   diff/undo, run() allowing reads and refusing mutation) and checks the pure helpers (reply
-  parsing, state digests, read coverage, the spawn gate, check plans).
+  parsing, state digests, read coverage, the spawn gate, check plans), plus the header index
+  (`bench/agent/headers.py`) and the contract CLI (`bench/map.py`).
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
+
+ENTRY POINTS
+  python3 bench/smoke.py   the only entry point; `main()` returns the exit code
+  check(name, ok, detail)  prints `ok`/`FAIL` and records a failure
 
 INVARIANTS
   - Runs in a temporary directory; nothing under the repo is written, no task is graded, no
@@ -23,6 +28,8 @@ WHERE TO CHANGE
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 import time
@@ -39,7 +46,9 @@ import bench.agent.loop as loop
 import bench.agent.reply as reply
 import bench.agent.state_loop as state_loop
 import bench.agent.checks as checks
+import bench.agent.headers as headers
 import bench.agent.trace as trace
+import bench.map as map_cli
 import bench.edge as edge
 import bench.runs as runs
 import bench.tasks as tasks
@@ -82,6 +91,23 @@ def main() -> int:
     check("trace: render is callable", callable(trace.render))
     check("runs: verbs", "final_answer" in runs.VERBS)
     check("ws: workspace helpers", callable(ws.manifest) and callable(ws.clone) and callable(ws.changed))
+
+    # --- the contract index: every module explains itself --------------------------------
+    rows = headers.index(ROOT)
+    check("headers: the index reaches the agent", any(r["path"] == "bench/agent/kernel.py" for r in rows),
+          str([r["path"] for r in rows[:3]]))
+    gaps = headers.problems(ROOT)
+    check("headers: every module header is complete", not gaps, str(gaps[:3]))
+    hit = headers.guide(ROOT, query="check plan", limit=3)
+    check("headers: a query names the owning module",
+          bool(hit["modules"]) and hit["modules"][0]["path"] == "bench/agent/checks.py",
+          str([r["path"] for r in hit["modules"]]))
+    check("headers: an unknown module is a miss, not an exception",
+          headers.guide(ROOT, path="no/such.py")["modules"] == [])
+    check("headers: one module reads back whole", "ENTRY POINTS" in headers.guide(ROOT, path="bench/map.py")["text"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        quiet = map_cli.main(["--check", "--json"])
+    check("map: --check is clean", quiet == 0)
 
     # --- plans and coverage --------------------------------------------------------------
     root = Path(tempfile.mkdtemp(prefix="cact-smoke-"))
@@ -154,6 +180,16 @@ def main() -> int:
 
         cell = kernel.run("map('.')")
         check("kernel: map", "a.txt" in str(cell.result), str(cell.result)[:120])
+
+        (root / "demo.py").write_text(
+            '"""A demo module for the index.\n\nWHAT IT IS\n  demo only\n\nENTRY POINTS\n'
+            '  demo()\n\nINVARIANTS\n  none\n\nWHERE TO CHANGE\n  here\n"""\n', encoding="utf-8")
+        cell = kernel.run("r = guide('demo'); print(r['kind'], [m['path'] for m in r['modules']])")
+        check("kernel: guide() finds a documented module",
+              "demo.py" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.run("print(guide('nothing-matches-this')['text'])")
+        check("kernel: guide() reports a miss as text",
+              "no documented module" in cell.stdout, (cell.stdout + cell.stderr)[:200])
 
         cell = kernel.run("run('cat a.txt')")
         allowed = str(cell.result)

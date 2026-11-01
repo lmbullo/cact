@@ -73,7 +73,7 @@ PYTHON_TOOL = {
 
 TOOL_RULES = """You act by calling the python tool. The call is executed in a persistent kernel: variables, imports and data persist between calls, and the value of the last expression plus anything printed come back as the tool result.
 
-Use the kernel for everything: read(), write(), edit(), grep(), map() for files and run() for whole programs such as tests, builds and linters.
+Use the kernel for everything: read(), write(), edit(), grep(), map() for files, guide() for a repo that documents its own modules (guide(query) returns the module that owns a topic, with its entry points and where to change it), and run() for whole programs such as tests, builds and linters.
 
 Prefer one large call over many small ones. A single call can loop over files, run several commands, inspect and compute, and print everything you need. Do not spend one call per read or grep.
 

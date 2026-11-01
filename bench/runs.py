@@ -27,8 +27,8 @@ import re
 import sys
 from pathlib import Path
 
-VERBS = ("map", "read", "grep", "write", "edit", "apply", "commit", "run", "diff", "undo",
-         "changes", "final_answer")
+VERBS = ("map", "read", "grep", "guide", "write", "edit", "apply", "commit", "run", "diff",
+         "undo", "changes", "final_answer")
 
 
 def load(state_dir: Path, task_id: str) -> tuple[dict, list[dict]]:
