@@ -41,11 +41,20 @@ Per task, the gap concentrates where the envelope has something to say:
 | `H3_bigcsv` | 3, 4 | 5, 3 | no envelope advantage; both write one program |
 | `H4_refactor` | 4, 4 | 11, 14 | `commit({path: text})` edits sixteen files in one journalled cell |
 
-With a 20s per-task wall budget the same suite still passes 4/4 in both modes, but the
-envelope spends 19 steps to the control's 29. This is the honest claim: **the envelope does
-not make the model smarter, it makes the same work cheaper and more reliable.** Pass/fail
-is already saturated for this model on tasks this small; the measured difference is steps,
-tokens, errors and latency.
+With a 15s per-task wall budget the gap becomes a completion gap:
+
+| mode | pass | steps | tokens | errors | finished |
+|---|---|---|---|---|---|
+| `state` | 4/4 | 13 | 19,677 | 0 | 4/4 (`VERIFIED`/`DONE`) |
+| `bare` | 4/4 | 27 | 78,494 | 5 | 1/4 (three `WALL_LIMIT`) |
+
+The control's workspace was already correct when the wall limit hit on `H1_spec`,
+`H2_bughunt` and `H4_refactor`, so the grader still counts them as passes. A product that
+requires the agent to *finish* inside the budget would score the control 1/4 and the
+envelope 4/4. This is the honest claim: **the envelope does not make the model smarter, it
+makes the same work cheaper, more reliable and finishable under a latency budget.**
+Pass/fail is already saturated for this model; the measured difference is steps, tokens,
+errors and whether the loop closes.
 
 ## What earned its keep, and what did not
 
@@ -77,4 +86,5 @@ Did not earn its keep:
 ## Reproducing the comparison
 
 The per-run summaries are in `bench/traces/hard/` (`state-r*.json`, `bare-r*.json`,
-`*-wall20.json`) and the per-turn journals are `bench/traces/H*.{state,bare}.jsonl`.
+`*-wall15.json`, `*-wall20.json`) and the per-turn journals are
+`bench/traces/H*.{state,bare}.jsonl`.
