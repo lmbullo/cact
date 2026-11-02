@@ -33,7 +33,7 @@ interface, no key needed) and `python3 ../bench/live.py` (a real end-to-end task
 
 ```
   ─ running (1)
-  › t-m3k9a1x2-4f7c1 running  add a retry to the fetch helper        ←
+  › t-m3k9a1x2-4f7c1 running  3 steps · 4210 tok  add a retry to the fetch helper ←
   ─ queue (2)
     t-m3k9b7c4-1a9de queue    write tests for the parser
     t-m3k9d2e8-77b02 queue    audit error handling
@@ -44,9 +44,12 @@ interface, no key needed) and `python3 ../bench/live.py` (a real end-to-end task
 ────────────────────────────────────────────────────────────────
 ```
 
-Every task is one row: its id, its state in a single lowercase word, and the prompt.
-The id is `t-<base36 timestamp>-<5 hex>`, generated once and never reused, so a row
-keeps its label while the board reorders. Rows are grouped under a section header per
+Every task is one row: its id, its state in a single lowercase word, its live
+`steps · tokens` counters when it has any, and the prompt. The counters come from the
+turn events (`Task.progress`), so a running row moves before the final answer arrives;
+a finished row falls back to the final `steps`/`usage` counters. The id is
+`t-<base36 timestamp>-<5 hex>`, generated once and never reused, so a row keeps its
+label while the board reorders. Rows are grouped under a section header per
 state, in the order `running`, `queued`, `done`, `partial`, `failed`, `cancelled`, so
 live work and finished work never share a block. Note that the `queued` state renders
 as the shorter word `queue` in both section headers and rows:
@@ -80,13 +83,15 @@ A task that reaches its step or wall-clock cap but still produces a summary is s
 ## The live run log
 
 `Enter` on an empty prompt opens the selected task's live run log. It shows one row
-per tool call and nothing else — no output, no verb, no counters:
+per tool call, plus one `↺` row when the loop rejected or staged a finish — no output,
+no verb.
 
 ```
-  ● running  add a retry to the fetch helper       esc/enter: back · ctrl-k cancel · 12 events
+  ● running  add a retry to the fetch helper   3 steps · 4210 tok · esc/enter: back · ctrl-k cancel · 12 events
   ▸ 'src/client.tsx'
   ▸ 'bun test'
   ▸ 'src/client.tsx'
+  ↺ [finish] final_answer rejected: the project check still fails
   ● done stop=DONE · 7 steps · 3 cells · errors 0 · 18432ms · 4210 tok  = all tests pass
   ────────────────────────────────────────────────────────────────────────────────
   › task for /home/you/some/project…
@@ -101,9 +106,12 @@ render in gruvbox purple (`#d3869b`), so they stay distinct from the status colo
 around them (green running, yellow queue/partial, red failures).
 
 Turn events — the observation after each call, including the command's stdout and
-stderr — are never rendered at all. The full payload is still written to the event
-journal and still reaches the model; only the TUI drops it. The log keeps up to 1000
-events in memory, seeded from the journal (last 800) when the screen opens.
+stderr — are not rendered, with one exception: when a turn carries a `notice` (a
+rejected or staged `final_answer`, recorded by `bench/agent/tool_loop.py`), the log
+prints its first line and a `(+NL)` count. That is how the reason a finish did not
+take becomes visible. The full payload is still written to the event journal and
+still reaches the model. The log keeps up to 1000 events in memory, seeded from the
+journal (last 800) when the screen opens.
 
 `esc` (with an empty prompt) or `enter` (on an empty prompt) go back to the board;
 `Ctrl-K` cancels the task from either screen.
@@ -319,7 +327,7 @@ expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, prompt, view rendering and check detection (12 tests, 5 files)
+bun test            # tests/: list, log, progress, prompt, view rendering and check detection (13 tests, 6 files)
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on the captured

@@ -14,6 +14,7 @@
  *  stepSelection(ordered, current, d)   move the highlight, clamped
  *  selectedRowIndex(rows, selected)     row index for the highlighted task (-1 when absent)
  *  scrollWindow(rowCount, budget, focus) visible slice {start, size} keeping focus in view
+ *  taskProgress(task)                   live `steps / tokens` label ("" until one is known)
  *
  * INVARIANTS
  *  - Deterministic and side-effect free: same input, same output, no Date.now/Math.random.
@@ -40,6 +41,18 @@ export const STATUS_ORDER: TaskStatus[] = [
 function rank(task: Task): number {
   const index = STATUS_ORDER.indexOf(task.status);
   return index < 0 ? STATUS_ORDER.length : index;
+}
+
+/** `N steps · M tok` for a task: live `progress` first, final counters as a fallback. */
+export function taskProgress(task: Task): string {
+  const steps = task.progress?.steps ?? task.steps;
+  const tokens = task.progress?.tokens ?? task.usage?.total_tokens;
+  return [
+    steps !== undefined ? `${steps} steps` : "",
+    tokens ? `${tokens} tok` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function orderTasks(tasks: Task[]): Task[] {

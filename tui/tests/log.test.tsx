@@ -142,8 +142,20 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(frame).not.toContain("run('pytest')");
   expect(frame).not.toContain("line 199");
 
-  // The final event is a single row: status, counters, and a clipped summary.
+  // A turn carrying a `notice` renders the reason a finish was rejected or staged;
+  // a notice-free turn stays silent (asserted above).
   await push(5, {
+    kind: "turn",
+    turn: 2,
+    data: { notice: "[finish] final_answer rejected: the project check still fails" },
+  });
+  frame = captureCharFrame();
+  const noticeLine = frame.split("\n").find((line) => line.includes("final_answer rejected"))!;
+  expect(noticeLine).toContain("↺");
+  expect(noticeLine).toContain("project check still fails");
+
+  // The final event is a single row: status, counters, and a clipped summary.
+  await push(6, {
     kind: "final",
     text: "DONE: " + "y".repeat(300),
     data: { status: "done", stop: "DONE", steps: 7, calls: 3, wallMs: 1234 },
@@ -157,7 +169,7 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(frame).not.toContain("y".repeat(200));
 
   // An unknown event kind shows one word only: its payload is never dumped.
-  await push(6, { kind: "observation", text: "z".repeat(300), data: { stdout: "w".repeat(300) } });
+  await push(7, { kind: "observation", text: "z".repeat(300), data: { stdout: "w".repeat(300) } });
   frame = captureCharFrame();
   expect(frame).toContain("? observation");
   expect(frame).not.toContain("z".repeat(120));

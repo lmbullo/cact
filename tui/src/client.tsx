@@ -25,10 +25,16 @@
  *    current text; it never "continues" an existing one.
  *  - Events are capped (last 1000) and de-duplicated by `seq`; a snapshot that no longer
  *    contains the open task falls back to the list.
+ *  - A turn event is invisible unless it carries a `notice` (a rejected or staged finish);
+ *    that notice prints as one yellow row, because it is the only explanation on screen.
+ *  - Live progress is `taskProgress(task)`: `Task.progress` from the server's turn handling,
+ *    falling back to the final `steps`/`usage` once a task ends.
  *  - Palette lives in `C`; no ansi() slots, so the host terminal scheme cannot change it.
  *
  * WHERE TO CHANGE
  *  Layout / wording ................. the components above App
+ *  Live steps/tokens ................ taskProgress in list-model.ts, TaskRow and the log header
+ *  A rejected-finish notice ......... EventView's `turn` case
  *  Keys / focus rules ............... the useKeyboard block
  *  Ordering, rows, scrolling ........ list-model.ts
  *  Data contract .................... types.ts
@@ -48,6 +54,7 @@ import {
   orderTasks,
   scrollWindow,
   selectedRowIndex,
+  taskProgress,
   stepSelection,
   taskHandle,
   type ListRow,
@@ -163,9 +170,12 @@ function TaskRow(props: {
   const head = `${selected ? "›" : " "} ${handle} `;
   // Selection is shown with an arrow, not a background highlight.
   const marker = selected ? " ←" : "";
+  // Live counters sit between the status and the prompt, so a running row shows progress.
+  const progress = taskProgress(task);
+  const progressCell = progress ? `${clip(progress, 20).padEnd(20)} ` : "";
   const prompt = clip(
     task.prompt,
-    Math.max(8, width - head.length - meta.word.length - marker.length - 2),
+    Math.max(8, width - head.length - meta.word.length - progressCell.length - marker.length - 2),
   );
   return (
     <box
@@ -179,6 +189,7 @@ function TaskRow(props: {
       <text>
         <span fg={selected ? C.accent : C.faint}>{head}</span>
         <span fg={meta.color}>{meta.word.padEnd(9)}</span>
+        {progressCell ? <span fg={C.faint}>{progressCell}</span> : null}
         <span fg={selected ? C.text : C.dim}>{` ${prompt}`}</span>
         <span fg={selected ? C.accent : C.faint}>{marker}</span>
       </text>
@@ -204,8 +215,18 @@ function EventView({ event, width }: { event: TaskEvent; width: number }) {
     );
   }
 
-  // Tool output is never rendered: the log shows the calls alone.
-  if (kind === "turn") return null;
+  // A turn is normally silent (tool output is never rendered), but the loop records a
+  // `notice` when it rejects or stages a finish: that reason must stay visible.
+  if (kind === "turn") {
+    const notice = (event.data ?? {}).notice;
+    if (typeof notice !== "string" || !notice.trim()) return null;
+    const more = lineCount(notice) > 1 ? ` (+${lineCount(notice) - 1}L)` : "";
+    return (
+      <text fg={C.yellow} attributes={TextAttributes.BOLD}>
+        {clip(`↺ ${oneLine(notice)}${more}`, width)}
+      </text>
+    );
+  }
 
   if (kind === "final") {
     const data = (event.data ?? {}) as Record<string, unknown>;
@@ -748,7 +769,14 @@ export function App({ httpUrl, workspace }: { httpUrl: string; workspace: string
       {logTask
         ? header(
             `● ${logTask.status}  ${clip(logTask.prompt, Math.max(12, width - 30))}`,
-            `esc/enter: back · ctrl-k cancel · ${events.length} events`,
+            [
+              taskProgress(logTask),
+              "esc/enter: back",
+              "ctrl-k cancel",
+              `${events.length} events`,
+            ]
+              .filter(Boolean)
+              .join(" · "),
           )
         : null}
     </box>

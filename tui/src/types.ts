@@ -16,6 +16,8 @@
  *    changing server.ts (producer) and client.tsx (consumer) in the same commit.
  *  - `TaskStatus` is the closed vocabulary the board colours and sections by; the mapping
  *    from stop reason to status lives in tui/python/worker.py, not here.
+ *  - `Task.progress` is the live estimate from turn events; `steps`/`usage` are the final
+ *    counters. The client prefers `progress` until the final event clears it.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
  *  - `CheckSpec` mirrors `bench.agent.checks.CheckSpec`: {name, cmd, cheap, scope?}, where
@@ -43,6 +45,11 @@ export type Task = {
   final?: string;
   error?: string;
   steps?: number;
+  /**
+   * Live counters derived from turn events while a task runs (server.ts), so the board can
+   * show progress before the final event replaces them.
+   */
+  progress?: { steps?: number; tokens?: number };
   calls?: number;
   llmCalls?: number;
   errors?: number;

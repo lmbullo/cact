@@ -25,6 +25,9 @@
  *    tui/python/worker.py.
  *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
+ *  - A `turn` message updates `Task.progress` (turn number, cumulative prompt tokens from
+ *    the cache split) and broadcasts the task, so the board moves while the task runs. The
+ *    `final` message clears `progress` and installs the authoritative steps/usage.
  *  - Port 0 means an OS-chosen port, published in server.json. Two servers for one workspace
  *    would race on those files, so launcher.ts always reuses a healthy one.
  *  - detectChecks() runs when a task starts, not once at boot, so a script an earlier
@@ -40,7 +43,7 @@
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask
- *  Worker message handling ............... handleWorkerLine
+ *  Worker message handling ............... handleWorkerLine (live progress in the `turn` case)
  *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
  *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
  *  Verification plan detection .......... detect-checks.ts, and ServerInfo.checks
@@ -284,13 +287,31 @@ function handleWorkerLine(task: Task, raw: string): void {
         code: capString(message.code, 12000) as string,
       });
       break;
-    case "turn":
+    case "turn": {
+      const data = capValue(message.data) as Record<string, unknown>;
+      // Live progress: the final event carries the authoritative counters, but a running
+      // task would otherwise show nothing until it ends. Turn events already carry the
+      // turn number and the prompt cache split, so derive `steps` and `tokens` from them.
+      const cache = (data.cache ?? {}) as Record<string, unknown>;
+      const usage = (data.usage ?? {}) as Record<string, unknown>;
+      const turn = Number(message.turn ?? data.turn ?? 0);
+      const tokens =
+        Number(usage.total_tokens ?? 0) ||
+        Number(cache.hit ?? 0) + Number(cache.miss ?? 0);
+      const progress = task.progress ?? {};
+      task.progress = {
+        steps: turn > 0 ? turn : progress.steps,
+        tokens: (progress.tokens ?? 0) + (Number.isFinite(tokens) ? tokens : 0),
+      };
+      saveTask(task);
+      broadcast({ type: "task", task });
       appendEvent(task, {
         kind: "turn",
         turn: message.turn,
-        data: capValue(message.data),
+        data,
       });
       break;
+    }
     case "log":
       appendEvent(task, { kind: "log", text: capString(message.text, 4000) as string });
       break;
@@ -306,6 +327,8 @@ function handleWorkerLine(task: Task, raw: string): void {
       task.errors = message.errors;
       task.usage = message.usage;
       task.wallMs = message.wallMs;
+      // The final counters replace the live estimate, so the board never prefers stale numbers.
+      task.progress = undefined;
       task.final = capString(message.final ?? "", 64000) as string;
       appendEvent(task, {
         kind: "final",
