@@ -140,6 +140,29 @@ def _disarm():
     signal.setitimer(signal.ITIMER_REAL, 0)
 
 ns = {"__name__": "__agent__", "_CELL_EXTEND": _extend}
+
+
+class _Result(dict):
+    # Tool results are dicts, but a model that writes `r.stdout` or `read(f)[:n]` is making
+    # the natural mistake. Support both shapes without changing the dict contract: a slice
+    # pages text, `content` aliases `text`, and attribute access maps to a key.
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            for field in ("raw", "text", "stdout"):
+                if isinstance(self.get(field), str):
+                    return self[field][key]
+        if key == "content" and "text" in self:
+            key = "text"
+        return super().__getitem__(key)
+
+
+ns["_Result"] = _Result
 _prelude = os.environ.get("KERNEL_PRELUDE")
 if _prelude:
     exec(_prelude, ns)
@@ -655,6 +678,8 @@ def read(path, offset=1, limit=0, raw=False):
         result["raw"] = chunk
     else:
         result["text"] = "\n".join(f"{n:>6}| {lines[n - 1]}" for n in range(start, stop + 1))
+    result = _Result(result)
+    result["content"] = result["text"]
     return result
 
 
@@ -1093,13 +1118,13 @@ def run(command, timeout=60, cwd=None):
             ok = bool(cached.get("ok", True))
         else:
             text, ok = str(cached), True
-        return {"ok": True, "kind": "check_cached", "command": str(command),
+        return _Result({"ok": True, "kind": "check_cached", "command": str(command),
                 "result": text, "exit_code": 0 if ok else 1, "stdout": text, "stderr": "",
-                "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."}
+                "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."})
     blocked = _mutating_command(command)
     if blocked:
         use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "write(), edit(), apply() or commit()")
-        return {
+        return _Result({
             "ok": False,
             "kind": "wrong_call",
             "command": str(command),
@@ -1113,7 +1138,7 @@ def run(command, timeout=60, cwd=None):
             "exit_code": None,
             "stdout": "",
             "stderr": "",
-        }
+        })
     extend = globals().get("_CELL_EXTEND")
     if extend is not None:
         extend(float(timeout) + 20)
@@ -1131,14 +1156,14 @@ def run(command, timeout=60, cwd=None):
             _GATE_IN_RUN -= 1
     except _SpawnBlocked as exc:
         use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "write(), edit(), apply() or commit()")
-        return {"ok": False, "kind": "wrong_call", "command": str(command),
+        return _Result({"ok": False, "kind": "wrong_call", "command": str(command),
                 "blocked": exc.blocked,
                 "error": {"code": "mutation_via_run", "message": str(exc), "use": use},
-                "exit_code": None, "stdout": "", "stderr": ""}
+                "exit_code": None, "stdout": "", "stderr": ""})
     except OSError as exc:
-        return {"ok": False, "kind": "spawn_error", "command": str(command),
+        return _Result({"ok": False, "kind": "spawn_error", "command": str(command),
                 "error": {"code": "spawn_failed", "message": str(exc)},
-                "exit_code": None, "stdout": "", "stderr": ""}
+                "exit_code": None, "stdout": "", "stderr": ""})
     try:
         out, err = proc.communicate(timeout=float(timeout))
     except _rsp.TimeoutExpired:
@@ -1150,11 +1175,11 @@ def run(command, timeout=60, cwd=None):
             out, err = proc.communicate(timeout=10)
         except Exception:
             out, err = "", ""
-        return {"ok": True, "kind": "timeout", "command": str(command), "timeout_s": float(timeout),
+        return _Result({"ok": True, "kind": "timeout", "command": str(command), "timeout_s": float(timeout),
                 "exit_code": None, "stdout": out or "", "stderr": err or "",
-                "note": "the command hit its own timeout and its process group was killed; the kernel is intact"}
-    return {"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
-            "stdout": out or "", "stderr": err or ""}
+                "note": "the command hit its own timeout and its process group was killed; the kernel is intact"})
+    return _Result({"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
+            "stdout": out or "", "stderr": err or ""})
 """
 
 # --- parent side: supervision, protocol and the Cell the loops consume --------------------
@@ -1329,7 +1354,7 @@ class Kernel:
             self.start()
         assert self.proc is not None and self.proc.stdin and self.proc.stdout
         if len(code) > MAX_CODE:
-            return Cell("", "kernel: code exceeds 20000 characters", None, None, 0)
+            return Cell("", "kernel: code exceeds 20000 characters; split it into smaller cells", None, None, 0)
 
         started = time.perf_counter()
         try:

@@ -128,6 +128,9 @@ bench/run.py                        tui/bin/code
   a private `_HEADERS` namespace and exposes one verb, `guide(query|path)`, so an agent can ask
   which module owns a topic from inside a cell. It only answers where the repo documents
   itself; on a task workspace with no headers it returns a miss and says so.
+- **Tool results are dicts that also answer attributes:** `run()` returns `result['stdout']`
+  (or `result.stdout`), and `read(raw=True)[:n]` / `read(...)['content']` work, so a natural
+  model mistake does not cost a cell. The canonical keys are still the contract.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —
   including turns the `[session state]` fold removed — and returns snippets plus the

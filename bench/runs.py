@@ -7,8 +7,10 @@ WHAT IT IS
 
 ENTRY POINTS
   python3 bench/runs.py <state-dir> <task-id>
+  python3 bench/runs.py --recent [N]          every workspace's latest tasks, newest first
   load(state_dir, task_id) -> (task, turns)
   summarize(state_dir, task_id) -> dict
+  recent(state_root, limit) -> list[dict]
 
 INVARIANTS
   - Read-only: it never writes into the state dir.
@@ -27,8 +29,8 @@ import re
 import sys
 from pathlib import Path
 
-VERBS = ("map", "read", "grep", "guide", "write", "edit", "apply", "commit", "run", "diff",
-         "undo", "changes", "final_answer")
+VERBS = ("map", "read", "grep", "guide", "recall", "write", "edit", "apply", "commit", "run",
+         "diff", "undo", "changes", "final_answer")
 
 
 def load(state_dir: Path, task_id: str) -> tuple[dict, list[dict]]:
@@ -68,7 +70,69 @@ def summarize(state_dir: Path, task_id: str) -> dict:
     }
 
 
+def _state_root() -> Path:
+    import os
+    root = os.environ.get("CODE_TUI_STATE_ROOT")
+    if root:
+        return Path(root)
+    xdg = os.environ.get("XDG_STATE_HOME")
+    return Path(xdg) / "code-tui" if xdg else Path.home() / ".local" / "state" / "code-tui"
+
+
+def _workspace_name(state_dir: Path) -> str:
+    info = state_dir / "server.json"
+    try:
+        return str(json.loads(info.read_text()).get("workspace") or state_dir.name)
+    except (OSError, json.JSONDecodeError):
+        return state_dir.name
+
+
+def recent(state_root: Path | None = None, limit: int = 20) -> list[dict]:
+    """Latest tasks across every workspace under one state root, newest first."""
+    root = state_root or _state_root()
+    rows = []
+    for path in root.glob("workspaces/*/tasks/*.json"):
+        try:
+            task = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        state = path.parent.parent
+        steps = task.get("steps")
+        if steps is None:
+            steps = 0
+            try:
+                for line in (state / "events" / f"{task.get('id')}.jsonl").read_text().splitlines():
+                    try:
+                        if json.loads(line).get("kind") == "turn":
+                            steps += 1
+                    except json.JSONDecodeError:
+                        continue
+            except OSError:
+                pass
+        rows.append({
+            "workspace": _workspace_name(state),
+            "state": state.name,
+            "task": task,
+            "steps": steps,
+            "created": int(task.get("createdAt") or 0),
+        })
+    rows.sort(key=lambda row: row["created"], reverse=True)
+    return rows[:max(1, int(limit))]
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--recent":
+        limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
+        import time
+        for row in recent(limit=limit):
+            task = row["task"]
+            usage = task.get("usage") or {}
+            stamp = time.strftime("%m-%d %H:%M", time.localtime(row["created"] / 1000))
+            prompt = (task.get("prompt") or "").replace("\n", " ")[:58]
+            print(f"{stamp}  {row['workspace']:<34}  {task.get('id', ''):<20} "
+                  f"{str(task.get('status')):<9} {str(task.get('stop')):<10} "
+                  f"{row['steps']:>3} steps {usage.get('total_tokens', 0):>9} tok  {prompt}")
+        return 0
     state_dir = Path(sys.argv[1])
     for task_id in sys.argv[2:]:
         row = summarize(state_dir, task_id)

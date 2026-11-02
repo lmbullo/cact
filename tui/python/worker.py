@@ -166,6 +166,7 @@ class EventTrace:
             "runs": record.get("runs") or [],
             "cache": record.get("cache") or {},
             "check": record.get("check"),
+            "notice": record.get("notice"),
         }
         self._emit_event({"kind": "turn", "turn": int(record.get("turn") or 0), "data": data})
 

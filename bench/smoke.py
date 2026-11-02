@@ -218,6 +218,14 @@ def main() -> int:
         check("kernel: run() refuses a working-tree overwrite",
               "wrong_call" in refusal and "git checkout" in refusal, refusal[:200])
 
+        cell = kernel.run("r=run('echo shape'); print(r.stdout.strip(), r['stdout'].strip())")
+        check("kernel: run() answers both r.stdout and r['stdout']",
+              "shape shape" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.run("print(read('a.txt', raw=True)[:3])")
+        check("kernel: read(raw=True) can be sliced", "alp" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.run("print(read('a.txt')['content'][:20])")
+        check("kernel: read()['content'] is the delivered text", "alpha" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+
         cell = kernel.run("print(run('echo \"a > b\"')['stdout'].strip())")
         check("kernel: a quoted > is an argument, not a redirect",
               "a > b" in cell.stdout and "wrong_call" not in str(cell.result), (cell.stdout + cell.stderr)[:200])
