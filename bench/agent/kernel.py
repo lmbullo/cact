@@ -678,9 +678,7 @@ def read(path, offset=1, limit=0, raw=False):
         result["raw"] = chunk
     else:
         result["text"] = "\n".join(f"{n:>6}| {lines[n - 1]}" for n in range(start, stop + 1))
-    result = _Result(result)
-    result["content"] = result["text"]
-    return result
+    return _Result(result)
 
 
 def grep(pattern, path=".", max_results=50, regex=False):
