@@ -30,7 +30,7 @@ index is the `guide()` verb.
 
 | File | Why |
 |---|---|
-| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `guide`, `map`, `write`, `edit`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `final_answer`) |
+| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `guide`, `map`, `write`, `edit`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `recall`, `final_answer`, `emit`) |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, with output digests and context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
@@ -51,8 +51,8 @@ cact/
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
 │   ├── live.py              run ONE task through tui/python/worker.py and journal it
 │   ├── smoke.py             offline contract check: imports, kernel prelude, helpers, checks
-│   ├── map.py               contract CLI: the header index per module (`--query`, `--check`)
-│   ├── runs.py              summarise a task journal from a TUI state dir
+│   ├── map.py               contract CLI: the header index per module (`--query`, `--module`, `--json`, `--check`)
+│   ├── runs.py              summarise a task journal; `--recent` spans every workspace
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
 │   ├── hard_fixtures/       the H1-H4 workspaces; the H3 CSV is generated and gitignored
@@ -131,6 +131,11 @@ bench/run.py                        tui/bin/code
 - **Tool results are dicts that also answer attributes:** `run()` returns `result['stdout']`
   (or `result.stdout`), and `read(raw=True)[:n]` / `read(...)['content']` work, so a natural
   model mistake does not cost a cell. The canonical keys are still the contract.
+- **A read is a ledger, not a firehose:** `read(limit=0)` returns the whole file only while
+  it fits 400 lines / 9 KB; past that the result carries `next.offset`. `Cell.reads` records
+  the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
+  `[read] path ranges/total`. Coverage is guidance, not a finish gate: reads through
+  `run()`/`open()` are equally valid and are not tracked.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —
   including turns the `[session state]` fold removed — and returns snippets plus the
@@ -144,6 +149,8 @@ bench/run.py                        tui/bin/code
   `edit()`, `apply()` and `commit()` all funnel through the same `_commit`, so a multi-file
   `apply()`/`commit()` is one diff and one `undo()`.
 - **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`.
+  Results are cached until the next mutating cell: a matching `run()` is answered from
+  `check_cache` (`kind: "check_cached"`) instead of spawning the same command twice.
   The whole plan is the goal (`final_answer` is rejected until it passes); the `cheap`
   subset re-runs after a mutating cell (at most once every 20s) and appears as the
   `[check]` line of the next state card. A spec may carry a `scope` list of path prefixes
@@ -154,7 +161,10 @@ bench/run.py                        tui/bin/code
   `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed: the journal covers the tree, not scratch.
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
   `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
-  persistent state of its own and reconnects every second.
+  persistent state of its own and reconnects every second. A `turn` message updates
+  `Task.progress` (turn number plus prompt tokens), so a board row moves before the final
+  answer arrives; a turn that rejected or staged a finish carries a `notice`, rendered as
+  one `↺` row in the run log.
 
 ---
 
@@ -168,7 +178,7 @@ are three loops; `--mode bare` is the hard suite's control, not a fourth impleme
 | `repl` | `ReplLoop` | one fenced python block per reply, run as a kernel cell | `repl.REPL_RULES` / `BARE_RULES` |
 | `tool` | `ToolLoop` | one function: `python` | `tool_loop.TOOL_RULES` |
 | `state` | `StateLoop` | same as `tool`, observations rendered as state cards | `state_loop.STATE_RULES` |
-| `bare` | `ToolLoop` with `goal=None`, no file helpers and no read gate (benchmark control) | one function: `python` | `run.py::BARE_TOOL_RULES` |
+| `bare` | `ToolLoop` with `goal=None` and no file helpers (benchmark control) | one function: `python` | `run.py::BARE_TOOL_RULES` |
 
 All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult`, and
 the `Client`. `loop.py` now holds only those shared types, after the JSON tool-calling
@@ -197,6 +207,8 @@ failure lines, and distinguishes `unrunnable` (broken check) from `failed` (real
 ```bash
 python3 bench/map.py                   # the contract index: module -> what it is
 python3 bench/map.py --query checks    # which module owns "checks", with entry points
+python3 bench/map.py --module bench/agent/check.py   # one module's header whole
+python3 bench/map.py --json --query checks           # the same rows as JSON
 python3 bench/map.py --check           # gate: every module header has its four sections
 
 export DEEPSEEK_API_KEY=...            # or --key
@@ -210,10 +222,11 @@ python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-l
 Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and rewrites
 `bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` of each run
 (`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|hard`,
-`--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--obs-chars`,
-`--map off|tool|inline`, `--context map|full`, `--context-chars`, `--allow-run off|on`,
-`--cell-timeout`, `--health on|off`, `--repl-rules|--repl-stop|--repl-history|--repl-lib`,
-`--model`, `--effort low|high|max|none`, `--temperature`, `--seed`, `--no-cache`.
+`--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--read-chars`,
+`--obs-chars`, `--map off|tool|inline`, `--context map|full`, `--context-chars`,
+`--allow-run off|on`, `--cell-timeout`, `--health on|off`,
+`--repl-rules|--repl-stop|--repl-history|--repl-lib`, `--model`, `--effort low|high|max|none`,
+`--temperature`, `--seed`, `--no-cache`.
 
 ### Workspaces and live runs
 
@@ -224,6 +237,7 @@ python3 -m bench.ws diff  DST          # added/modified/deleted vs the manifest
 python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "make typecheck pass" \
         --check "bun run typecheck" --legacy r3
 python3 bench/runs.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
+python3 bench/runs.py --recent 10      # newest tasks across every workspace
 ```
 
 `live.py` is the honest end-to-end test: it clones `bench/ws/tui-base`, drives
@@ -250,20 +264,24 @@ imports `bench.agent` from this repo, so the checkout path matters.
 
 1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
    holds the answer (`STAGED`): the output is shown, and the next reply with no tool call
-   accepts `v` after the goal and read gates. An explicit `final_answer` in a silent cell
-   finishes immediately. When a goal check exists, no answer is accepted until the check
-   passes. `run.py` grades `result.final`; a prose reply with no tool call is the summary.
+   accepts `v` after the goal check (when there is one). An explicit `final_answer` in a
+   silent cell finishes immediately. When a goal check exists, no answer is accepted until
+   the check passes. `run.py` grades `result.final`; a prose reply with no tool call is the
+   summary.
 2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
    read-only git work as written (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`).
    Shell verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
-   `git checkout/reset/apply/...`, `>` redirection) are refused with `kind: "wrong_call"`
-   and a `use` hint, because they would bypass the journal and make `diff()`/`undo()` lie.
-   `git add`, `commit`, `push`, `fetch`, `init` and `clone` are allowed: they do not
-   overwrite working-tree content. Mutations whose targets are absolute paths under a
-   scratch root (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed; the journal only
-   promises the tree. A program can still write files;
-   the journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT`
-   and the RUN_NOTE text honest.
+   `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument, not a
+   redirect) are refused with `kind: "wrong_call"` and a `use` hint, because they would
+   bypass the journal and make `diff()`/`undo()` lie. `git add`, `commit`, `push`, `fetch`,
+   `init` and `clone` are allowed: they do not overwrite working-tree content. Mutations
+   whose targets are absolute paths under a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`,
+   `$TMPDIR`) are allowed; the journal only promises the tree. Direct process spawning
+   (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) goes through
+   the same classifier, so `Popen(["rm", ...])` is refused exactly like `rm`; allowed spawns
+   are listed in `Cell.runs`. A program can still write files; the journal is a
+   typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and the RUN_NOTE
+   text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without
    `force=True`); **`edit()` reports ambiguity instead of guessing**; `apply(<unified diff>)`
    and `commit({path: text})` write several files in one cell. All of them go through the

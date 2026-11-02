@@ -148,8 +148,9 @@ workspaces/<sha256-of-workspace, first 16 hex>/
   tasks/<id>.json      task metadata
   events/<id>.jsonl    append-only event journal
   prompts/<id>.txt     original prompt
-  history.jsonl        last 50 tasks (prompt, summary, changed files), prepended to the next
-                       state-mode task as [workspace history]
+  history.jsonl        the last 50 tasks are kept (prompt, summary, changed files); the
+                       newest 4 are prepended to the next state-mode task as
+                       [workspace history]
 ```
 
 The workspace is the directory where you ran `code`, resolved with `path.resolve` (the
@@ -162,7 +163,8 @@ cd ~/code/tui
 bun install
 ```
 
-Put the API key in the config file used by both the launcher and server:
+Put the API key in the config file used by both the launcher and server
+(`.env` in the same directory works too):
 
 ```bash
 mkdir -p ~/.config/code-tui
@@ -214,7 +216,7 @@ Close the TUI with `Ctrl+Q` (or `Ctrl+C`). The server and tasks keep running. Op
 | `Ctrl+R` | Reconnect the WebSocket |
 | `Ctrl+Q` / `Ctrl+C` | Close the TUI; leave the server running |
 | `Escape` | Clear the prompt, then the highlight |
-| `q` / `Enter` / `Escape` (log) | Leave the live run log and return to the board |
+| `Enter` / `Escape` (log) | Leave the live run log when the prompt is empty; otherwise they act on the prompt |
 
 ## Configuration
 
@@ -314,11 +316,14 @@ and `run()` is not injected at all. Test-repair tasks will then be much harder.
 `run()` executes one bash command (tests, builds, servers, read-only git). Reads,
 searches, tests and builds work as written (`cat`, `sed -n`, `rg`, `git diff`,
 `python3 -c`); only mutating shell verbs (`tee`, `cp`, `mv`, `rm`, `sed -i`,
-`git apply/...`, `>` redirection) are refused as `kind: "wrong_call"` with the helper to
-use instead. The kernel prelude provides `read()`, `grep()`, `map()`, `write()`, `edit()`,
-`apply()` and `commit()`, journalled together so `changes()`/`diff()`/`undo()` cover
-multi-file edits. A program launched through `run()` can still write files: the journal
-is a typed-helper contract, not a sandbox.
+`git apply/...`, `>` redirection; a quoted `>` is an argument) are refused as
+`kind: "wrong_call"` with the helper to use instead. Direct process spawning
+(`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
+the same classifier, so a program cannot shell out around the gate. The kernel prelude
+provides `read()`, `grep()`, `map()`, `write()`, `edit()`, `apply()` and `commit()`,
+journalled together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
+launched through `run()` can still write files: the journal is a typed-helper contract,
+not a sandbox.
 
 The server binds to `127.0.0.1` with a random port. It has no authentication; do not
 expose the port.
@@ -332,6 +337,12 @@ bun test            # tests/: list, log, progress, prompt, view rendering and ch
 
 The rendering tests mount `<App>` against a fake Bun server and assert on the captured
 character frames, so they exercise the same rows the terminal shows.
+
+A read-only cross-workspace view of the newest tasks (no server or key needed):
+
+```bash
+python3 ../bench/runs.py --recent 10
+```
 
 ## Troubleshooting
 

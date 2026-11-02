@@ -4,7 +4,7 @@
 within one task of every other, including a bare loop. They cannot tell you whether the
 kernel's envelope (state cards, journal, check plan, batched commits) is worth its
 complexity. The `hard` suite exists to answer that question, and `--mode bare` is the
-control: one `python` tool, no helpers, no check plan, no read gate.
+control: one `python` tool, no helpers, no check plan.
 
 ## The suite
 
@@ -86,7 +86,8 @@ Did not earn its keep:
   verbs that mutate the workspace (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply`, `>`),
   because those would make `diff()`/`undo()` lie. Mutations targeting a scratch root
   (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed, so a temp build
-  (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. Cell
+  (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. The same classifier gates
+  direct process spawning, so a program cannot route around it with `subprocess`. Cell
   errors on the edge suite fell from 8 to 0.
 - **Read-coverage gating at finish.** Removed after the 142-turn docs run hit five `UNREAD`
   rejections and the 83-turn guide run never engaged the gate at all: it only saw `read()`,

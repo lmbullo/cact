@@ -4,7 +4,8 @@ Orientation for coding agents. The human owner does not read this code; you do. 
 file first, then run `python3 bench/map.py`: it parses the header of every source module
 (WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE) and prints which module owns what.
 `python3 bench/map.py --query <topic>` answers "where do I change this?"; `--module <path>`
-prints one module whole. Inside a kernel cell the same index is the `guide()` verb.
+prints one module whole and `--json` emits the same rows for a program. Inside a kernel cell
+the same index is the `guide()` verb.
 `README.md` is the full prose reference; this file is the short version.
 
 ## What this repo is
@@ -40,16 +41,20 @@ inside `tui/`.
 
 1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
    holds the answer (`STAGED`); the next reply with no tool call accepts `v` after the goal
-   and read gates. With a goal check, no answer is accepted until the check passes. `run.py`
-   grades `result.final`; a prose reply with no tool call is the summary.
+   check (when there is one). With a goal check, no answer is accepted until the check
+   passes. `run.py` grades `result.final`; a prose reply with no tool call is the summary.
 2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
    read-only git work (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`). Shell verbs
    that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
-   `>` redirection) are refused by `_mutating_command` as `kind: "wrong_call"` with a `use`
-   hint, because they bypass the journal. `git add/commit/push/fetch/init/clone` are allowed,
-   as is mutating a scratch path (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`), which the
-   journal never covered. A program can still write files; the journal is a
-   typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and RUN_NOTE honest.
+   `>` redirection; a quoted `>` is an argument) are refused by `_mutating_command` as
+   `kind: "wrong_call"` with a `use` hint, because they bypass the journal.
+   `git add/commit/push/fetch/init/clone` are allowed, as is mutating a scratch path
+   (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`), which the journal never covered. Direct
+   process spawning (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`,
+   `os.spawn`) runs through the same classifier (`_audit_spawn`), so it cannot route around
+   the gate; allowed spawns are listed in `Cell.runs`. A program can still write files; the
+   journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and
+   RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
    **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and
    `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
@@ -98,7 +103,8 @@ inside `tui/`.
 python3 bench/map.py --check               # every module header has its four sections
 python3 bench/map.py                       # the map: module -> what it is
 python3 bench/smoke.py                     # offline contract check: imports, kernel prelude,
-                                           # run() allow + refusal, apply/commit,
+                                           # run() allow + refusal and the spawn gate,
+                                           # apply/commit, recall across a restart,
                                            # envelopes, reply parsing, check parsing,
                                            # the header index and the guide() verb
 python3 -m compileall -q bench tui/python  # syntax

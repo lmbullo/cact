@@ -18,7 +18,7 @@ ENTRY POINTS
 INVARIANTS
   - `final_answer` in a cell that printed is *staged* (STAGED): the output is shown and the
     answer is held. A next reply with no tool call accepts the staged answer (after the goal
-    and read gates), so output is never lost and no extra empty cell is required.
+    check, when there is one), so output is never lost and no extra empty cell is required.
   - With a goal, finishing before the check passes is rejected (GOAL_UNMET).
     `goal_stops=True` ends the run itself once a mutating cell passes the goal (VERIFIED).
   - `health` is an optional callable built from the plan's `cheap` specs (worker.py uses
