@@ -6,10 +6,12 @@ WHAT IT IS
        DRIVER       loop: one JSON line per request on stdin -> either exec() a Python cell
                     or dispatch one typed verb call in the namespace that survives between
                     requests -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects read/grep(search)/guide/map/write/edit/splice/changes/diff/undo/
-                    recall/ verbs into that namespace and journals every mutation (snapshot
-                    at start, tree diff after each cell). `guide()` is headers.py, shipped as
-                    source and exec'd into a private `_HEADERS` namespace (see HEADERS_SOURCE).
+       PRELUDE      injects the typed verbs from verbs.VERBS (read/search/outline/edit/
+                    edit_many/splice/write/apply/commit/git/changes/diff/undo/help) plus
+                    the python helpers guide/map/grep/recall/final_answer/emit, and
+                    journals every mutation (snapshot at start, tree diff after each cell).
+                    `guide()` is headers.py, shipped as source and exec'd into a private
+                    `_HEADERS` namespace (see HEADERS_SOURCE).
        RUN_PRELUDE  injects exec_argv() (the typed `exec` tool) and run() (the python shell
                     escape hatch), behind the file-verb protocol check.
   2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
@@ -35,11 +37,10 @@ ENTRY POINTS
         mutated, changed, deltas, delta, timeout, reads, tool, failed
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor
-  Inside the kernel namespace: read() (a path or a list of paths), grep() (the typed
-        `search` tool), guide(), map(), write(), edit(), splice(), apply(), commit(),
-        changes(), diff(), undo(), recall(), exec_argv() (the typed `exec` tool),
-        run() (the python shell helper, when allow_run), verbs()/help(), final_answer(),
-        emit()
+  Inside the kernel namespace: the typed verbs in verbs.VERBS (read/search/outline/
+        edit/edit_many/splice/write/apply/commit/git/changes/diff/undo/help), the python
+        helpers guide()/map()/grep()/recall()/verbs(), exec_argv() (the typed `exec` tool),
+        run() (the python shell helper, when allow_run), final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.deltas` / `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish
   protocol).

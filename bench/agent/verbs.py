@@ -7,7 +7,8 @@ WHAT IT IS
   typed tool (`typed`, default True) or a python-only helper. `tools.py` builds the provider
   specs from the typed entries; `kernel.py` ships the whole dict to the child as KERNEL_VERBS
   so `help()`/`verbs()` and the driver resolve the same names. Adding a verb here,
-  implementing the function in kernel.PRELUDE, and adding a smoke call is the whole job.
+  implementing the function in kernel.PRELUDE, adding a smoke call, and mentioning it in
+  the rules text is the whole job.
 
 ENTRY POINTS
   VERBS          name -> {function, summary, schema, mutates, typed?, requires_run?}

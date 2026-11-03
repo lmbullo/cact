@@ -82,13 +82,13 @@ Earned:
 Did not earn its keep:
 
 - **The shell-verb wall.** Refusing `cat`/`grep`/`sed` while allowing `open().read()` was
-  incoherent. `run()` now allows reads, searches, tests and read-only git, and refuses only
-  verbs that mutate the workspace (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply`, `>`),
-  because those would make `diff()`/`undo()` lie. Mutations targeting a scratch root
-  (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed, so a temp build
-  (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. The same classifier gates
-  direct process spawning, so a program cannot route around it with `subprocess`. Cell
-  errors on the edge suite fell from 8 to 0.
+  incoherent. `exec(argv)` and `run()` now allow reads, searches, tests and read-only git,
+  and refuse only programs/verbs that mutate the workspace (`tee`, `cp`, `mv`, `rm`,
+  `sed -i`, `git apply`, `>`), because those would make `diff()`/`undo()` lie. Mutations
+  targeting a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed, so a
+  temp build (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. The same
+  classifier gates direct process spawning, so a program cannot route around it with
+  `subprocess`. Cell errors on the edge suite fell from 8 to 0.
 - **Read-coverage gating at finish.** Removed after the 142-turn docs run hit five `UNREAD`
   rejections and the 83-turn guide run never engaged the gate at all: it only saw `read()`,
   while the model read through `run("sed ...")` and `Path.read_text()`. A partial `read()`

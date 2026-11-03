@@ -2,8 +2,8 @@
 `--mode state`), and the default in config.build.
 
 WHAT IT IS
-  Same action space as ToolLoop (one `python` tool), but a cell's result is rendered as a
-  state card instead of a transcript:
+  Same action space as ToolLoop (the typed verbs plus the `python` escape hatch), but a
+  cell's result is rendered as a state card instead of a transcript:
 
     [state]  turn, elapsed, prompt tokens, and the files this cell changed
     [tool]   the typed tool that ran, when the call was not a python cell

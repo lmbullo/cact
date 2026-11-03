@@ -26,7 +26,7 @@ index is the `guide()` verb.
 
 ---
 
-## Read these five files first
+## Read these first
 
 | File | Why |
 |---|---|
@@ -64,10 +64,12 @@ cact/
 │   ├── .tmp/, .cache/       generated, gitignored (per-run workspaces, LLM response cache)
 │   └── agent/
 │       ├── kernel.py        subprocess driver (DRIVER, PRELUDE, RUN_PRELUDE) + Kernel + Cell
+│       ├── verbs.py         typed verb registry: schema, summary, mutates, function
+│       ├── tools.py         TYPE_TOOLS generated from verbs.VERBS for the provider
 │       ├── llm.py           DeepSeek chat client, retries, on-disk response cache
 │       ├── loop.py          shared types only: Budget, RunResult, usage accounting
 │       ├── repl.py          ReplLoop = ToolLoop + fenced python blocks; observations, RUN_NOTE
-│       ├── tool_loop.py     ToolLoop (a single `python` tool), goal checks, stop reasons
+│       ├── tool_loop.py     ToolLoop (typed verbs + the `python` escape hatch), goal checks, stop reasons
 │       ├── state_loop.py    StateLoop = ToolLoop + state cards, read coverage, fold compaction
 │       ├── reply.py         parse model text into an Action (markup repair, fences, ANSWER:)
 │       ├── check.py         run_check(): runs tsc/pytest/bun test, extracts failures into a Check
@@ -105,10 +107,10 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: read (path or list)/outline/search (grep)/guide/map/write/
-          │           edit/edit_many/splice/apply/commit, changes/diff/undo, recall,
-          │           verbs()/help(), final_answer, emit
-          └─ RUN_PRELUDE: exec (argv, no shell), git (typed), + run() (python shell)
+          ├─ PRELUDE: the typed verbs in verbs.VERBS (read/search/outline/edit/
+          │           edit_many/splice/write/apply/commit/git/changes/diff/undo/help),
+          │           plus guide/map/recall/final_answer/emit
+          └─ RUN_PRELUDE: exec (argv, no shell) + run() (python shell)
                   │
                   ▼
               the workspace
@@ -191,13 +193,13 @@ are three loops; `--mode bare` is the hard suite's control, not a fourth impleme
 | mode | Loop | Action space | Rules constant |
 |---|---|---|---|
 | `repl` | `ReplLoop` | one fenced python block per reply, run as a kernel cell | `repl.REPL_RULES` / `BARE_RULES` |
-| `tool` | `ToolLoop` | one function: `python` | `tool_loop.TOOL_RULES` |
+| `tool` | `ToolLoop` | typed verbs generated from `verbs.VERBS`, plus `python` | `tool_loop.TOOL_RULES` |
 | `state` | `StateLoop` | same as `tool`, observations rendered as state cards | `state_loop.STATE_RULES` |
 | `bare` | `ToolLoop` with `goal=None` and no file helpers (benchmark control) | one function: `python` | `run.py::BARE_TOOL_RULES` |
 
 All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult`, and
-the `Client`. `loop.py` now holds only those shared types, after the JSON tool-calling
-`AgentLoop` and its `tools.py` registry were removed.
+the `Client`. `loop.py` holds only those shared types: the former JSON tool-calling
+`AgentLoop` is gone, and `tools.py` now builds the provider specs from `verbs.VERBS`.
 
 `ToolLoop.run` is the turn machine. `StateLoop` extends it with state cards; `ReplLoop`
 extends it with fenced-block reply parsing and overrides only `_reply` (plus the transcript
@@ -348,7 +350,7 @@ imports `bench.agent` from this repo, so the checkout path matters.
 | Change | Touch |
 |---|---|
 | The header index, the map CLI or the `guide()` verb | `bench/agent/headers.py` (parsing, ranking, rendering), `bench/map.py` (flags), `kernel.PRELUDE` (`guide` is a one-line wrapper over `_HEADERS["guide"]`) |
-| What the agent can do (new file/exec/typed verb) | `bench/agent/verbs.py` (schema + summary + function), `kernel.PRELUDE` or `RUN_PRELUDE` (implementation), `bench/smoke.py` (a `Kernel.call` case). The tool specs, `help()` and the prompt catalog are generated from the registry; do not add a second hand-written list. |
+| What the agent can do (new file/exec/typed verb) | `bench/agent/verbs.py` (schema + summary + function), `kernel.PRELUDE` or `RUN_PRELUDE` (implementation), `bench/smoke.py` (a `Kernel.call` case), and the rules text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`. The tool specs and `help()` are generated from the registry; the prose rules are the one hand-written catalog. |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run`; a different reply dialect overrides `_reply` (see `repl.ReplLoop`) |
 | A new benchmark task | `tasks.py` (read/mutation) or `edge.py` (edge), then a run to record the trace |

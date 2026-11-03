@@ -36,8 +36,9 @@ acceptance signal. That makes these properties part of the architecture, not sty
   failed check is a repair instruction, not a question for a human. There are no interactive
   prompts in production (`worker.py` is unattended).
 - **Buildable by other agents.** One fact lives in one place. Adding a verb is: registry entry
-  in `verbs.py`, function in `kernel.PRELUDE`, smoke call. Do not add a second hand-written
-  catalog in a prompt or a README. A new module gets a header before it gets code.
+  in `verbs.py`, function in `kernel.PRELUDE`, smoke call, and a mention in the rules text (the
+  schemas and `help()` are generated; the prose rules are hand-written). Do not add a second
+  hand-written catalog in a prompt or a README. A new module gets a header before it gets code.
 - **Machine-readable failure.** Unknown tools, bad arguments, refused mutations and check
   failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`), not prose that only a
   human can parse.
@@ -136,8 +137,8 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
     the child writes its group leader to `KERNEL_ORPHAN_JOURNAL`, and `Kernel.stop()` /
     `_restart()` kill those groups. Removing the journal or the reap leaks processes when a
     cell times out or the kernel dies. `recall(pattern)` is the session-side search over
-    `_OBS`; `grep()` is the tree-side search. `_OBS` is persisted to `KERNEL_OBS_LOG` and
-    reloaded on restart, so `recall()` must survive a crash; variables do not.
+    `_OBS`; `search` (python `grep()`) is the tree-side search. `_OBS` is persisted to
+    `KERNEL_OBS_LOG` and reloaded on restart, so `recall()` must survive a crash; variables do not.
 
 ## Verify a change
 

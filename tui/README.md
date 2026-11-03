@@ -89,8 +89,8 @@ no verb.
 
 ```
   ● running  add a retry to the fetch helper   3 steps · 4210 tok · esc/enter: back · ctrl-k cancel · 12 events
-  ▸ 'src/client.tsx'
-  ▸ 'bun test'
+  ▸ read({"path":"src/client.tsx"})
+  ▸ exec({"argv":["bun","test"]})
   ▸ 'src/client.tsx'
   ↺ [finish] final_answer rejected: the project check still fails
   ● done stop=DONE · 7 steps · 3 cells · errors 0 · 18432ms · 4210 tok  = all tests pass
@@ -99,12 +99,13 @@ no verb.
   ────────────────────────────────────────────────────────────────────────────────
 ```
 
-A row is the arguments of one cell, trimmed to a single line and clipped to the
-terminal width with a trailing `…` when they do not fit: `read('a.py')` reads as
-`▸ 'a.py'`, `run('bun test')` as `▸ 'bun test'`. The call's verb, the cell index, and
-any counters are dropped, and only the first line of a multi-line cell is kept. Calls
-render in gruvbox purple (`#d3869b`), so they stay distinct from the status colours
-around them (green running, yellow queue/partial, red failures).
+A row is one call, trimmed to a single line and clipped to the terminal width with a
+trailing `…` when it does not fit. A typed call keeps its tool name and shows the JSON
+arguments: `read({"path":"a.py"})`, `exec({"argv":["bun","test"]})`. A python cell
+shows the arguments of its first call, so `read('a.py')` still reads as `▸ 'a.py'`. The
+cell index and any counters are dropped, and only the first line of a multi-line cell is
+kept. Calls render in gruvbox purple (`#d3869b`), so they stay distinct from the status
+colours around them (green running, yellow queue/partial, red failures).
 
 Turn events — the observation after each call, including the command's stdout and
 stderr — are not rendered, with one exception: when a turn carries a `notice` (a
@@ -241,6 +242,8 @@ Environment variables are read by the server (and inherited by workers), plus
 | `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |
 | `CODE_TUI_LEGACY_CHECK` | unset | `1` makes the goal return a bare pass/fail, not a parsed `Check` |
 | `CODE_TUI_LEGACY_TIMEOUT` | unset | `1` disables the in-child cell alarm (old behaviour) |
+| `CODE_TUI_GIT_NAME` | `code-tui agent` | Git author/committer name for agent commits |
+| `CODE_TUI_GIT_EMAIL` | `agent@code-tui.local` | Git author/committer email for agent commits |
 | `CODE_TUI_PYTHON` | `python3` | Python with `bench` dependencies |
 | `CODE_TUI_STATE_ROOT` | `~/.local/state/code-tui` | Alternative state root |
 
@@ -322,10 +325,11 @@ that need them. Both share the mutation gate: changing tracked files through `te
 helper to use instead. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel prelude
-provides `read()` (one path or a list), `outline()` (headings/defs with line numbers),
-`grep()` (the typed `search` tool), `guide()`, `map()`, `write()`, `edit()`, `edit_many()`,
-`splice()`, `apply()`, `commit()` and `git()`, plus `recall()` for earlier cell output; mutations are
-journalled together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
+provides `read()` (one path or a list), `search()` (`grep()` is the python alias),
+`outline()` (headings/defs with line numbers), `guide()`, `map()`, `write()`, `edit()`,
+`edit_many()`, `splice()`, `apply()`, `commit()` and `git()`, plus `recall()` for earlier
+cell output; mutations are journalled together so `changes()`/`diff()`/`undo()` cover
+multi-file edits. A program
 launched through `exec`/`run()` can still write files: the journal is a typed-helper contract,
 not a sandbox.
 

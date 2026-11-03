@@ -4,8 +4,8 @@ WHAT IT IS
   The vocabulary every loop returns. No loop lives here anymore: `tool_loop.ToolLoop` is the
   production turn machine, `state_loop.StateLoop` extends it with state cards, and
   `repl.ReplLoop` extends it with fenced-block reply parsing. The former JSON tool-calling
-  AgentLoop and its `tools.py` registry were removed: they had no production path and
-  duplicated the kernel's file semantics.
+  AgentLoop was removed: it had no production path and duplicated the kernel's file
+  semantics. `tools.py` now generates the provider specs from `verbs.VERBS`.
 
 ENTRY POINTS
   Budget(max_steps, max_tool_calls, max_output_tokens, max_wall_s, no_progress_limit)
