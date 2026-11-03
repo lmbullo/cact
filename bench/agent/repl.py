@@ -2,10 +2,17 @@
 shared with the tool loops.
 
 WHAT IT IS
-  The model writes code, the code runs as a kernel cell, and stdout/stderr/result come back
-  as an `[observation]`. Finishing is `final_answer(...)` inside the cell (stop="call") or an
-  `ANSWER: <value>` line (the no-code path), or with stop="var" the `ANSWER` variable the
-  cell leaves behind. Reply text is parsed by reply.compile_reply.
+  The fenced-block alternate to ToolLoop's tool calls: the model writes code, the code runs
+  as a kernel cell, and stdout/stderr/result come back as an `[observation]`. It subclasses
+  `ToolLoop` and reuses that turn machine: budget stops (STEP_LIMIT/WALL_LIMIT), usage
+  accounting, goal rejection (GOAL_UNMET), goal_stops (VERIFIED), trace records and the
+  RunResult. This module owns only the repl dialect:
+    - reply parsing: one fenced block / ANSWER line (reply.compile_reply)
+    - the observation transcript (`observation`, also ToolLoop's default) and `history`
+    - the finish switches: stop="call" (final_answer in the cell) or stop="var" (the
+      ANSWER variable); a printing cell is UNREVIEWED, a non-action reply is PROTOCOL
+  `_reply` is the single seam: ToolLoop.run calls it with the model's reply, and this class
+  turns that reply into an Action, a kernel cell and a TurnOutcome.
 
 ENTRY POINTS
   REPL_RULES / BARE_RULES .... system prompts (BARE_RULES is the minimal variant)
@@ -16,7 +23,8 @@ ENTRY POINTS
   ReplLoop(client, kernel, budget, rules, stop="call"|"var",
            history="full"|"obs"|"drop"|"action", obs_chars, goal, goal_label, goal_stops,
            wrap_up_at)
-    .run(task_id, prompt, trace) -> RunResult
+    .run(...)   inherited from tool_loop.ToolLoop
+    ._reply(...)  reply -> Action -> cell -> TurnOutcome (the repl seam)
 
 INVARIANTS
   - A reply with neither a python block nor an ANSWER line does not end the task: it comes
@@ -27,24 +35,27 @@ INVARIANTS
   - `history` decides what stays in the transcript: the full reply, just the action, or
     nothing. Large observations are capped by `obs_chars` with an `_OBS` handle.
   - `wrap_up_at` sends a "start wrapping up" nudge at that fraction of the wall budget.
+  - Budget, usage, goal gating and the trace summary are ToolLoop's; this module only
+    supplies the repl wording (`BUDGET_NOTE`, `CHECK_NOUN`, `REJECT_*_TAIL`) and the
+    per-turn wraparound reminders in `_before_turn`.
 
 WHERE TO CHANGE
   What counts as an action ......... reply.py (compile_reply), not here
   Observation format ............... `observation` (also the ToolLoop default)
-  REPL finish semantics ............ ReplLoop.run, `_goal_state`, `_reject`
+  REPL finish semantics ............ `_reply` (UNREVIEWED / PROTOCOL / the answer paths)
+  Budget, usage, goal gating ....... tool_loop.ToolLoop (`run`, `_push`, `_reject`)
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import time
 from typing import Any
 
-from .check import evaluate
 from .kernel import Cell, Kernel
-from .llm import Client, LLMError
-from .loop import Budget, RunResult, _usage_add
+from .llm import Client
+from .loop import Budget
 from .reply import Action, compile_reply
+from .tool_loop import DONE, GOAL_UNMET, VERIFIED, ToolLoop, TurnOutcome
 
 REPL_RULES = """PYTHON REPL CONTRACT
 1. Reply with exactly one fenced ```python block. It runs in a persistent kernel: variables, imports and data persist between turns.
@@ -53,7 +64,7 @@ REPL_RULES = """PYTHON REPL CONTRACT
 4. To finish without code, the last line must be exactly "ANSWER: <value>". A reply with neither a python block nor an ANSWER line does not end the task; it is returned to you as a protocol error.
 5. The kernel imports only the standard library; do not install packages into it.
 6. run() returns a dict: result['stdout'] (or result.stdout), result['stderr'], result['exit_code'], result['kind']. Print only what the answer needs; output is returned in full.
-7. Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. For several files in one change, prefer commit({path: text, ...}) or apply(<unified diff>) over many write() calls: both land in one diff and one undo. Read diff() before you finish.
+7. Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. For an existing file, splice(path, start, end, text) replaces 1-based inclusive lines and returns the hunk; edit() replaces exact old text; use write() only for a new file or a real rewrite. For several files in one change, prefer apply(<unified diff>) or commit({path: text, ...}) over many write() calls: both land in one diff and one undo. Read diff() before you finish.
 8. Earlier cells keep their full output in _OBS. recall(pattern) searches it, including turns a fold removed, and returns matching snippets plus the handle to page the full text; grep() is for the tree, recall() is for the session, and guide(query) answers "which module owns this?" when the repo documents its modules with headers.
 9. This is not tools mode. Never emit DSML, XML, <|...|>, or tool-call markup. Your reply must contain only prose and at most one fenced python block.
 """
@@ -61,17 +72,17 @@ REPL_RULES = """PYTHON REPL CONTRACT
 RUN_NOTE = """
 
 RUNNING PROGRAMS
-run(command, timeout=60, cwd=None) executes one bash command from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Prefer the helpers when you want structured output (path, line numbers, total_lines, next.offset): read(), grep(), map().
+run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list of them) from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Prefer the helpers when you want structured output (path, line numbers, total_lines, next.offset): read() (a path or a list of paths), grep(), map().
 
-Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
+Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), splice(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
 """
 
 RUN_NOTE_MUT = """
 
 RUNNING PROGRAMS
-run(command, timeout=60, cwd=None) executes one bash command from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Read files with open(path).read() or let a program read them.
+run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list of them) from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Read files with open(path).read() or let a program read them.
 
-Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
+Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), splice(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
 """
 
 BARE_RULES = """Write Python in one ```python block. Cells share a kernel; variables persist. Set ANSWER to the final value to end the task.
@@ -108,7 +119,13 @@ def observation(cell: Cell, cap: int = 0) -> str:
     return body
 
 
-class ReplLoop:
+class ReplLoop(ToolLoop):
+    BUDGET_NOTE = ("[runtime] The cell budget is exhausted. Reply with the final answer "
+                   "as plain text and no code block.")
+    CHECK_NOUN = "goal check"
+    REJECT_NONE_TAIL = "The task is not complete. Continue working."
+    REJECT_DETAIL_TAIL = "Keep working and re-run the check when you believe it passes."
+
     def __init__(
         self,
         client: Client,
@@ -123,251 +140,143 @@ class ReplLoop:
         goal_stops: bool = True,
         wrap_up_at: float | None = 0.8,
     ) -> None:
-        self.client = client
-        self.kernel = kernel
-        self.budget = budget or Budget()
-        self.rules = rules
-        self.stop_mode = stop
+        super().__init__(
+            client,
+            kernel,
+            budget,
+            rules=rules,
+            goal=goal,
+            goal_label=goal_label,
+            goal_stops=goal_stops,
+            obs_chars=obs_chars,
+        )
+        self.tools = None                   # repl replies carry no tool_calls
+        self.stop_mode = stop               # "call" -> cell.final, "var" -> cell.answer
         self.history = history
-        self.obs_chars = obs_chars
-        self.goal = goal
-        self.goal_label = goal_label
-        self.goal_stops = goal_stops
         self.wrap_up_at = wrap_up_at
 
-    def _goal_state(self):
-        return evaluate(self.goal)
+    def _on_run_start(self, messages: list[dict]) -> None:
+        self._prefix_key = hashlib.sha256(
+            json.dumps(messages, sort_keys=True).encode()).hexdigest()
+        self._drift = 0
+        self._last_turn = False
+        self._wrapped = False
 
-    def _reject(self, check, prefix: str) -> str:
-        if check is None:
-            return f"[observation] {prefix}: the goal check still fails. The task is not complete. Continue working."
-        return (f"[observation] {prefix}: the goal check says the task is not complete.\n"
-                f"{check.text()}\nKeep working and re-run the check when you believe it passes.")
-
-    def _push(self, messages: list[dict], usage: dict | None = None) -> str:
-        msgs = messages + [{
-            "role": "user",
-            "content": "[runtime] The cell budget is exhausted. Reply with the final answer as plain text and no code block.",
-        }]
-        try:
-            resp = self.client.complete(msgs, None, self.budget.max_output_tokens)
-        except LLMError:
-            return ""
-        if usage is not None:
-            _usage_add(usage, resp["usage"])
-        return (resp.get("content") or "").strip()
-
-    def run(self, task_id: str, prompt: str, trace: Any = None) -> RunResult:
+    def _before_turn(self, messages: list[dict], tally) -> None:
         b = self.budget
-        t0 = time.perf_counter()
-        messages: list[dict] = []
-        if self.rules:
-            messages.append({"role": "system", "content": self.rules})
-        messages.append({"role": "user", "content": prompt})
-        prefix_key = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()
-        drift = 0
-        steps = calls = errors = repeats = 0
-        llm_calls = 0
-        seen: set[str] = set()
-        usage: dict = {}
-        turns: list[dict] = []
-        final = ""
-        stop = "STEP_LIMIT"
-        wrapped = False
-        last_turn = False
-
-        def push() -> str:
-            nonlocal llm_calls
-            llm_calls += 1
-            return self._push(messages, usage)
-
-        while True:
-            if steps >= b.max_steps:
-                final, stop = push(), "STEP_LIMIT"
-                break
-            if (time.perf_counter() - t0) > b.max_wall_s:
-                final, stop = push(), "WALL_LIMIT"
-                break
-
-            if not last_turn and steps >= max(1, b.max_steps - 1):
-                last_turn = True
+        if not self._last_turn and tally.steps >= max(1, b.max_steps - 1):
+            self._last_turn = True
+            messages.append({
+                "role": "user",
+                "content": (
+                    "[runtime] This is your last turn. Do not run more code or inspect more files. "
+                    "Reply with exactly one fenced ```python block that calls "
+                    "final_answer(<short summary>) and prints nothing."
+                ),
+            })
+        elif self.wrap_up_at is not None and not self._wrapped:
+            threshold = max(1, int(b.max_steps * self.wrap_up_at))
+            if tally.steps >= threshold and tally.steps < max(1, b.max_steps - 1):
+                self._wrapped = True
                 messages.append({
                     "role": "user",
                     "content": (
-                        "[runtime] This is your last turn. Do not run more code or inspect more files. "
-                        "Reply with exactly one fenced ```python block that calls "
-                        "final_answer(<short summary>) and prints nothing."
+                        f"[runtime] {b.max_steps - tally.steps} steps left. Stop exploring. "
+                        "Make the smallest necessary change, verify it, and finish with "
+                        "final_answer(<short summary>). Do not start new investigations."
                     ),
                 })
-            elif self.wrap_up_at is not None and not wrapped:
-                threshold = max(1, int(b.max_steps * self.wrap_up_at))
-                if steps >= threshold and steps < max(1, b.max_steps - 1):
-                    wrapped = True
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[runtime] {b.max_steps - steps} steps left. Stop exploring. "
-                            "Make the smallest necessary change, verify it, and finish with "
-                            "final_answer(<short summary>). Do not start new investigations."
-                        ),
-                    })
+        if hashlib.sha256(json.dumps(messages[:2], sort_keys=True).encode()).hexdigest() != self._prefix_key:
+            self._drift += 1
 
-            steps += 1
-            llm_calls += 1
-            if hashlib.sha256(json.dumps(messages[:2], sort_keys=True).encode()).hexdigest() != prefix_key:
-                drift += 1
-            resp = self.client.complete(messages, None, b.max_output_tokens)
-            _usage_add(usage, resp["usage"])
-            cu = resp.get("usage") or {}
-            hit = int(cu.get("prompt_cache_hit_tokens") or 0)
-            miss = int(cu.get("prompt_cache_miss_tokens") or 0)
-            content = resp.get("content") or ""
-            action = compile_reply(content)
-            code = action.code if action.kind == "code" else None
-            rec: dict = {
-                "task": task_id,
-                "turn": steps,
-                "latency_ms": round(resp["latency_ms"]),
-                "content": content,
-                "reasoning": resp.get("reasoning") or "",
-                "code": code,
-                "observation": None,
-                "cache": {"hit": hit, "miss": miss},
-                "runs": [],
-            }
+    def _drift_count(self) -> int:
+        return getattr(self, "_drift", 0)
 
-            if code is None:
-                if action.kind == "answer":
-                    met, check = self._goal_state()
-                    if not met:
-                        if self.history != "drop":
-                            messages.append({"role": "assistant", "content": history_entry(action) or content})
-                        messages.append({"role": "user", "content": self._reject(check, "ANSWER rejected")})
-                        rec["stop"] = "GOAL_UNMET"
-                        turns.append(rec)
-                        if trace:
-                            trace.write(rec)
-                        continue
-                    final = action.value or ""
-                    stop = "DONE"
-                    rec["stop"] = stop
-                    turns.append(rec)
-                    if trace:
-                        trace.write(rec)
-                    break
-                if action.error:
-                    note = f"[observation] that reply did not produce code: {action.error}. Nothing ran."
-                    if action.detail:
-                        note += f"\n{action.detail}"
-                    if action.source == "markup":
-                        note += "\nThe call was understood but carried no runnable body. Reply with one ```python block."
-                else:
-                    note = "[observation] No ```python block and no line 'ANSWER: <value>' in that reply. The task is still open."
-                messages.append({"role": "user", "content": note})
-                rec["stop"] = "PROTOCOL"
-                rec["error"] = action.error
-                turns.append(rec)
-                if trace:
-                    trace.write(rec)
-                continue
+    def _observe(self, cell, steps: int) -> str:
+        return observation(cell, self.obs_chars)
 
-            if code in seen:
-                repeats += 1
-            else:
-                seen.add(code)
-            calls += 1
-            cell = self.kernel.run(code)
-            rec["runs"] = cell.runs or []
-            rec["observation"] = {
-                "exit": "raise" if cell.stderr else "ok",
-                "result": cell.result,
-                "stdout": cell.stdout,
-                "stderr": cell.stderr,
-                "restarted": cell.restarted,
-                "duration_ms": cell.duration_ms,
-            }
-            if cell.stderr:
-                errors += 1
+    def _turn_record(self, task_id: str, step: int, resp: dict, hit: int, miss: int) -> dict:
+        return {
+            "task": task_id,
+            "turn": step,
+            "latency_ms": round(resp["latency_ms"]),
+            "content": resp.get("content") or "",
+            "reasoning": resp.get("reasoning") or "",
+            "code": None,
+            "observation": None,
+            "cache": {"hit": hit, "miss": miss},
+            "runs": [],
+        }
 
-            terminal = cell.final if self.stop_mode == "call" else cell.answer
-            if terminal is not None and (cell.stdout.strip() or cell.stderr.strip()):
-                if self.history != "drop":
-                    kept = content if self.history == "full" else history_entry(action)
-                    messages.append({"role": "assistant", "content": kept})
-                messages.append({"role": "user", "content": observation(cell, self.obs_chars) + "\n[observation] final_answer was not accepted: this cell printed output, so you have not seen it yet. Read it, then call final_answer(<value>) in a cell that prints nothing."})
-                rec["stop"] = "UNREVIEWED"
-                turns.append(rec)
-                if trace:
-                    trace.write(rec)
-                continue
-            if terminal is not None:
+    def _reply(self, messages: list[dict], rec: dict, resp: dict, finish, tally,
+               seen: set[str], step: int) -> TurnOutcome:
+        """Parse one reply, run its cell, and decide the turn. Repl's only loop seam."""
+        content = resp.get("content") or ""
+        action = compile_reply(content)
+        code = action.code if action.kind == "code" else None
+        rec["code"] = code
+
+        if code is None:
+            if action.kind == "answer":
                 met, check = self._goal_state()
                 if not met:
                     if self.history != "drop":
-                        kept = content if self.history == "full" else history_entry(action)
-                        messages.append({"role": "assistant", "content": kept})
-                    messages.append({"role": "user", "content": self._reject(check, "final_answer rejected")})
-                    rec["stop"] = "GOAL_UNMET"
-                    turns.append(rec)
-                    if trace:
-                        trace.write(rec)
-                    continue
-                final = terminal.strip()
-                stop = "DONE"
-                rec["stop"] = stop
-                turns.append(rec)
-                if trace:
-                    trace.write(rec)
-                break
+                        messages.append({"role": "assistant", "content": history_entry(action) or content})
+                    messages.append({"role": "user", "content": self._reject(check, "ANSWER rejected")})
+                    return TurnOutcome(stop=GOAL_UNMET)
+                return TurnOutcome(stop=DONE, final=action.value or "", end=True)
+            if action.error:
+                note = f"[observation] that reply did not produce code: {action.error}. Nothing ran."
+                if action.detail:
+                    note += f"\n{action.detail}"
+                if action.source == "markup":
+                    note += "\nThe call was understood but carried no runnable body. Reply with one ```python block."
+            else:
+                note = "[observation] No ```python block and no line 'ANSWER: <value>' in that reply. The task is still open."
+            messages.append({"role": "user", "content": note})
+            rec["error"] = action.error
+            return TurnOutcome(stop="PROTOCOL")
 
-            if self.goal_stops and self.goal is not None and cell.mutated and self._goal_state()[0]:
-                final = self.goal_label
-                stop = "VERIFIED"
-                rec["stop"] = stop
-                turns.append(rec)
-                if trace:
-                    trace.write(rec)
-                break
+        if code in seen:
+            tally.repeats += 1
+        else:
+            seen.add(code)
+        tally.calls += 1
+        cell = self.kernel.run(code)
+        rec["runs"] = cell.runs or []
+        rec["observation"] = {
+            "exit": "raise" if cell.stderr else "ok",
+            "result": cell.result,
+            "stdout": cell.stdout,
+            "stderr": cell.stderr,
+            "restarted": cell.restarted,
+            "duration_ms": cell.duration_ms,
+        }
+        if cell.stderr:
+            tally.errors += 1
 
+        terminal = cell.final if self.stop_mode == "call" else cell.answer
+        if terminal is not None and (cell.stdout.strip() or cell.stderr.strip()):
             if self.history != "drop":
                 kept = content if self.history == "full" else history_entry(action)
                 messages.append({"role": "assistant", "content": kept})
-            messages.append({"role": "user", "content": observation(cell, self.obs_chars)})
-            turns.append(rec)
-            if trace:
-                trace.write(rec)
+            messages.append({"role": "user", "content": observation(cell, self.obs_chars) + "\n[observation] final_answer was not accepted: this cell printed output, so you have not seen it yet. Read it, then call final_answer(<value>) in a cell that prints nothing."})
+            return TurnOutcome(stop="UNREVIEWED")
+        if terminal is not None:
+            met, check = self._goal_state()
+            if not met:
+                if self.history != "drop":
+                    kept = content if self.history == "full" else history_entry(action)
+                    messages.append({"role": "assistant", "content": kept})
+                messages.append({"role": "user", "content": self._reject(check, "final_answer rejected")})
+                return TurnOutcome(stop=GOAL_UNMET)
+            return TurnOutcome(stop=DONE, final=terminal.strip(), end=True)
 
-        wall_ms = (time.perf_counter() - t0) * 1000.0
-        if trace:
-            trace.write({
-                "task": task_id,
-                "summary": True,
-                "stop": stop,
-                "steps": steps,
-                "calls": calls,
-                "llm_calls": llm_calls,
-                "errors": errors,
-                "misses": 0,
-                "repeats": repeats,
-                "drift": drift,
-                "usage": usage,
-                "wall_ms": round(wall_ms),
-                "final": final,
-            })
-            trace.close()
+        if self.goal_stops and self.goal is not None and cell.mutated and self._goal_state()[0]:
+            return TurnOutcome(stop=VERIFIED, final=self.goal_label, end=True)
 
-        return RunResult(
-            task=task_id,
-            stop=stop,
-            final=final,
-            steps=steps,
-            calls=calls,
-            errors=errors,
-            misses=0,
-            repeats=repeats,
-            usage=usage,
-            wall_ms=wall_ms,
-            trace=getattr(trace, "path", None),
-            turns=turns,
-            llm_calls=llm_calls,
-        )
+        if self.history != "drop":
+            kept = content if self.history == "full" else history_entry(action)
+            messages.append({"role": "assistant", "content": kept})
+        messages.append({"role": "user", "content": observation(cell, self.obs_chars)})
+        return TurnOutcome()

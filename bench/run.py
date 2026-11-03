@@ -40,6 +40,7 @@ WHERE TO CHANGE
   New flag / budget wiring .......... the argparse block in main()
   What a run records ................. the `rows.append({...})` dict and summary write
   Which loop a mode builds ........... the `if args.mode in ("tool", "state")` / `bare` branch
+  The per-task goal and cheap health ... the `Verifier` built from `task.check`
   The hard suite and its held-out oracle ... bench/hard.py
 """
 from __future__ import annotations
@@ -53,6 +54,7 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from bench.agent.checks import Verifier
     from bench.agent.kernel import Kernel
     from bench.agent.llm import Client
     from bench.agent.loop import Budget
@@ -64,6 +66,7 @@ if __package__ in (None, ""):
     from bench.agent.trace import Trace, render
     from bench import tasks as bench_tasks
 else:
+    from .agent.checks import Verifier
     from .agent.kernel import Kernel
     from .agent.llm import Client
     from .agent.loop import Budget
@@ -224,18 +227,17 @@ def main() -> int:
                 if allow_run and args.repl_rules != "none" and args.mode not in ("tool", "state"):
                     rules = rules + (RUN_NOTE_MUT if lib == "mut" else RUN_NOTE)
                 check = getattr(task, "check", None)
-                goal = (lambda: check(ws)) if check and args.mode != "bare" else None
-                health = None
-                if check and args.health == "on" and args.mode in ("tool", "state"):
-                    health = lambda paths: (check(ws), {})
+                verifier = None
+                if check and args.mode != "bare":
+                    verifier = Verifier(check=lambda: check(ws), cwd=str(ws),
+                                        cheap_enabled=args.health == "on")
                 if args.mode in ("tool", "state"):
                     loop = (StateLoop if args.mode == "state" else ToolLoop)(
                         client, kernel, budget,
                         rules=rules + prefix,
-                        goal=goal,
                         goal_stops=True,
                         obs_chars=args.obs_chars,
-                        health=health,
+                        verifier=verifier,
                     )
                 elif args.mode == "bare":
                     loop = ToolLoop(
@@ -252,7 +254,7 @@ def main() -> int:
                         stop=args.repl_stop,
                         history=args.repl_history,
                         obs_chars=args.obs_chars,
-                        goal=(lambda: check(ws)) if check else None,
+                        goal=verifier.goal_value if verifier is not None else None,
                         goal_stops=True,
                     )
                 result = loop.run(task.id, task.prompt, Trace(trace_path))

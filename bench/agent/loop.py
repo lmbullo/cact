@@ -3,9 +3,9 @@
 WHAT IT IS
   The vocabulary every loop returns. No loop lives here anymore: `tool_loop.ToolLoop` is the
   production turn machine, `state_loop.StateLoop` extends it with state cards, and
-  `repl.ReplLoop` is the fenced-block alternate. The former JSON tool-calling AgentLoop and
-  its `tools.py` registry were removed: they had no production path and duplicated the
-  kernel's file semantics.
+  `repl.ReplLoop` extends it with fenced-block reply parsing. The former JSON tool-calling
+  AgentLoop and its `tools.py` registry were removed: they had no production path and
+  duplicated the kernel's file semantics.
 
 ENTRY POINTS
   Budget(steps, tool_calls, output, wall, no_progress)
@@ -18,6 +18,9 @@ INVARIANTS
   - The benchmark defaults below are overridden by run.py flags and by config.budget for
     production; do not tune production from here.
   - `_usage_add` is additive and tolerates missing provider fields, including cache hits.
+  - `RunResult.steps` is the number of turns, i.e. primary `client.complete` calls. `calls`
+    is the number of tool calls / kernel cells, a different axis. `llm_calls` is every model
+    request the loop made, including the budget-forced `_push`, so `llm_calls >= steps`.
 
 WHERE TO CHANGE
   New stop/usage field ....... RunResult
@@ -38,6 +41,9 @@ class Budget:
 
 @dataclass
 class RunResult:
+    """One finished run. `steps` are turns, `calls` are tool calls, and `llm_calls` is
+    every client request (including the budget-forced `_push`), so `llm_calls >= steps`."""
+
     task: str
     stop: str
     final: str

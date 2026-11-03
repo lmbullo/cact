@@ -1,4 +1,4 @@
-"""The check plan: an ordered list of project commands, cheap health checks first.
+"""The check plan and its Verifier: an ordered list of project commands, cheap checks first.
 
 WHAT IT IS
   `CheckSpec.parse(raw)` reads the plan from a command string or a JSON list of
@@ -7,16 +7,27 @@ WHAT IT IS
   `run_specs` returns just the combined verdict, and a synthetic `passed` means every
   command that ran passed.
 
-  One plan, two roles:
-    goal    the whole plan is what `final_answer` must satisfy (tool_loop: GOAL_UNMET)
-    health  the `cheap` subset re-runs after a mutating cell and shows up as the `[check]`
-            line of the state card (tool_loop `health=`, state_loop `_observe`)
+  `Verifier` is the single owner of a verification plan: the specs, the cheap subset, the
+  `scope` filter, the 20s throttle window, the check cache handed to the kernel, and the
+  `Check` rendering. One object, two roles:
+    goal    `authoritative()` runs the whole plan on every finish attempt (tool_loop:
+            GOAL_UNMET); production keeps `goal_stops=False`.
+    health  `should_run(paths, now)` decides whether the cheap subset may run after a
+            mutating cell; `run(paths)` runs it and fills `last` + the cache, which is what
+            the `[check]` line of the state card renders.
 
 ENTRY POINTS
   CheckSpec(name, cmd, cheap=False, scope=())  .parse(raw) -> list[CheckSpec]
                                                .applies(paths) filters by changed paths
   run_plan(specs, cwd, paths=None) -> (Check | None, {cmd: Check})
   run_specs(specs, cwd, paths=None) -> Check | None   the combined verdict
+  Verifier(specs=(), cwd="", *, check=None, window=HEALTH_WINDOW, legacy=False,
+           cheap_enabled=True)
+    .should_run(paths, now) -> bool   throttle + scope decision (reserves the window)
+    .run(paths) -> {cmd: Check}        cheap subset; sets `.last`, fills `.cache()`
+    .authoritative() -> (ok, Check | None)   whole plan, every finish attempt
+    .cache() / .invalidate()           kernel injection / drop cache + last on mutation
+    .goal_value()                      Check | bool for ReplLoop's `evaluate`
 
 INVARIANTS
   - Order is the contract: put the cheap, fast checks (smoke, typecheck) first so a broken
@@ -24,9 +35,18 @@ INVARIANTS
     are skipped.
   - `unrunnable` from check.py survives the plan: a command that cannot run is a broken
     check, never a broken project.
-  - `scope` is a list of path prefixes; when a caller passes `paths` (the health run), a
+  - `scope` is a list of path prefixes; when a caller passes `paths` (the cheap run), a
     spec runs only if one changed path is under its scope, so a docs-only edit does not
-    typecheck the TUI. The goal calls run_specs without paths, so it runs every spec.
+    typecheck the TUI. `authoritative()` passes no paths, so the goal runs every spec.
+  - The cheap subset runs at most every `HEALTH_WINDOW` (20s); `should_run` both decides and
+    reserves the window, matching the old inline throttle.
+  - `invalidate()` drops the cache and `last` on a mutating cell; the throttle timestamp is
+    not reset, so a mutation inside the window clears the card without re-running.
+  - `check=` is the benchmark mode: a single callable that returns a `Check` (or a bool)
+    stands in for the plan, and its results are never injected as `check_cache` entries
+    (there is no command to key them by).
+  - `legacy=True` makes `authoritative()` answer `(ok, None)`, so the loop's rejection has a
+    bare pass/fail and no failure lines. Production keeps it off.
   - A plan is data, never a shell string. server.ts detects the default plan
     (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts) and
     passes it to worker.py as `--checks <json>`; bench/live.py forwards `--checks` the same way.
@@ -35,14 +55,17 @@ WHERE TO CHANGE
   Plan parsing .................... CheckSpec.parse
   Scope matching .................. CheckSpec.applies
   How a plan runs and what it returns ... run_plan / run_specs
+  Throttle / cache / goal policy ... Verifier
   The default plan for a workspace ...... tui/src/server.ts::detectChecks
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .check import Check, run_check
+
+HEALTH_WINDOW = 20.0
 
 
 @dataclass
@@ -117,3 +140,101 @@ def run_plan(specs: Iterable[CheckSpec], cwd: str,
 def run_specs(specs: Iterable[CheckSpec], cwd: str,
               paths: Iterable[str] | None = None) -> Check | None:
     return run_plan(specs, cwd, paths)[0]
+
+
+class Verifier:
+    """Owns one verification plan: goal, cheap health subset, throttle, cache, rendering.
+
+    `specs` is a `CheckSpec` plan (production) or `check=` is one callable (the benchmark
+    suite's per-task oracle). Both feed the same intent methods, so the loop never touches
+    a spec, a timer or a cache itself.
+    """
+
+    def __init__(
+        self,
+        specs: Iterable[CheckSpec] | None = None,
+        cwd: str = "",
+        *,
+        check: Callable[[], Any] | None = None,
+        window: float = HEALTH_WINDOW,
+        legacy: bool = False,
+        cheap_enabled: bool = True,
+    ) -> None:
+        self.specs = list(specs or ())
+        self.cwd = cwd
+        self.check = check
+        self.window = window
+        self.legacy = legacy
+        self._cheap = [spec for spec in self.specs if spec.cheap] if cheap_enabled else []
+        if check is not None and cheap_enabled:
+            self._cheap = [CheckSpec(name="check", cmd="<check>", cheap=True)]
+        self.last: Check | None = None
+        self._cache: dict[str, dict] = {}
+        self._last_at = float("-inf")
+
+    @property
+    def has_goal(self) -> bool:
+        return bool(self.specs) or self.check is not None
+
+    @property
+    def cheap_specs(self) -> list[CheckSpec]:
+        return list(self._cheap)
+
+    def should_run(self, paths: Iterable[str] | None, now: float) -> bool:
+        """May the cheap subset run for `paths` at `now`? Reserves the window when yes."""
+        paths = list(paths or ())
+        if not self._cheap:
+            return False
+        if not any(spec.applies(paths) for spec in self._cheap):
+            return False
+        if now - self._last_at < self.window:
+            return False
+        self._last_at = now
+        return True
+
+    def run(self, paths: Iterable[str] | None = None) -> dict[str, Check]:
+        """Run the cheap subset and return its per-command results; fill `last` and the cache."""
+        if self.check is not None:
+            result = self.check()
+            check = result if isinstance(result, Check) else Check(
+                cmd="check", state="passed" if result else "failed")
+            self.last = check
+            return {check.cmd: check}
+        check, results = run_plan(self._cheap, self.cwd, paths)
+        self.last = check
+        self._cache = {cmd: {"text": item.text(600), "ok": bool(item.ok)}
+                       for cmd, item in results.items() if item is not None}
+        return results
+
+    def authoritative(self) -> tuple[bool, Check | None]:
+        """The finish gate: the whole plan, every attempt."""
+        if self.check is not None:
+            try:
+                result = self.check()
+            except Exception as exc:  # noqa: BLE001 - a broken goal is unrunnable, not a crash
+                check = Check(cmd="<goal>", state="unrunnable",
+                              stderr=f"{type(exc).__name__}: {exc}")
+                return False, (None if self.legacy else check)
+            check = result if isinstance(result, Check) else Check(
+                cmd="check", state="passed" if result else "failed")
+            return check.ok, (None if self.legacy else check)
+        if not self.specs:
+            return True, None
+        check = run_specs(self.specs, self.cwd)
+        ok = bool(check and check.ok)
+        return ok, (None if self.legacy else check)
+
+    def goal_value(self) -> Any:
+        """A `Check | bool` for a ReplLoop `evaluate(goal)` call."""
+        ok, check = self.authoritative()
+        if self.legacy:
+            return ok
+        return check if check is not None else ok
+
+    def cache(self) -> dict[str, dict]:
+        return self._cache
+
+    def invalidate(self) -> None:
+        """A mutating cell: drop the cached results and the last card check."""
+        self._cache = {}
+        self.last = None

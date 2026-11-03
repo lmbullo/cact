@@ -251,14 +251,14 @@ When a task starts the server detects a *plan* (an ordered list of named command
 when neither exists) from the root and `tui/package.json`. The plan is re-detected per
 task, so a script an earlier task added is picked up without restarting the server. The
 runner follows the lockfile (`bun.lock` -> bun, `package-lock.json` -> npm). The plan is
-passed to the worker as `--checks <json>`.
+passed to the worker as `--checks <json>`, where one `checks.Verifier` owns it.
 
 A plan entry has `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes used by
 the cheap health run: a scoped entry is skipped unless the cell changed a path under one
 of them. The goal still runs the whole plan, so a docs-only edit does not re-run the TUI
 checks on every cell but still runs them before a finish. The default plan scopes `smoke`
 to `bench` and the TUI checks to `tui`. Order matters: the first failure is what the agent
-sees, so cheap checks come first. Two things happen with it:
+sees, so cheap checks come first. One `Verifier` owns the same plan for both roles:
 
 - **Cheap checks are health checks.** After a cell that mutated the tree in their scope,
   at most once every 20 seconds, the `cheap` entries re-run and the result appears as the

@@ -41,8 +41,10 @@ inside `tui/`.
 
 1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
    holds the answer (`STAGED`); the next reply with no tool call accepts `v` after the goal
-   check (when there is one). With a goal check, no answer is accepted until the check
-   passes. `run.py` grades `result.final`; a prose reply with no tool call is the summary.
+   check (when there is one). An accepted finish ends the turn: the remaining calls in the
+   same message do not run, but each still gets a paired (skipped) tool result. With a goal
+   check, no answer is accepted until the check passes. `run.py` grades `result.final`; a
+   prose reply with no tool call is the summary.
 2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
    read-only git work (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`). Shell verbs
    that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
@@ -56,17 +58,20 @@ inside `tui/`.
    journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and
    RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
-   **`edit()` reports ambiguity rather than guessing**; **`apply(<unified diff>)` and
+   **`edit()` reports ambiguity rather than guessing**; **`splice(path, start, end, text)`**
+   replaces 1-based inclusive lines through the same journal (read() numbers lines, so a
+   surgical change emits only the changed lines); **`apply(<unified diff>)` and
    `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
    them. All of them go through `_commit`, which is what makes the journal honest.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired. The hard suite's oracle lives
    outside the workspace (`bench/hard_hidden/`), so the agent cannot read or edit it.
-5. **The check plan is the goal** (`bench/agent/checks.py`). `run_plan` / `run_specs` run the
-   ordered plan and return the first failure; a spec's `scope` path prefixes filter the cheap
-   health run to the files a cell changed (the goal still runs every spec). The `cheap`
-   subset re-runs after a mutating cell (at most every 20s) and is printed as the `[check]`
-   line of the state card. `final_answer` is rejected
+5. **The check plan is the goal, and one `Verifier` owns it** (`bench/agent/checks.py`).
+   `run_plan` / `run_specs` run the ordered plan and return the first failure; a spec's
+   `scope` path prefixes filter the cheap health run to the files a cell changed (the goal
+   still runs every spec). The `Verifier` owns the goal, the cheap subset, the throttle, the
+   cache and the rendering: the `cheap` subset re-runs after a mutating cell (at most every
+   20s) and is printed as the `[check]` line of the state card. `final_answer` is rejected
    (`GOAL_UNMET`) until the whole plan passes. Production passes `goal_stops=False`, so a
    failing check never ends the run by itself — it only rejects the finish.
 6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `hard.py` from the

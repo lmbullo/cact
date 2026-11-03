@@ -8,7 +8,7 @@ ENTRY POINTS
   CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY ... production constants
   budget(steps, wall_s, output=MAX_OUTPUT) -> Budget         clamped to MAX_OUTPUT
   build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
-        goal_stops, mode=MODE, health=None) -> StateLoop | ToolLoop | ReplLoop
+        goal_stops, mode=MODE, health=None, verifier=None) -> StateLoop | ToolLoop | ReplLoop
 
 INVARIANTS
   - `build` is the only construction site in production; the benchmark CLI constructs loops
@@ -18,8 +18,9 @@ INVARIANTS
   - Constants are TUI-facing. Benchmark defaults live in loop.Budget and run.py flags.
   - COMPACT_AT_TOKENS (85% of the 1M window) is what StateLoop compares the provider's real
     prompt token count against; OBS_CHARS=0 means the state card decides, not a char cap.
-  - `health` is only wired for the state/tool loops (the goal's cheap subset); ReplLoop
-    ignores it.
+  - `verifier` (checks.Verifier) is the production wiring: it owns the goal, the cheap
+    subset, the throttle and the cache. `goal`/`health` stay accepted for callers that have
+    a bare callable. ReplLoop has no verifier slot, so `build` hands it `goal_value`.
 
 WHERE TO CHANGE
   Production loop selection ....... build + MODE
@@ -67,6 +68,7 @@ def build(
     goal_stops: bool = False,
     mode: str = MODE,
     health: Any = None,
+    verifier: Any = None,
 ):
     if mode == "state":
         return StateLoop(
@@ -79,6 +81,7 @@ def build(
             goal_stops=goal_stops,
             obs_chars=obs_chars,
             health=health,
+            verifier=verifier,
             context_budget=COMPACT_AT_TOKENS,
         )
     if mode == "tool":
@@ -92,6 +95,7 @@ def build(
             goal_stops=goal_stops,
             obs_chars=obs_chars,
             health=health,
+            verifier=verifier,
         )
     return ReplLoop(
         client,
@@ -101,7 +105,7 @@ def build(
         stop=stop,
         history=history,
         obs_chars=obs_chars,
-        goal=goal,
+        goal=goal if goal is not None else (verifier.goal_value if verifier is not None else None),
         goal_label=goal_label,
         goal_stops=goal_stops,
     )

@@ -3,10 +3,11 @@ touched.
 
 WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
-  It imports every module, drives the kernel prelude end to end (read/write/edit/changes/
-  diff/undo, run() allowing reads and refusing mutation) and checks the pure helpers (reply
-  parsing, state digests, read coverage, the spawn gate, check plans), plus the header index
-  (`bench/agent/headers.py`) and the contract CLI (`bench/map.py`).
+  It imports every module, drives the kernel prelude end to end (read/write/edit/splice/
+  changes/diff/undo, batched read and run, run() allowing reads and refusing mutation) and
+  checks the pure helpers (reply parsing, state digests, read coverage, the spawn gate,
+  check plans), plus the header index (`bench/agent/headers.py`) and the contract CLI
+  (`bench/map.py`).
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
 
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import time
@@ -44,7 +46,9 @@ import bench.agent.config as config
 import bench.agent.llm as llm
 import bench.agent.loop as loop
 import bench.agent.reply as reply
+import bench.agent.repl as repl
 import bench.agent.state_loop as state_loop
+import bench.agent.tool_loop as tool_loop
 import bench.agent.checks as checks
 import bench.agent.headers as headers
 import bench.agent.trace as trace
@@ -53,7 +57,7 @@ import bench.edge as edge
 import bench.runs as runs
 import bench.tasks as tasks
 import bench.ws as ws
-from bench.agent.kernel import Kernel
+from bench.agent.kernel import Cell, Kernel, PROTOCOL
 
 FAILED: list[str] = []
 
@@ -62,6 +66,71 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     print(f"{'ok  ' if ok else 'FAIL'} {name}" + (f"  ({detail})" if detail and not ok else ""))
     if not ok:
         FAILED.append(name)
+
+
+# --- a scripted client and kernel, so the turn machine is testable offline -----------------
+def _reply(content: str = "", calls: list | None = None, finish: str = "tool_calls") -> dict:
+    return {"content": content, "tool_calls": calls or [], "finish": finish}
+
+
+def _call(cid: str, code: str | None, name: str = "python", arguments: str | None = None) -> dict:
+    return {"id": cid,
+            "function": {"name": name,
+                         "arguments": arguments if arguments is not None else json.dumps({"code": code})}}
+
+
+def _cell(final: str | None = None, stdout: str = "", stderr: str = "") -> Cell:
+    return Cell(stdout=stdout, stderr=stderr, result=None, final=final, duration_ms=1)
+
+
+class FakeClient:
+    """Answers with a scripted reply per turn and keeps a copy of every request."""
+
+    def __init__(self, replies: list[dict]) -> None:
+        self.replies = list(replies)
+        self.requests: list[list[dict]] = []
+
+    def complete(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 0) -> dict:
+        self.requests.append(json.loads(json.dumps(messages)))
+        if not self.replies:
+            raise AssertionError("the loop asked for a reply after the script ran out")
+        item = self.replies.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return {"content": item.get("content") or "", "reasoning": "",
+                "tool_calls": item.get("tool_calls") or [],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                "latency_ms": 0.0, "finish": item.get("finish") or "tool_calls"}
+
+
+class FakeKernel:
+    """Maps a cell's code to a scripted Cell; `raises` makes dispatch blow up."""
+
+    def __init__(self, cells: dict, raises: set[str] | None = None) -> None:
+        self.cells = dict(cells)
+        self.raises = set(raises or ())
+        self.codes: list[str] = []
+
+    def run(self, code: str, check_cache: dict | None = None) -> Cell:
+        self.codes.append(code)
+        if code in self.raises:
+            raise RuntimeError("kernel exploded")
+        return self.cells.get(code) or _cell()
+
+
+def _run_loop(replies: list[dict], cells: dict, goal=None, raises: set[str] | None = None):
+    client = FakeClient(replies)
+    kernel = FakeKernel(cells, raises)
+    loop_ = tool_loop.ToolLoop(client, kernel, loop.Budget(), goal=goal)
+    return loop_.run("smoke", "do the task"), client, kernel
+
+
+def _paired_messages(messages: list[dict]) -> tuple[list[str], list[str]]:
+    assistant = [m for m in messages if m.get("role") == "assistant"][-1]
+    ids = [c.get("id") for c in assistant.get("tool_calls") or []]
+    paired = [m.get("tool_call_id") for m in messages[messages.index(assistant) + 1:]
+              if m.get("role") == "tool"]
+    return ids, paired
 
 
 def main() -> int:
@@ -84,6 +153,8 @@ def main() -> int:
     check("state: clip", state_loop.clip("abcdef", 3).startswith("abc"))
     card = state_loop.digest("\n".join(f"line {i}" for i in range(400)), 800, "_OBS[0]")
     check("state: digest names the handle", "_OBS[0]" in card and len(card) < 4000)
+    check("state: an undigested stream is reported whole",
+          state_loop.digest_card("short", 800, "_OBS[0]") == ("short", False))
 
     check("loop: budget defaults", loop.Budget().max_steps == 200)
     check("config: mode is a loop name", config.MODE in ("state", "tool", "repl"))
@@ -121,8 +192,83 @@ def main() -> int:
     plan, results = checks.run_plan(specs, str(root), ["tui/src/x.ts"])
     check("checks: plan runs only the scoped spec",
           plan is not None and plan.cmd == "tui" and list(results) == ["true"], str(plan))
+    verifier = checks.Verifier(specs, str(root))
+    check("verifier: the plan is its goal", verifier.has_goal)
+    check("verifier: cheap subset is the cheap specs",
+          [spec.name for spec in verifier.cheap_specs] == ["bench", "tui"],
+          str(verifier.cheap_specs))
+    check("verifier: scope decides whether the cheap run applies",
+          verifier.should_run(["tui/src/x.ts"], 0.0) is True
+          and verifier.should_run(["tui/src/x.ts"], 19.9) is False
+          and verifier.should_run(["tui/src/x.ts"], checks.HEALTH_WINDOW) is True,
+          "throttle window")
+    check("verifier: a docs-only change runs no scoped cheap spec",
+          checks.Verifier(specs, str(root)).should_run(["README.md"], 0.0) is False)
+    results = verifier.run(["tui/src/x.ts"])
+    check("verifier: run returns per-command results",
+          list(results) == ["true"] and results["true"].ok, str(list(results)))
+    check("verifier: run fills the kernel cache",
+          list(verifier.cache()) == ["true"] and verifier.cache()["true"]["ok"] is True,
+          str(verifier.cache()))
+    verifier.invalidate()
+    check("verifier: a mutation drops the cache and the last check",
+          verifier.cache() == {} and verifier.last is None)
+
+    marker = root / "second-ran"
+    short = checks.CheckSpec.parse([
+        {"name": "first", "cmd": "false", "cheap": True},
+        {"name": "second", "cmd": f"touch {marker}", "cheap": True},
+    ])
+    short_verifier = checks.Verifier(short, str(root))
+    short_results = short_verifier.run()
+    check("verifier: the first failure short-circuits the plan",
+          list(short_results) == ["false"] and not marker.exists()
+          and short_verifier.last.state == "failed", str(list(short_results)))
+
+    counter = root / "goal-runs"
+    goal_specs = checks.CheckSpec.parse([{"name": "count", "cmd": f"printf x >> {counter}"}])
+    goal_verifier = checks.Verifier(goal_specs, str(root))
+    first_ok, first_check = goal_verifier.authoritative()
+    second_ok, _ = goal_verifier.authoritative()
+    check("verifier: the goal runs the whole plan on every attempt",
+          first_ok and second_ok and counter.read_text() == "xx"
+          and first_check.state == "passed", counter.read_text())
+    legacy_ok, legacy_check = checks.Verifier(goal_specs, str(root), legacy=True).authoritative()
+    check("verifier: the legacy goal answers a bare bool",
+          legacy_ok is True and legacy_check is None, str(legacy_ok))
+    oracle = checks.Verifier(check=lambda: check_mod.Check(cmd="oracle", state="passed"),
+                             cwd=str(root), cheap_enabled=False)
+    check("verifier: a bare check is the goal",
+          oracle.has_goal and oracle.authoritative()[0] is True)
+    check("verifier: --health off disables the cheap run",
+          oracle.should_run([], 0.0) is False)
+    check("state: coverage merge",
+          state_loop.merge_ranges([(5, 9), (1, 4), (20, 20), (7, 12)]) == [[1, 12], [20, 20]],
+          str(state_loop.merge_ranges([(5, 9), (1, 4), (20, 20), (7, 12)])))
     check("state: coverage gaps", state_loop.gaps([(1, 10), (30, 40)], 50) == [[11, 29], [41, 50]])
     check("state: coverage count", state_loop.covered([(1, 10), (5, 20)]) == 20)
+    check("state: no ranges means no gaps",
+          state_loop.gaps([], 4) == [[1, 4]] and state_loop.gaps([(1, 4)], 4) == [])
+    check("state: an undigested read is exactly what read() delivered",
+          state_loop.delivered_ranges({"a.txt": {"ranges": [[1, 2], [2, 5]], "total": 9}}, "  1| x")
+          == {"a.txt": [[1, 5]]})
+    check("state: a digested raw read is not guessed",
+          state_loop.delivered_ranges({"a.txt": {"ranges": [[1, 2]], "total": 2}}, "alpha\nbeta", True) == {})
+    check("state: a digested numbered read keeps only the numbers it shows",
+          state_loop.delivered_ranges({"a.txt": {"ranges": [[1, 9]], "total": 9}},
+                                      "     1| a\n     2| b\n     9| i", True) == {"a.txt": [[1, 2], [9, 9]]},
+          str(state_loop.delivered_ranges({"a.txt": {"ranges": [[1, 9]], "total": 9}},
+                                          "     1| a\n     2| b\n     9| i", True)))
+    batch_reads = {"a.txt": {"ranges": [[1, 3]], "total": 3},
+                   "b.txt": {"ranges": [[1, 3]], "total": 3}}
+    batch_body = "# a.txt\n     1| a1\n     2| a2\n# b.txt\n     1| b1"
+    check("state: a digested batch read splits coverage by path header",
+          state_loop.delivered_ranges(batch_reads, batch_body, True)
+          == {"a.txt": [[1, 2]], "b.txt": [[1, 1]]},
+          str(state_loop.delivered_ranges(batch_reads, batch_body, True)))
+    check("state: a digested batch with no headers claims nothing",
+          state_loop.delivered_ranges(batch_reads, "     1| a1\n     2| a2", True) == {},
+          str(state_loop.delivered_ranges(batch_reads, "     1| a1\n     2| a2", True)))
 
     # --- goal check ----------------------------------------------------------------------
     passed = check_mod.run_check("true", str(root))
@@ -131,6 +277,35 @@ def main() -> int:
     check("check: passed", passed.ok and passed.state == "passed")
     check("check: failed", not failed.ok and failed.state == "failed")
     check("check: timeout is unrunnable, not failed", slow.state == "unrunnable", slow.state)
+
+    # --- protocol: a stale child is rejected, the current one is accepted -----------------
+    def _fake_kernel(protocol):
+        script = (
+            "import json, sys\n"
+            "for line in sys.stdin:\n"
+            "    json.loads(line)\n"
+            "    sys.__stdout__.write('@@K@@' + json.dumps({'protocol': __P__, 'stdout': 'fake'}) + '\\n')\n"
+            "    sys.__stdout__.flush()\n"
+        ).replace("__P__", str(protocol))
+        fake = Kernel(root, timeout=10)
+        fake._argv = lambda: [sys.executable, "-u", "-c", script]
+        return fake
+
+    stale = _fake_kernel(PROTOCOL - 1)
+    try:
+        cell = stale.run("pass")
+        check("kernel: a stale protocol is rejected and restarted",
+              cell.restarted and "protocol mismatch" in cell.stderr and not cell.stdout,
+              cell.stderr[:200])
+    finally:
+        stale.stop()
+    current = _fake_kernel(PROTOCOL)
+    try:
+        cell = current.run("pass")
+        check("kernel: the current protocol is accepted",
+              cell.stdout == "fake" and not cell.restarted, f"{cell.stdout!r} {cell.stderr!r}")
+    finally:
+        current.stop()
 
     # --- kernel: the action space an agent actually gets ---------------------------------
     kernel = Kernel(root, timeout=20, writable=True, prelude="all", allow_run=True)
@@ -149,6 +324,8 @@ def main() -> int:
         cell = kernel.run("edit('b.txt', 'one', 'uno')")
         check("kernel: edit reports the file", cell.changed == ["b.txt"], str(cell.changed))
         check("kernel: diff shows the hunk", "-one" in cell.delta and "+uno" in cell.delta, cell.delta[:120])
+        check("kernel: deltas carries the per-file hunk",
+              "+uno" in cell.deltas.get("b.txt", "") and "b.txt" in cell.changed, str(cell.deltas)[:120])
 
         kernel.run("write('gone.txt', 'x')")
         cell = kernel.run("import os; os.remove('gone.txt')")
@@ -201,6 +378,14 @@ def main() -> int:
         check("kernel: run() allows -c scripting",
               "command" in allowed or "exit_code" in allowed, allowed[:200])
 
+        cell = kernel.run("r = run(['echo one', 'echo two']); print(r['kind'], r['count'], 'one' in r['stdout'], 'two' in r['stdout'])")
+        check("kernel: run() accepts a list and concatenates its output",
+              "commands 2 True True" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.run("r = run(['echo ok', 'rm -rf a.txt']); print(r['ok'], [c.get('kind') for c in r['commands']], read('a.txt')['total_lines'])")
+        check("kernel: every command in a list is gated",
+              "False" in cell.stdout and "wrong_call" in cell.stdout and " 2" in cell.stdout,
+              (cell.stdout + cell.stderr)[:200])
+
         cell = kernel.run("run('sed -i s/alpha/omega/ a.txt')")
         refusal = str(cell.result)
         check("kernel: run() refuses a mutating shell verb",
@@ -225,6 +410,33 @@ def main() -> int:
         check("kernel: read(raw=True) can be sliced", "alp" in cell.stdout, (cell.stdout + cell.stderr)[:200])
         cell = kernel.run("print(read('a.txt')['content'][:20])")
         check("kernel: read()['content'] is the delivered text", "alpha" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+
+        kernel.run("write('multi_a.txt', 'one\\ntwo\\nthree\\n'); write('multi_b.txt', 'red\\nblue\\n')")
+        cell = kernel.run("r = read(['multi_a.txt', 'multi_b.txt']); print(r['kind'], r['count'], 'multi_a' in r['text'], 'multi_b' in r['text'])")
+        check("kernel: read() accepts a list and concatenates the delivery",
+              "files 2 True True" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        check("kernel: a batched read records every path's ranges",
+              {"multi_a.txt", "multi_b.txt"} <= set(cell.reads)
+              and cell.reads["multi_a.txt"]["total"] == 3, str(cell.reads)[:200])
+
+        cell = kernel.run("print(splice('multi_a.txt', 2, 2, 'TWO')['kind'], read('multi_a.txt')['text'])")
+        check("kernel: splice replaces a 1-based inclusive line range",
+              "splice" in cell.stdout and "TWO" in cell.stdout
+              and (root / "multi_a.txt").read_text() == "one\nTWO\nthree\n", cell.stdout[:200])
+        cell = kernel.run("print(splice('multi_a.txt', 1, 0, 'zero')['kind'])")
+        check("kernel: splice inserts when end < start",
+              "splice" in cell.stdout
+              and (root / "multi_a.txt").read_text() == "zero\none\nTWO\nthree\n", cell.stdout[:200])
+        cell = kernel.run("print(splice('multi_a.txt', 1, 1, '')['dels'])")
+        check("kernel: splice deletes a range",
+              "1" in cell.stdout
+              and (root / "multi_a.txt").read_text() == "one\nTWO\nthree\n", cell.stdout[:200])
+        cell = kernel.run("print(splice('multi_a.txt', 99, 99, 'x')['ok'])")
+        check("kernel: splice refuses a range past the end",
+              "False" in cell.stdout, cell.stdout[:200])
+        kernel.run("undo('multi_a.txt')")
+        check("kernel: undo covers a splice",
+              not (root / "multi_a.txt").exists(), str((root / "multi_a.txt").exists()))
 
         cell = kernel.run("print(run('echo \"a > b\"')['stdout'].strip())")
         check("kernel: a quoted > is an argument, not a redirect",
@@ -310,26 +522,39 @@ def main() -> int:
         cell = kernel.run("run('echo cached-check')", check_cache={"echo cached-check": "PASSED"})
         check("kernel: a plan check answers run() from the cache",
               "check_cached" in str(cell.result) and "PASSED" in str(cell.result), str(cell.result)[:160])
-        from bench.agent.kernel import Cell
         probe = state_loop.StateLoop(object(), kernel, loop.Budget(), keep_messages=4)
-        shown = Cell("[stdout]\nalpha\nbeta\n", "", None, None, 1, reads={"a.txt": {"ranges": [[1, 2]], "total": 2}})
+        shown = Cell(stdout="[stdout]\nalpha\nbeta\n", stderr="", result=None, final=None,
+                     duration_ms=1, reads={"a.txt": {"ranges": [[1, 2]], "total": 2}})
         probe._observe(shown, 1)
         check("state: a printed read counts as delivered",
               probe.coverage.get("a.txt", {}).get("ranges") == [[1, 2]], str(probe.coverage))
-        clipped = Cell("[stdout]\nalpha\n...[2 lines]...\n", "", None, None, 1, reads={"b.txt": {"ranges": [[1, 2]], "total": 2}})
-        (root / "b.txt").write_text("alpha\nbeta\n", encoding="utf-8")
-        probe._observe(clipped, 2)
-        check("state: a clipped read leaves the rest unread",
-              probe.coverage.get("b.txt", {}).get("ranges") == [[1, 1]]
-              and probe.coverage.get("b.txt", {}).get("total") == 2,
-              str(probe.coverage.get("b.txt"))[:120])
+        # A card the output budget actually digests claims only the numbered lines it kept:
+        # head, error lines and tail -- no file is opened to work that out.
+        numbered = "\n".join(f"{n:>6}| " + ("error: boom" if n == 300 else f"line {n}")
+                             for n in range(1, 901))
+        huge = Cell(stdout=numbered, stderr="", result=None, final=None, duration_ms=1,
+                    reads={"huge.txt": {"ranges": [[1, 900]], "total": 900}})
+        card, visible = state_loop.render_observation(huge, 1, 0, None, 800, {})
+        ranges = visible.get("huge.txt")
+        check("state: a digested card claims only the lines it kept",
+              bool(ranges) and 0 < state_loop.covered(ranges) < 900
+              and ranges[0][0] == 1 and ranges[-1][1] == 900 and [300, 300] in ranges,
+              f"{ranges} covered={state_loop.covered(ranges or [])}")
+        check("state: the digested card still names the ranges and the handle",
+              "[read] huge.txt" in card and "next " in card, card[:160])
+        raw_text = "\n".join(f"row {n}" for n in range(1, 401))
+        raw_cell = Cell(stdout=raw_text, stderr="", result=None, final=None, duration_ms=1,
+                        reads={"raw.txt": {"ranges": [[1, 2]], "total": 2}})
+        check("state: a digested raw read claims nothing",
+              state_loop.render_observation(raw_cell, 2, 0, None, 800, {})[1] == {},
+              raw_text[:40])
         (root / "blank.txt").write_text("a\n\nb\n", encoding="utf-8")
-        blank = Cell("[stdout]\n     1| a\n     2| \n     3| b\n", "", None, None, 1,
+        blank = Cell(stdout="\n".join(f"{n:>6}| " + ("" if n == 2 else f"line {n}") for n in range(1, 901)),
+                     stderr="", result=None, final=None, duration_ms=1,
                      reads={"blank.txt": {"ranges": [[1, 3]], "total": 3}})
-        probe._observe(blank, 3)
-        check("state: a blank delivered line still counts as delivered",
-              probe.coverage.get("blank.txt", {}).get("ranges") == [[1, 3]],
-              str(probe.coverage.get("blank.txt"))[:120])
+        _, blank_visible = state_loop.render_observation(blank, 3, 0, None, 800, {})
+        check("state: a blank numbered line still counts as delivered",
+              blank_visible.get("blank.txt") == [[1, 3]], str(blank_visible.get("blank.txt"))[:120])
         messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "p"}]
         for i in range(6):
             messages.append({"role": "assistant", "content": "", "tool_calls": [{"id": str(i)}]})
@@ -350,6 +575,186 @@ def main() -> int:
               cell.final == "x" and "noise" in cell.stdout, str(cell.final))
     finally:
         kernel.stop()
+
+    # --- the turn machine: finish protocol, stop vocabulary and call pairing --------------
+    check("turn: the stop vocabulary is fixed",
+          set(tool_loop.STOPS) == {"DONE", "VERIFIED", "STEP_LIMIT", "WALL_LIMIT", "STAGED",
+                                   "GOAL_UNMET", "TRUNCATED", "BAD_ARGS", "LLM_FAILED"},
+          str(tool_loop.STOPS))
+    check("turn: a turn outcome defaults to continuing",
+          not tool_loop.TurnOutcome().end and tool_loop.TurnOutcome().stop is None)
+
+    staged_code = "print('evidence'); final_answer('answer A')"
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", staged_code)]), _reply(content="ok", finish="stop")],
+        {staged_code: _cell(final="answer A", stdout="evidence\n")})
+    check("turn: a staged answer is accepted by a no-tool reply",
+          result.final == "answer A" and result.stop == tool_loop.DONE
+          and result.turns[0]["stop"] == tool_loop.STAGED, f"{result.stop} {result.final!r}")
+    check("turn: the staging notice reaches the model as the tool result",
+          "answer staged" in (result.turns[0]["calls"][0]["notice"] or "")
+          and "answer staged" in client.requests[1][-1]["content"], str(result.turns[0])[:200])
+
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", staged_code), _call("c2", "print('more')")]),
+         _reply(content="", finish="stop")],
+        {staged_code: _cell(final="answer A", stdout="evidence\n"),
+         "print('more')": _cell(stdout="more\n")})
+    check("turn: staging survives a later call in the same turn",
+          result.final == "answer A" and len(result.turns[0]["calls"]) == 2
+          and result.turns[0]["calls"][0]["stop"] == tool_loop.STAGED
+          and result.turns[0]["calls"][1]["stop"] is None, str(result.turns[0]["calls"])[:300])
+
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", staged_code)]),
+         _reply(calls=[_call("c2", "print('more')")]),
+         _reply(content="a later answer", finish="stop")],
+        {staged_code: _cell(final="answer A", stdout="evidence\n"),
+         "print('more')": _cell(stdout="more\n")})
+    check("turn: a non-final cell in a later turn clears the staged answer",
+          result.turns[0]["stop"] == tool_loop.STAGED and result.final == "a later answer",
+          f"{result.stop} {result.final!r}")
+
+    late = "print('must not run')"
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", "final_answer('now')"), _call("c2", late)])],
+        {"final_answer('now')": _cell(final="now")})
+    check("turn: an accepted final_answer stops the later calls in that turn",
+          late not in kernel.codes and result.final == "now" and result.stop == tool_loop.DONE,
+          str(kernel.codes))
+    check("turn: a skipped call survives in the turn record",
+          len(result.turns[0]["calls"]) == 2 and result.turns[0]["calls"][1].get("skipped") is True,
+          str(result.turns[0]["calls"])[:300])
+
+    probe = tool_loop.ToolLoop(FakeClient([]), FakeKernel({}), loop.Budget())
+    accepted = tool_loop.FinishState()
+    accepted.accept("done")
+    probe_messages: list[dict] = [{"role": "assistant", "content": "", "tool_calls": [
+        _call("a", "print(1)"), _call("b", None, name="other")]}]
+    probe._answer_calls(probe_messages, {"runs": []}, probe_messages[0]["tool_calls"], "stop",
+                        accepted, tool_loop.Tally(), set(), 1)
+    ids, paired = _paired_messages(probe_messages)
+    check("turn: calls after an accepted finish are still paired with tool messages",
+          ids == paired == ["a", "b"] and "skipped" in probe_messages[-1]["content"], f"{ids} {paired}")
+
+    raise_code = "raise_in_kernel()"
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("a", None, name="write"),
+                       _call("b", None, arguments="{not json"),
+                       _call("c", raise_code), _call("d", "print('kept')")]),
+         _reply(content="all done", finish="stop")],
+        {"print('kept')": _cell(stdout="kept\n")}, raises={raise_code})
+    ids, paired = _paired_messages(client.requests[1])
+    check("turn: every tool call in a turn is paired with exactly one tool message",
+          ids == paired == ["a", "b", "c", "d"], f"{ids} {paired}")
+    tool_messages = {m["tool_call_id"]: m["content"] for m in client.requests[1] if m.get("role") == "tool"}
+    check("turn: a raising dispatch is answered, not orphaned",
+          "kernel exploded" in tool_messages.get("c", ""), str(tool_messages)[:300])
+    check("turn: every call in a multi-call turn survives in the record",
+          [c["stop"] for c in result.turns[0]["calls"]] == [None, tool_loop.BAD_ARGS, None, None]
+          and result.turns[0]["calls"][3]["code"] == "print('kept')"
+          and result.turns[0]["stop"] == tool_loop.BAD_ARGS,
+          str(result.turns[0]["calls"])[:300])
+
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("x", "boom()"), _call("y", "print('after')")]),
+         _reply(content="done", finish="stop")],
+        {"print('after')": _cell(stdout="after\n")}, raises={"boom()"})
+    ids, paired = _paired_messages(client.requests[1])
+    check("turn: an unexpected Kernel.run exception still pairs the turn",
+          ids == paired == ["x", "y"] and "kernel exploded" in client.requests[1][-2]["content"],
+          f"{ids} {paired}")
+
+    fail_code = "print('first')"
+    fail_client = FakeClient([_reply(calls=[_call("c1", fail_code)]),
+                              llm.LLMError("upstream 500")])
+    fail_kernel = FakeKernel({fail_code: _cell(stdout="first\n")})
+    fail_trace = Path(tempfile.mkdtemp(prefix="cact-smoke-trace-")) / "trace.jsonl"
+    fail_result = tool_loop.ToolLoop(fail_client, fail_kernel, loop.Budget()).run(
+        "smoke", "task", trace.Trace(str(fail_trace)))
+    fail_records = [json.loads(line) for line in fail_trace.read_text().splitlines()]
+    fail_summary = fail_records[-1]
+    check("turn: a primary LLMError stops with LLM_FAILED and a summary record",
+          fail_result.stop == tool_loop.LLM_FAILED
+          and fail_summary.get("summary") is True
+          and fail_summary["stop"] == tool_loop.LLM_FAILED
+          and fail_summary["llm_calls"] == 2,
+          f"{fail_result.stop} {fail_summary}")
+
+    push_client = FakeClient([_reply(content="budget summary", finish="stop")])
+    push_result = tool_loop.ToolLoop(push_client, FakeKernel({}), loop.Budget(max_steps=0)).run(
+        "smoke", "task")
+    check("turn: the budget-forced _push counts as an llm call",
+          push_result.steps == 0 and push_result.llm_calls == 1
+          and push_result.stop == tool_loop.STEP_LIMIT,
+          f"steps={push_result.steps} llm_calls={push_result.llm_calls} stop={push_result.stop}")
+
+    restarted = Cell(stdout="", stderr="kernel died; restarted with an empty namespace",
+                     result=None, final=None, duration_ms=1, restarted=True)
+    restart_client = FakeClient([_reply(calls=[_call("r1", "print(1)")]),
+                                 _reply(content="done", finish="stop")])
+    restart_loop = state_loop.StateLoop(restart_client, FakeKernel({"print(1)": restarted}),
+                                        loop.Budget())
+    restart_loop.run("smoke", "task")
+    restart_card = restart_client.requests[1][-1]["content"]
+    check("state: a restarted cell's card names the restart",
+          "[state] kernel restarted" in restart_card, restart_card[:300])
+
+    goals = []
+
+    def flaky_goal() -> bool:
+        goals.append(1)
+        return len(goals) > 1
+
+    result, client, kernel = _run_loop(
+        [_reply(content="I am done", finish="stop"), _reply(content="now really", finish="stop")],
+        {}, goal=flaky_goal)
+    check("turn: a failing goal re-prompts instead of finishing",
+          result.turns[0]["stop"] == tool_loop.GOAL_UNMET and result.stop == tool_loop.DONE
+          and result.final == "now really", f"{result.stop} {result.final!r} {goals}")
+    check("turn: the rejection notice names the check",
+          "You finished without a passing check" in client.requests[1][-1]["content"],
+          str(client.requests[1][-1])[:200])
+
+    goal_checks = []
+
+    def goal_eventually_passes() -> bool:
+        goal_checks.append(1)
+        return len(goal_checks) > 1
+
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", staged_code)]), _reply(content="", finish="stop"),
+         _reply(content="now passing", finish="stop")],
+        {staged_code: _cell(final="answer A", stdout="evidence\n")},
+        goal=goal_eventually_passes)
+    check("turn: a staged answer is still rejected until the goal passes",
+          result.turns[1]["stop"] == tool_loop.GOAL_UNMET and result.final == "now passing"
+          and result.stop == tool_loop.DONE, f"{result.stop} {result.final!r} {goal_checks}")
+
+    # --- the fenced-block dialect reuses that machine, not a copy of it -------------------
+    check("repl: the loop reuses the turn machine", issubclass(repl.ReplLoop, tool_loop.ToolLoop))
+    repl_code = "print('hi')"
+    repl_client = FakeClient([_reply(content=f"```python\n{repl_code}\n```\n", finish="stop"),
+                              _reply(content="ANSWER: 7", finish="stop")])
+    repl_kernel = FakeKernel({repl_code: _cell(stdout="hi\n")})
+    repl_loop = repl.ReplLoop(repl_client, repl_kernel, loop.Budget())
+    repl_result = repl_loop.run("smoke", "task")
+    check("repl: a fenced block runs and ANSWER finishes through the shared loop",
+          repl_result.steps == 2 and repl_result.final == "7"
+          and repl_result.stop == tool_loop.DONE and repl_kernel.codes == [repl_code]
+          and repl_loop.tools is None,
+          f"{repl_result.stop} {repl_result.final!r} {repl_kernel.codes}")
+
+    printing = "print('seen'); final_answer('A')"
+    repl_client = FakeClient([_reply(content=f"```python\n{printing}\n```\n", finish="stop"),
+                              _reply(content="```python\nfinal_answer('A')\n```\n", finish="stop")])
+    repl_kernel = FakeKernel({printing: _cell(final="A", stdout="seen\n"),
+                              "final_answer('A')": _cell(final="A")})
+    repl_result = repl.ReplLoop(repl_client, repl_kernel, loop.Budget()).run("smoke", "task")
+    check("repl: a printing final_answer is UNREVIEWED, then accepted",
+          repl_result.turns[0]["stop"] == "UNREVIEWED" and repl_result.final == "A"
+          and repl_result.stop == tool_loop.DONE,
+          f"{repl_result.stop} {repl_result.final!r} {repl_result.turns[0].get('stop')}")
 
     print()
     if FAILED:

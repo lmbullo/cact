@@ -24,11 +24,11 @@ INVARIANTS
   - Rules = STATE_RULES (or TOOL_RULES when MODE != "state") + AUTONOMOUS, plus RUN_NOTE
     when run() is enabled. Production is always unattended: no human answers questions.
   - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/checks.py.
-    The whole plan becomes the goal callable, so it re-runs on every finish attempt and
+    One `checks.Verifier` owns the plan, so the goal re-runs it on every finish attempt and
     `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
-    never ends the run by itself. The `cheap` entries also become the loop's `health`
-    check, which is what the `[check]` card line reports; each `scope` keeps a health run
-    to the paths that changed, while the goal runs the whole plan.
+    never ends the run by itself. The same object decides the `cheap` health run (the
+    `[check]` card line): each spec's `scope` keeps it to the paths that changed, the whole
+    plan still runs on a finish, and the cache is injected into the kernel.
   - CODE_TUI_LEGACY_CHECK=1 makes the goal answer with a bare pass/fail (no Check text);
     CODE_TUI_LEGACY_TIMEOUT=1 turns off the in-child cell alarm.
   - Status mapping is fixed: DONE|VERIFIED -> done, STEP_LIMIT|WALL_LIMIT with a non-empty
@@ -64,8 +64,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bench.agent import config  # noqa: E402
-from bench.agent.check import run_check  # noqa: E402
-from bench.agent.checks import CheckSpec, run_plan, run_specs  # noqa: E402
+from bench.agent.checks import CheckSpec, Verifier  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
 from bench.agent.repl import RUN_NOTE  # noqa: E402
@@ -161,6 +160,7 @@ class EventTrace:
             "tool_calls": record.get("tool_calls"),
             "finish": record.get("finish"),
             "observation": record.get("observation"),
+            "calls": record.get("calls") or [],
             "obs": record.get("obs"),
             "reads": record.get("reads") or {},
             "runs": record.get("runs") or [],
@@ -225,21 +225,11 @@ def main() -> int:
     if allow_run:
         rules += RUN_NOTE
     specs = CheckSpec.parse(json.loads(args.checks)) if args.checks.strip() else CheckSpec.parse(args.check.strip())
-    goal = None
-    health = None
+    verifier = None
     goal_label = "verified"
     legacy_check = os.environ.get("CODE_TUI_LEGACY_CHECK") == "1"
     if specs:
-        def plan_goal():
-            result = run_specs(specs, str(workspace))
-            if legacy_check:
-                return bool(result and result.ok)
-            return result
-        goal = plan_goal
-        cheap = [spec for spec in specs if spec.cheap]
-        if cheap:
-            def health(paths=None):
-                return run_plan(cheap, str(workspace), paths)
+        verifier = Verifier(specs, str(workspace), legacy=legacy_check)
         goal_label = "verified: " + ", ".join(spec.name for spec in specs) + " passed"
 
     kernel: StreamingKernel | None = None
@@ -271,11 +261,10 @@ def main() -> int:
             history=config.HISTORY,
             obs_chars=config.OBS_CHARS,
             stop="call",
-            goal=goal,
             goal_label=goal_label,
             goal_stops=False,
             mode=config.MODE,
-            health=health,
+            verifier=verifier,
         )
         original = prompt
         brief = history_brief(workspace)

@@ -5,7 +5,7 @@ WHAT IT IS
   1. Source strings executed *inside* the child interpreter:
        DRIVER       loop: one JSON line per cell on stdin -> exec() in a namespace that
                     survives between cells -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects read/grep/guide/map/write/edit/changes/diff/undo/recall into
+       PRELUDE      injects read/grep/guide/map/write/edit/splice/changes/diff/undo/recall into
                     that namespace and journals every mutation (snapshot at start, tree diff
                     after each cell). `guide()` is headers.py, shipped as source and exec'd
                     into a private `_HEADERS` namespace (see HEADERS_SOURCE).
@@ -14,18 +14,27 @@ WHAT IT IS
      when it dies, hangs or desynchronises, and returns a `Cell`.
 
 ENTRY POINTS
+  PROTOCOL = the version both halves speak; bump it when either shape below changes
+  CellRequest(code, timeout, protocol=PROTOCOL, check_cache={})
+    .to_wire() -> the one JSON line written to the child's stdin
+  CellReply: the typed body of one `@@K@@` line; `.from_wire(dict)` parses it,
+             `.protocol_ok` compares its version with PROTOCOL
+  ExtendNotice: the interim `{"extend": seconds}` line a long cell sends
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, supervise=True)
     .start()   spawn the child (lazy: .run() calls it)
     .run(code, check_cache=None) write one cell, wait for it, -> Cell
     .stop()    SIGKILL the process group, reap run() groups, delete the observation log
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
-        mutated, changed, delta, timeout, reads
-  Inside the kernel namespace: read(), grep(), guide(), map(), write(), edit(), apply(),
-        commit(), changes(), diff(), undo(), recall(), run() (when allow_run),
-        final_answer(), emit()
+        mutated, changed, deltas, delta, timeout, reads
+    .failure(message, ...) the one restart/error constructor
+    .from_reply(reply, duration_ms=...) the one success constructor
+  Inside the kernel namespace: read() (a path or a list of paths), grep(), guide(), map(),
+        write(), edit(), splice(), apply(), commit(), changes(), diff(), undo(), recall(),
+        run() (when allow_run), final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
-  `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish protocol).
+  `Cell.deltas` / `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish
+  protocol).
 
 INVARIANTS
   - The child's stdout is a protocol channel: every message is exactly one `@@K@@`-prefixed
@@ -49,10 +58,13 @@ INVARIANTS
   - Every mutation goes through `_commit`: journal row, snapshot diff, `_CELL_CHANGED`.
     That single path is what changes()/diff()/undo() and the `[state] changed:` card read.
     `write()` replaces (refuses to drop a tail without force=True); `edit()` reports
-    ambiguity instead of guessing; `apply(unified diff)` and `commit({path: text})` write
+    ambiguity instead of guessing; `splice(path, start, end, text)` replaces 1-based
+    inclusive lines through the same journal (read() numbers lines, so a surgical change
+    costs only the changed lines); `apply(unified diff)` and `commit({path: text})` write
     several files in one cell, so one diff()/undo() covers the whole change set.
   - run() runs whole commands, not a whitelist. Reads, searches, tests, builds, linters and
-    read-only git are allowed as they are; the shell is a normal tool. Only *mutating* shell
+    read-only git are allowed as they are; the shell is a normal tool. A list argument runs
+    every command through the same gate. Only *mutating* shell
     verbs (tee, cp, mv, rm, sed -i, git apply/checkout/..., `>` redirection, ...) are refused
     with `kind: "wrong_call"` plus a `use` hint, because they would bypass the journal and
     make diff()/undo() lie. That is a correctness boundary, not a capability boundary: a
@@ -67,13 +79,23 @@ INVARIANTS
     turns into a `wrong_call` result with the helper hint. Allowed spawns are appended to
     `Cell.runs`. Inside run() the gate classifies but does not double-log.
   - `read()` is a ledger, not a firehose: `limit=0` returns the whole file only while it fits
-    400 lines / 9 KB; beyond that the result carries `next.offset`. Every delivered range is
-    returned as `Cell.reads = {path: {ranges, total}}`, so the loop can see holes.
+    400 lines / 9 KB; beyond that the result carries `next.offset`. A list argument reads
+    several files in one cell (same offset/limit, `text` concatenated with `# path` headers),
+    so batching is the tool's shape rather than a rule. Every delivered range is returned as
+    `Cell.reads = {path: {ranges, total}}`, so the loop can see holes.
   - `check_cache` is sent with each cell (`{command: {text, ok}}`); `run()` answers a
     matching command with `kind: "check_cached"` instead of spawning the same check twice.
   - run() enabled => the child is a plain `python3 -u -c DRIVER`. run() disabled => the child
     runs under bwrap with a read-only `/` (the root is bind-mounted writable only when
     `writable=True`).
+  - The protocol is versioned. Every request carries `protocol: PROTOCOL` and every child
+    message carries the same field. On the FIRST message of a cell the parent compares it;
+    a mismatch restarts the child with an empty namespace (history is kept) and returns a
+    `Cell` error, so a stale child can never be read through the current shape. Bump
+    PROTOCOL whenever a field changes meaning or a field is removed.
+  - `changed` is the list of paths; `deltas` is the per-path unified diff the same journal
+    produced. `delta` is only the joined text the card renders. The loop reads `deltas`,
+    never re-parses `delta`.
 
 WHERE TO CHANGE
   Add a file/exec helper for the model .... PRELUDE or RUN_PRELUDE, plus the matching rule
@@ -81,7 +103,9 @@ WHERE TO CHANGE
                                             state_loop.STATE_RULES, or the model never sees it
   Change what a helper returns ............ the helper's dict shape in PRELUDE; the loops
                                             only pass the text through
-  Change the cell result shape ............ `Cell` + the driver's final `emit({...})` payload
+  Change the cell result shape ............ `CellRequest` / `CellReply` / `Cell` + the driver's
+                                            final `emit({...})` payload; bump `PROTOCOL`
+  Change the protocol version ............. `PROTOCOL` (child placeholder replaced at import)
   Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`,
                                             `_reap_orphans` + `_journal_orphan`, `obs_log`
   Change what run() refuses .............. `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` /
@@ -103,9 +127,16 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# --- protocol: one typed request/response pair over the `@@K@@` line ----------------------
+# Bump PROTOCOL when either half's shape changes. The child embeds the same number through
+# the __PROTOCOL__ placeholder; the parent compares it on the first message of every cell.
+PROTOCOL = 2
+
 # --- child side 1/3: DRIVER, the cell loop (stdin JSON in, `@@K@@` line out) -------------
 DRIVER = r'''
 import ast, contextlib, io, json, os, signal, sys, time, traceback
+
+_PROTOCOL = __PROTOCOL__
 
 class _CellTimeout(Exception):
     pass
@@ -124,7 +155,7 @@ def _extend(seconds):
     _CELL_END = max(_CELL_END, time.monotonic() + float(seconds))
     signal.setitimer(signal.ITIMER_REAL, max(0.05, _CELL_END - time.monotonic()))
     try:
-        sys.__stdout__.write("@@K@@" + json.dumps({"extend": float(seconds)}) + "\n")
+        sys.__stdout__.write("@@K@@" + json.dumps({"protocol": _PROTOCOL, "extend": float(seconds)}) + "\n")
         sys.__stdout__.flush()
     except Exception:
         pass
@@ -263,23 +294,19 @@ for line in sys.stdin:
     _mutated = bool(ns.get("_MUT"))
     ns["_MUT"] = False
     _delta_fn = ns.get("_delta")
-    _delta = ""
+    _deltas = {}
     if callable(_delta_fn):
         try:
-            _delta = "\n".join(_delta_fn())[:12000]
+            _deltas = {str(_rel): str(_text) for _rel, _text in dict(_delta_fn()).items()}
         except Exception:
-            _delta = ""
+            _deltas = {}
+    # `deltas` is the structured contract; `delta` is only the joined text the card renders.
+    _delta = "\n".join(_deltas[_rel] for _rel in sorted(_deltas))[:12000]
     # `changed` is THIS cell, not the session: typed commits are in _CELL_CHANGED and a
     # program that wrote through open()/subprocess shows up in the tree delta. A file that
     # was created and removed in the same cell is not a change, so filter the typed list by
     # the current tree as well.
-    _delta_paths = set()
-    for _line in _delta.splitlines():
-        if _line.startswith("+++ b/"):
-            _delta_paths.add(_line[6:].strip())
-        elif _line.startswith("--- a/"):
-            # Deletions show as a/... -> /dev/null; the source side still names the path.
-            _delta_paths.add(_line[6:].strip())
+    _delta_paths = set(_deltas)
     _now_state = ns.get("_LAST_STATE") or {}
     _base_state = ns.get("_BASE") or {}
     _changed: list[str] = []
@@ -297,12 +324,13 @@ for line in sys.stdin:
                 _fh.write(json.dumps(_obs_log[-1]) + "\n")
         except OSError:
             pass
-    emit({"stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
+    emit({"protocol": _PROTOCOL,
+          "stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
           "runs": emitted_runs, "reads": dict(ns.get("_READS_CELL") or {}),
           "obs_index": len(_obs_log) - 1, "mutated": _mutated,
-          "changed": _changed, "delta": _delta, "timeout": timed_out,
+          "changed": _changed, "deltas": _deltas, "delta": _delta, "timeout": timed_out,
           "answer": None if answer is None else (answer if isinstance(answer, str) else repr(answer))})
-'''
+'''.replace("__PROTOCOL__", str(PROTOCOL))
 
 
 # --- child side 2/3: PRELUDE, the file helpers and the mutation journal the model calls ----
@@ -348,13 +376,13 @@ _HINT = {
     "more": "read(path)", "wc": "read(path)['total_lines']",
     "stat": "map(path)", "grep": "grep(pattern, path)",
     "rg": "grep(pattern, path, regex=True)", "ag": "grep(pattern, path)",
-    "sed": "read(path) or edit(path, old, new)",
+    "sed": "splice(path, start, end, text) or edit(path, old, new)",
     "awk": "read(path) with Python string slicing",
     "find": "map(path)", "ls": "map(path)", "tree": "map(path)",
-    "du": "map(path)", "tee": "write(path, content)",
+    "du": "map(path)", "tee": "splice(path, start, end, text) or write(path, content)",
     "touch": "write(path, '')", "cp": "read + write",
     "mv": "write + os.remove", "rm": "os.remove",
-    "truncate": "write(path, '')",
+    "truncate": "splice(path, 1, read(path)['total_lines'], '') or write(path, '')",
 }
 
 
@@ -541,13 +569,13 @@ def _delta():
     _snapshot()
     now = {rel: row["text"] for rel, row in _tree_state().items()}
     prev = _LAST_STATE if _LAST_STATE is not None else {rel: row["text"] for rel, row in _BASE.items()}
-    texts = []
+    deltas = {}
     for rel in sorted(set(prev) | set(now)):
         before, after = prev.get(rel), now.get(rel)
         if before != after:
-            texts.append(_row(rel, before, after)[3])
+            deltas[rel] = _row(rel, before, after)[3]
     _LAST_STATE = now
-    return texts
+    return deltas
 
 
 def changes():
@@ -638,6 +666,21 @@ def map(path=".", max_files=400):
 
 
 def read(path, offset=1, limit=0, raw=False):
+    # A list is one call for several files: the model's natural batch shape. Each sub-read
+    # records its own _READS_CELL ranges, so coverage stays exact. `text` is the concatenation
+    # with a `# path` header, so print(read([a, b])['text']) gives the model everything at once.
+    if isinstance(path, (list, tuple, set)):
+        paths = sorted(path) if isinstance(path, set) else list(path)
+        results = [read(item, offset=offset, limit=limit, raw=raw) for item in paths]
+        chunks = []
+        for item in results:
+            rel = str(item.get("path") or "")
+            if item.get("kind") == "file":
+                chunks.append("# " + rel + "\n" + (item.get("text") or ""))
+            else:
+                chunks.append("# " + rel + "\n" + str(dict(item)))
+        return _Result({"ok": all(bool(item.get("ok")) for item in results), "kind": "files",
+                        "files": results, "count": len(results), "text": "\n\n".join(chunks)})
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
@@ -783,6 +826,52 @@ def edit(path, old, new, all=False, replace_all=None):
     return {"ok": True, "kind": "edit", "path": rel, "replaced": count if all else 1,
             "lines": entry["after_lines"], "hunk": hunk, "hunk_lines": [lo, hi],
             "adds": entry["adds"], "dels": entry["dels"]}
+
+
+def splice(path, start, end=None, text=""):
+    # Replace 1-based inclusive lines start..end with text. end < start inserts before start;
+    # text="" deletes the range. read() already returns numbered lines, so the model never
+    # re-emits unchanged lines for a surgical change. _commit keeps diff()/undo() honest.
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+    if not _os.path.isfile(target):
+        return {"ok": True, "kind": "no_change", "path": rel, "reason": "missing"}
+    body = _read_text(target)
+    lines = body.splitlines()
+    total = len(lines)
+    try:
+        a = int(start)
+        b = a if end is None else int(end)
+    except (TypeError, ValueError):
+        return {"ok": False, "kind": "splice", "path": rel,
+                "reason": "start and end must be integers (1-based line numbers)"}
+    if a < 1:
+        return {"ok": False, "kind": "splice", "path": rel,
+                "reason": "start is 1-based", "total_lines": total}
+    replacement = str(text).splitlines()
+    if b < a:
+        if a > total + 1:
+            return {"ok": False, "kind": "splice", "path": rel,
+                    "reason": "insert position is past the end", "total_lines": total,
+                    "next": total + 1}
+        new_lines = lines[:a - 1] + replacement + lines[a - 1:]
+    else:
+        if a > total or b > total:
+            return {"ok": False, "kind": "splice", "path": rel,
+                    "reason": "range is past the end; read(path) shows total_lines",
+                    "total_lines": total, "next": a}
+        new_lines = lines[:a - 1] + replacement + lines[b:]
+    trailing = "\n" if body.endswith("\n") or not lines else ""
+    updated = "\n".join(new_lines) + trailing
+    entry = _commit(target, rel, updated, "splice")
+    lo = max(1, a - 3)
+    hi = min(len(new_lines), a + len(replacement) + 3)
+    hunk = "\n".join(f"{n:>6}| {new_lines[n - 1]}" for n in range(lo, hi + 1)) if hi >= lo else ""
+    return {"ok": True, "kind": "splice", "path": rel,
+            "replaced": [a, b] if b >= a else [a, a - 1],
+            "lines": entry["after_lines"], "adds": entry["adds"], "dels": entry["dels"],
+            "hunk": hunk, "hunk_lines": [lo, hi] if hi >= lo else []}
 
 def _parse_patch(patch):
     files = []
@@ -932,10 +1021,11 @@ _HINT = {
     "cp": "read(path) then write(new_path, text)",
     "mv": "write(new_path, read(path)['text']) then os.remove(path)",
     "rm": "os.remove(path)", "truncate": "write(path, '')",
-    "sed -i": "edit(path, old, new)", "mkdir": "os.makedirs(path, exist_ok=True)",
-    "patch": "apply(patch)",
-    "git": "git add/commit/push are allowed; edit files with write/edit/apply/commit",
-    ">": "write(path, content)", "find -delete": "map() then os.remove(path)",
+    "sed -i": "splice(path, start, end, text) or edit(path, old, new)",
+    "mkdir": "os.makedirs(path, exist_ok=True)",
+    "patch": "apply(patch) or splice(path, start, end, text)",
+    "git": "git add/commit/push are allowed; edit files with splice/edit/apply/commit",
+    ">": "splice(path, start, end, text) or write(path, content)", "find -delete": "map() then os.remove(path)",
     "xargs": "a Python loop",
 }
 
@@ -1108,6 +1198,17 @@ _sys.addaudithook(_audit_spawn)
 
 def run(command, timeout=60, cwd=None):
     global _GATE_IN_RUN
+    # A list is one call for several commands: the same gate and journal rules apply to each.
+    # Each sub-run is a normal run(), so _RUN_LOG, check_cache and the spawn gate stay exact.
+    if isinstance(command, (list, tuple)):
+        items = [run(item, timeout=timeout, cwd=cwd) for item in command]
+        stdout = "\n".join(str(item.get("stdout") or "") for item in items).strip()
+        stderr = "\n".join(str(item.get("stderr") or "") for item in items).strip()
+        return _Result({"ok": all(bool(item.get("ok")) for item in items), "kind": "commands",
+                        "count": len(items), "commands": items,
+                        "stdout": stdout, "stderr": stderr,
+                        "exit_code": next((item.get("exit_code") for item in items
+                                            if item.get("exit_code") not in (0, None)), 0)})
     _RUN_LOG.append(str(command))
     cached = _CHECK_CACHE.get(_norm_command(command))
     if cached:
@@ -1121,7 +1222,7 @@ def run(command, timeout=60, cwd=None):
                 "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."})
     blocked = _mutating_command(command)
     if blocked:
-        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "write(), edit(), apply() or commit()")
+        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "splice(), edit(), apply() or commit()")
         return _Result({
             "ok": False,
             "kind": "wrong_call",
@@ -1153,7 +1254,7 @@ def run(command, timeout=60, cwd=None):
         finally:
             _GATE_IN_RUN -= 1
     except _SpawnBlocked as exc:
-        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "write(), edit(), apply() or commit()")
+        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "splice(), edit(), apply() or commit()")
         return _Result({"ok": False, "kind": "wrong_call", "command": str(command),
                 "blocked": exc.blocked,
                 "error": {"code": "mutation_via_run", "message": str(exc), "use": use},
@@ -1187,6 +1288,83 @@ MAX_OUTPUT = 0
 CELL_TIMEOUT = 15.0
 
 
+_RESTART_DIED = "kernel died; restarted with an empty namespace (earlier output survives in recall())"
+_RESTART_DESYNC = "kernel protocol desync; restarted with an empty namespace (earlier output survives in recall())"
+
+
+@dataclass
+class CellRequest:
+    """One cell as it goes on the wire: exactly one JSON line to the child's stdin."""
+
+    code: str
+    timeout: float
+    protocol: int = PROTOCOL
+    check_cache: dict = field(default_factory=dict)
+
+    def to_wire(self) -> dict:
+        payload = {"protocol": self.protocol, "code": self.code, "timeout": float(self.timeout)}
+        if self.check_cache:
+            payload["check_cache"] = self.check_cache
+        return payload
+
+
+@dataclass
+class CellReply:
+    """The typed body of one `@@K@@` line; `protocol` must equal PROTOCOL."""
+
+    stdout: str = ""
+    stderr: str = ""
+    result: str | None = None
+    final: str | None = None
+    answer: str | None = None
+    runs: list[str] = field(default_factory=list)
+    obs_index: int | None = None
+    mutated: bool = False
+    changed: list[str] = field(default_factory=list)
+    deltas: dict[str, str] = field(default_factory=dict)
+    delta: str = ""
+    timeout: bool = False
+    reads: dict = field(default_factory=dict)
+    protocol: int | None = None
+
+    @classmethod
+    def from_wire(cls, data: dict) -> "CellReply":
+        return cls(
+            stdout=str(data.get("stdout") or ""),
+            stderr=str(data.get("stderr") or ""),
+            result=data.get("result"),
+            final=data.get("final"),
+            answer=data.get("answer"),
+            runs=[str(item) for item in (data.get("runs") or [])],
+            obs_index=data.get("obs_index"),
+            mutated=bool(data.get("mutated")),
+            changed=[str(item) for item in (data.get("changed") or [])],
+            deltas={str(path): str(text) for path, text in (data.get("deltas") or {}).items()},
+            delta=str(data.get("delta") or ""),
+            timeout=bool(data.get("timeout")),
+            reads=dict(data.get("reads") or {}),
+            protocol=data.get("protocol"),
+        )
+
+    @property
+    def protocol_ok(self) -> bool:
+        return self.protocol == PROTOCOL
+
+
+@dataclass
+class ExtendNotice:
+    """An interim `@@K@@` line a long cell sends before its reply."""
+
+    seconds: float | None = None
+    protocol: int | None = None
+
+    @classmethod
+    def from_wire(cls, data: dict) -> "ExtendNotice":
+        seconds = data.get("extend")
+        return cls(seconds=None if seconds is None else float(seconds),
+                   protocol=data.get("protocol"))
+
+
 @dataclass
 class Cell:
     stdout: str
@@ -1200,9 +1378,38 @@ class Cell:
     obs_index: int | None = None
     mutated: bool = False
     changed: list[str] = field(default_factory=list)
+    deltas: dict[str, str] = field(default_factory=dict)
     delta: str = ""
     timeout: bool = False
     reads: dict = field(default_factory=dict)
+
+    @classmethod
+    def failure(cls, message: str, *, restarted: bool = True, timeout: bool = False,
+                duration_ms: int = 0) -> "Cell":
+        """The one error/restart constructor: no namespace state, the message is the card."""
+        return cls(stdout="", stderr=message, result=None, final=None,
+                   duration_ms=duration_ms, restarted=restarted, timeout=timeout)
+
+    @classmethod
+    def from_reply(cls, reply: CellReply, *, duration_ms: int) -> "Cell":
+        """The one success constructor: a validated reply becomes the loop's Cell."""
+        return cls(
+            stdout=_cap(reply.stdout),
+            stderr=_cap(reply.stderr),
+            result=reply.result,
+            final=reply.final,
+            duration_ms=duration_ms,
+            restarted=False,
+            answer=reply.answer,
+            runs=list(reply.runs),
+            obs_index=reply.obs_index,
+            mutated=reply.mutated,
+            changed=list(reply.changed),
+            deltas=dict(reply.deltas),
+            delta=reply.delta,
+            timeout=reply.timeout,
+            reads=dict(reply.reads),
+        )
 
 
 def _cap(text: str, limit: int = MAX_OUTPUT) -> str:
@@ -1347,71 +1554,72 @@ class Kernel:
         self._stop(keep_history=True)
         self.start()
 
+    @staticmethod
+    def _protocol_error(message: dict) -> str | None:
+        """None when the child speaks this parent's protocol, else the restart message."""
+        got = message.get("protocol")
+        if got == PROTOCOL:
+            return None
+        return (f"kernel protocol mismatch: child speaks {got!r}, parent expects {PROTOCOL}; "
+                "restarted with an empty namespace (earlier output survives in recall())")
+
     def run(self, code: str, check_cache: dict | None = None) -> Cell:
         if self.proc is None:
             self.start()
         assert self.proc is not None and self.proc.stdin and self.proc.stdout
         if len(code) > MAX_CODE:
-            return Cell("", "kernel: code exceeds 20000 characters; split it into smaller cells", None, None, 0)
+            return Cell.failure("kernel: code exceeds 20000 characters; split it into smaller cells",
+                                restarted=False)
 
         started = time.perf_counter()
+        request = CellRequest(code=code, timeout=float(self.timeout),
+                              check_cache=dict(check_cache or {}))
         try:
-            request = {"code": code, "timeout": float(self.timeout)}
-            if check_cache:
-                request["check_cache"] = check_cache
-            self.proc.stdin.write(json.dumps(request) + "\n")
+            self.proc.stdin.write(json.dumps(request.to_wire()) + "\n")
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError):
             self._restart()
-            return Cell("", "kernel died; restarted with an empty namespace (earlier output survives in recall())", None, None, 0, True)
+            return Cell.failure(_RESTART_DIED)
 
         sel = selectors.DefaultSelector()
         sel.register(self.proc.stdout, selectors.EVENT_READ)
         deadline = time.monotonic() + self.timeout + 5.0
         payload = None
+        checked = False
         try:
             while payload is None:
                 remain = deadline - time.monotonic()
                 if remain <= 0:
                     self._kill_group()
                     self._restart()
-                    return Cell(
-                        "",
+                    return Cell.failure(
                         f"kernel did not answer within {self.timeout:.0f}s; killed and restarted with an empty namespace (earlier output survives in recall())",
-                        None, None,
-                        int((time.perf_counter() - started) * 1000),
-                        True, timeout=True,
+                        timeout=True,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
                     )
                 if not sel.select(remain):
                     continue
                 line = self.proc.stdout.readline()
                 if not line:
                     self._restart()
-                    return Cell("", "kernel died; restarted with an empty namespace (earlier output survives in recall())", None, None, 0, True)
+                    return Cell.failure(_RESTART_DIED)
                 if not line.startswith(MARKER):
                     self._restart()
-                    return Cell("", "kernel protocol desync; restarted with an empty namespace (earlier output survives in recall())", None, None, 0, True)
+                    return Cell.failure(_RESTART_DESYNC)
                 message = json.loads(line[len(MARKER):])
-                if "extend" in message:
-                    deadline = time.monotonic() + float(message["extend"]) + 30.0
+                if not checked:
+                    checked = True
+                    error = self._protocol_error(message)
+                    if error is not None:
+                        self._restart()
+                        return Cell.failure(error)
+                notice = ExtendNotice.from_wire(message)
+                if notice.seconds is not None:
+                    deadline = time.monotonic() + notice.seconds + 30.0
                     continue
                 payload = message
         finally:
             sel.close()
 
-        return Cell(
-            _cap(payload.get("stdout") or ""),
-            _cap(payload.get("stderr") or ""),
-            payload.get("result"),
-            payload.get("final"),
-            int((time.perf_counter() - started) * 1000),
-            False,
-            payload.get("answer"),
-            payload.get("runs") or [],
-            payload.get("obs_index"),
-            bool(payload.get("mutated")),
-            payload.get("changed") or [],
-            payload.get("delta") or "",
-            bool(payload.get("timeout")),
-            payload.get("reads") or {},
-        )
+        reply = CellReply.from_wire(payload)
+        return Cell.from_reply(reply, duration_ms=int((time.perf_counter() - started) * 1000))
