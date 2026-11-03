@@ -30,7 +30,7 @@ index is the `guide()` verb.
 
 | File | Why |
 |---|---|
-| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `guide`, `map`, `write`, `edit`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `recall`, `final_answer`, `emit`) |
+| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `guide`, `map`, `write`, `edit`, `splice`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `recall`, `final_answer`, `emit`) |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, with output digests and context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
@@ -78,11 +78,12 @@ cact/
     ├── src/launcher.ts             per-workspace server discovery/start, then mounts the client
     ├── src/server.ts               queue, concurrency, cancellation, HTTP + WebSocket, journals
     ├── src/client.tsx              the board, the live log, the single prompt box
+    ├── src/detect-checks.ts        the verification plan for a workspace (env + package.json)
     ├── src/list-model.ts           pure ordering/rows/scroll model
     ├── src/types.ts                Task, TaskEvent, ServerInfo, CheckSpec, Snapshot, WorkerMessage
     ├── src/stop.ts                 SIGTERM this workspace's server
     ├── python/worker.py            one task = one worker process = one agent loop
-    ├── tests/*.test.tsx            rendering tests against a fake Bun server
+    ├── tests/*.test.ts(x)          rendering/detection tests (a fake Bun server where needed)
     └── README.md                   exhaustive TUI reference: keys, env vars, HTTP API, states
 ```
 
@@ -148,11 +149,11 @@ bench/run.py                        tui/bin/code
   session, and a crash does not erase it.
 - **Sandbox:** `run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
   `run()` disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
-  bind of the root only when `writable=True`).
+  bind of the workspace only when `writable=True`).
 - **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
   what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
-  `edit()`, `apply()` and `commit()` all funnel through the same `_commit`, so a multi-file
-  `apply()`/`commit()` is one diff and one `undo()`.
+  `edit()`, `splice()`, `apply()` and `commit()` all funnel through the same `_commit`, so a
+  multi-file `apply()`/`commit()` is one diff and one `undo()`.
 - **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`
   and the `Verifier` that owns it: the cheap subset, the `scope` filter, the 20s throttle,
   the check cache and the `Check` rendering. Results are cached until the next mutating
@@ -265,7 +266,7 @@ python3 bench/runs.py --recent 10      # newest tasks across every workspace
 ```bash
 cd tui && bun install
 bun run typecheck      # tsc --noEmit
-bun test               # tests/*.test.tsx: list model, live log, prompt box, views
+bun test               # tests/*.test.ts(x): list, log, progress, prompt, views, detection
 
 ./bin/code             # inside the target project; starts/reuses its server
 ./bin/code-stop        # SIGTERM the server for this directory
@@ -302,9 +303,10 @@ imports `bench.agent` from this repo, so the checkout path matters.
    typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and the RUN_NOTE
    text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without
-   `force=True`); **`edit()` reports ambiguity instead of guessing**; `apply(<unified diff>)`
-   and `commit({path: text})` write several files in one cell. All of them go through the
-   same journalled `_commit`.
+   `force=True`); **`edit()` reports ambiguity instead of guessing**; `splice(path, start, end,
+   text)` replaces a 1-based inclusive line range; `apply(<unified diff>)` and
+   `commit({path: text})` write several files in one cell. All of them go through the same
+   journalled `_commit`.
 4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or
    `test_calc2.py` scores zero — repair the source.
 5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the
@@ -322,9 +324,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
    stdlib-only, `__file__`-free and read-only. Task fixtures and `bench/hard_hidden/` are not
    indexed: they are graded input, not code an agent maintains.
 8. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
-   `bench/.cache/` (LLM replies), `bench/ws/` (frozen workspaces), `tui/node_modules/`,
-   `tmp8_w_n1sf/`, and the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is recreated
-   by `edge.build()` whenever it is missing — if you add an edge task, add its fixture
+   `bench/.cache/` (LLM replies), `bench/ws/` (frozen workspaces), `tui/node_modules/`, and
+   the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is
+   recreated by `edge.build()` whenever it is missing — if you add an edge task, add its fixture
    there (or extend `build()`).
 
 ---
@@ -362,9 +364,10 @@ imports `bench.agent` from this repo, so the checkout path matters.
   added to `package.json` is picked up without a restart: `CODE_TUI_CHECKS` (JSON list)
   wins, else `CODE_TUI_CHECK`, else `python3 bench/smoke.py` plus `typecheck`/`test` (or
   `build` when neither exists) from the root and `tui/package.json`. The runner follows the
-  lockfile (`bun.lock` -> bun, `package-lock.json` -> npm). Entries may carry a `scope` path
-  prefix list; the cheap ones run after a mutating cell that touched their scope (at most
-  every 20s), and the whole plan gates `final_answer`. An empty `CODE_TUI_CHECK` opts out.
+  lockfile (`bun.lock`/`bun.lockb` -> bun, `package-lock.json` -> npm). Entries may carry a
+  `scope` path prefix list; the cheap ones run after a mutating cell that touched their
+  scope (at most every 20s), and the whole plan gates `final_answer`. An empty
+  `CODE_TUI_CHECK` opts out.
 - `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — do not edit
   them in place; clone with `bench.ws.clone` first. `bench/ws/` is gitignored: recreate
   `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and `tui-broken` as

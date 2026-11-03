@@ -34,7 +34,7 @@ ENTRY POINTS
                                      -> (card text, visible read ranges)   pure; no I/O
   StateLoop(..., output_budget, context_budget, keep_messages)
     ._observe(cell, steps) -> str    render_observation + fold the ranges into `coverage`
-    ._compact(messages)              fold old turns into a [history] message; gated on
+    ._compact(messages)              fold old turns into a [session state] message; gated on
                                      `last_prompt_tokens`, the provider's real count
     verifier / last_check            the cheap check rendered as the `[check]` line
 

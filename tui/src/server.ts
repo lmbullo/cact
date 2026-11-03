@@ -7,7 +7,8 @@
  *
  * ENTRY POINTS
  *  Started by launcher.ts, stopped by stop.ts. It picks a free port, writes server.json
- *  (port, pid, version, model, check) into the state dir, and prints its listening line.
+ *  (ServerInfo: port, pid, model, check plan, ...) into the state dir, and prints its
+ *  listening line.
  *  HTTP: GET  /                      plain-text banner
  *        GET  /health                ServerInfo + hasKey
  *        GET  /api/snapshot          {server, tasks}
@@ -35,11 +36,11 @@
  *    (JSON [{name, cmd, cheap, scope}]) wins, else CODE_TUI_CHECK as one entry, else
  *    `python3 bench/smoke.py` (cheap, scope bench) plus "typecheck"/"test" (or "build"
  *    when neither exists) from the root and tui/package.json (scope tui). The package
- *    manager follows the lockfile (bun.lock -> bun, package-lock.json -> npm). An empty
- *    CODE_TUI_CHECK disables it. The plan travels to the worker as `--checks <json>` and
- *    is published in ServerInfo.checks; `cheap` entries become the agent's post-mutation
- *    health check and `scope` keeps a health run to specs whose paths changed. The goal
- *    runs the whole plan without a paths filter.
+ *    manager follows the lockfile (bun.lock/bun.lockb -> bun, package-lock.json -> npm).
+ *    An empty CODE_TUI_CHECK disables it. The plan travels to the worker as `--checks
+ *    <json>` and is published in ServerInfo.checks; `cheap` entries become the agent's
+ *    post-mutation health check and `scope` keeps a health run to specs whose paths changed.
+ *    The goal runs the whole plan without a paths filter.
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask

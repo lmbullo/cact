@@ -1,8 +1,8 @@
 # Does the envelope pay?
 
-`bench/read`, `mutation` and `edge` are saturated: every ablation in `traces/sweep/` lands
-within one task of every other, including a bare loop. They cannot tell you whether the
-kernel's envelope (state cards, journal, check plan, batched commits) is worth its
+The `read`, `mutation` and `edge` suites are saturated: every ablation in `traces/sweep/`
+lands within one task of every other, including a bare loop. They cannot tell you whether
+the kernel's envelope (state cards, journal, check plan, batched commits) is worth its
 complexity. The `hard` suite exists to answer that question, and `--mode bare` is the
 control: one `python` tool, no helpers, no check plan.
 

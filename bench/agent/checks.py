@@ -47,16 +47,17 @@ INVARIANTS
     (there is no command to key them by).
   - `legacy=True` makes `authoritative()` answer `(ok, None)`, so the loop's rejection has a
     bare pass/fail and no failure lines. Production keeps it off.
-  - A plan is data, never a shell string. server.ts detects the default plan
-    (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts) and
-    passes it to worker.py as `--checks <json>`; bench/live.py forwards `--checks` the same way.
+  - A plan is data, never a shell string. detect-checks.ts detects the default plan
+    (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts);
+    server.ts passes it to worker.py as `--checks <json>`, and bench/live.py forwards
+    `--checks` the same way.
 
 WHERE TO CHANGE
   Plan parsing .................... CheckSpec.parse
   Scope matching .................. CheckSpec.applies
   How a plan runs and what it returns ... run_plan / run_specs
   Throttle / cache / goal policy ... Verifier
-  The default plan for a workspace ...... tui/src/server.ts::detectChecks
+  The default plan for a workspace ...... tui/src/detect-checks.ts::detectChecks
 """
 from __future__ import annotations
 

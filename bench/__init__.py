@@ -14,8 +14,10 @@ ENTRY POINTS
   bench/map.py                   the contract index: which module owns what
 
 INVARIANTS
-  - `bench/` is a package only so `python3 -m bench.run` works; nothing here has import side
-    effects, and `bench/agent/` must stay importable without a key, a network or a workspace.
+  - `bench/` is a package only so `python3 -m bench.run` works; `bench/agent/` must stay
+    importable without a key, a network or a workspace. Importing `bench.edge` or
+    `bench.hard` is the exception: each calls `build()` at import, which recreates a missing
+    fixture tree (the committed `edge_fixtures/`, the generated H3 CSV).
   - Ground truth belongs to the suite modules (`tasks.py`, `edge.py`, `hard.py`) and is
     computed from the fixtures at import; nothing in `bench/` may cache an expected answer.
   - `bench/traces/`, `bench/ws/`, `bench/.tmp/` and `bench/.cache/` are generated evidence:

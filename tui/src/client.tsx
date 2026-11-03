@@ -19,8 +19,9 @@
  *  prompt then leaves the log.
  *
  * INVARIANTS
- *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and are the only
- *    tested logic; keep layout maths out of here when it can be a pure function.
+ *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and are unit
+ *    tested there; the screen itself is covered by the character-frame tests in tui/tests/.
+ *    Keep layout maths out of here when it can be a pure function.
  *  - The prompt box is shared by both views: submitting always queues a new task with the
  *    current text; it never "continues" an existing one.
  *  - Events are capped (last 1000) and de-duplicated by `seq`; a snapshot that no longer

@@ -4,7 +4,7 @@
 WHAT IT IS
   `bench/agent/headers.py` turns the WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE
   header of every module into rows; this is the terminal front for those rows. It is the
-  first command an agent should run in this repo: one screen instead of thirty files, and a
+  first command an agent should run in this repo: one screen instead of the whole tree, and a
   gate (`--check`) that fails when a module stops explaining itself.
 
 ENTRY POINTS

@@ -22,6 +22,7 @@ incomplete. The source map:
 | `src/launcher.ts` | workspace hash, server discovery/reuse, detached spawn |
 | `src/server.ts` | task queue, concurrency, cancellation, HTTP + WebSocket, journals |
 | `src/client.tsx` | the board, the live log, the single prompt box, keys |
+| `src/detect-checks.ts` | the verification plan for one workspace (`CODE_TUI_CHECKS` / `CODE_TUI_CHECK` / `package.json`) |
 | `src/list-model.ts` | pure ordering/rows/selection/scroll (the tested logic) |
 | `src/types.ts` | the wire contract shared by all of the above |
 | `src/stop.ts` | SIGTERM the workspace's server |
@@ -250,8 +251,8 @@ When a task starts the server detects a *plan* (an ordered list of named command
 `python3 bench/smoke.py` (when the workspace has one) plus `typecheck`/`test` (or `build`
 when neither exists) from the root and `tui/package.json`. The plan is re-detected per
 task, so a script an earlier task added is picked up without restarting the server. The
-runner follows the lockfile (`bun.lock` -> bun, `package-lock.json` -> npm). The plan is
-passed to the worker as `--checks <json>`, where one `checks.Verifier` owns it.
+runner follows the lockfile (`bun.lock`/`bun.lockb` -> bun, `package-lock.json` -> npm).
+The plan is passed to the worker as `--checks <json>`, where one `checks.Verifier` owns it.
 
 A plan entry has `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes used by
 the cheap health run: a scoped entry is skipped unless the cell changed a path under one
@@ -320,7 +321,8 @@ searches, tests and builds work as written (`cat`, `sed -n`, `rg`, `git diff`,
 `kind: "wrong_call"` with the helper to use instead. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel prelude
-provides `read()`, `grep()`, `map()`, `write()`, `edit()`, `apply()` and `commit()`,
+provides `read()` (one path or a list), `grep()`, `guide()`, `map()`, `write()`, `edit()`,
+`splice()`, `apply()` and `commit()`, plus `recall()` for earlier cell output; mutations are
 journalled together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
 launched through `run()` can still write files: the journal is a typed-helper contract,
 not a sandbox.

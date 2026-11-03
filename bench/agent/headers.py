@@ -3,7 +3,7 @@
 WHAT IT IS
   No human reads this code, so every source module opens with a WHAT IT IS / ENTRY POINTS /
   INVARIANTS / WHERE TO CHANGE header. This module turns those headers into structure so an
-  agent can ask "which module owns this?" instead of reading thirty files:
+  agent can ask "which module owns this?" instead of reading every source file:
 
     index(root)     every source file as a row: path, language, lines, title, sections
     guide(root, q)  ranked rows plus rendered text; also the `guide()` verb in a kernel cell

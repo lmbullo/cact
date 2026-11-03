@@ -8,7 +8,7 @@ WHAT IT IS
   duplicated the kernel's file semantics.
 
 ENTRY POINTS
-  Budget(steps, tool_calls, output, wall, no_progress)
+  Budget(max_steps, max_tool_calls, max_output_tokens, max_wall_s, no_progress_limit)
   RunResult ... what run.py, worker.py and trace.py consume
   _usage_add(acc, usage) ... sums provider usage, including cache hit/miss
 
@@ -16,7 +16,9 @@ INVARIANTS
   - This module holds shared types only. There is no loop here: ToolLoop is the turn
     machine, StateLoop adds state cards, ReplLoop is the fenced-block alternate.
   - The benchmark defaults below are overridden by run.py flags and by config.budget for
-    production; do not tune production from here.
+    production; do not tune production from here. `max_tool_calls` and `no_progress_limit`
+    are carried for compatibility but no loop enforces them: the live caps are
+    `max_steps`, `max_wall_s` and `max_output_tokens`.
   - `_usage_add` is additive and tolerates missing provider fields, including cache hits.
   - `RunResult.steps` is the number of turns, i.e. primary `client.complete` calls. `calls`
     is the number of tool calls / kernel cells, a different axis. `llm_calls` is every model
