@@ -387,6 +387,28 @@ def main() -> int:
         check("kernel: undo restores session-start text",
               (root / "a.txt").read_text() == "alpha\nbeta\n", (root / "a.txt").read_text()[:80])
 
+        kernel.run("write('batch_a.txt', 'one\\ntwo\\n'); write('batch_b.txt', 'red\\nblue\\n')")
+        cell = kernel.call("edit_many", {"edits": [
+            {"path": "batch_a.txt", "old": "two", "new": "TWO"},
+            {"path": "batch_b.txt", "old": "blue", "new": "BLUE"},
+        ]})
+        check("kernel: call(edit_many) applies a batch in one cell",
+              cell.tool == "edit_many" and set(cell.changed) == {"batch_a.txt", "batch_b.txt"}
+              and "TWO" in (root / "batch_a.txt").read_text()
+              and "BLUE" in (root / "batch_b.txt").read_text(), str(cell.changed))
+        cell = kernel.call("edit_many", {"path": "batch_a.txt",
+                                        "edits": [{"old": "TWO", "new": "two"}]})
+        check("kernel: call(edit_many) accepts a default path",
+              "two" in (root / "batch_a.txt").read_text(), (cell.result or "")[:200])
+        cell = kernel.call("edit_many", {"edits": [
+            {"path": "batch_a.txt", "old": "one", "new": "ONE"},
+            {"path": "batch_b.txt", "old": "missing", "new": "x"},
+        ]})
+        check("kernel: call(edit_many) is atomic on a bad old string",
+              "not_found" in (cell.result or "")
+              and (root / "batch_a.txt").read_text().startswith("one"),
+              (cell.result or "")[:240])
+
         cell = kernel.run("grep('beta', '.')")
         check("kernel: grep", "beta" in str(cell.result), str(cell.result)[:120])
 
@@ -438,6 +460,24 @@ def main() -> int:
         check("kernel: run() refuses a working-tree overwrite",
               "wrong_call" in refusal and "git checkout" in refusal, refusal[:200])
 
+        kernel.run("run('git init -q && git config user.email a@b && git config user.name a && git add a.txt && git commit -qm init')")
+        kernel.run("write('git_new.txt', 'x')")
+        cell = kernel.call("git", {"action": "status"})
+        check("kernel: call(git) status parses the working tree",
+              cell.tool == "git" and "git_new.txt" in cell.stdout and "??" in cell.stdout,
+              (cell.stdout + cell.stderr)[:240])
+        cell = kernel.call("git", {"action": "log", "limit": 1})
+        check("kernel: call(git) log returns commits",
+              "init" in cell.stdout and '"sha"' in (cell.result or ""),
+              (cell.stdout + (cell.result or ""))[:240])
+        cell = kernel.call("git", {"action": "files"})
+        check("kernel: call(git) files lists tracked paths",
+              "a.txt" in cell.stdout and "git_new.txt" not in cell.stdout,
+              (cell.stdout + cell.stderr)[:240])
+        cell = kernel.call("git", {"action": "branch"})
+        check("kernel: call(git) branch names the current branch",
+              bool(cell.stdout.strip()), (cell.stdout + cell.stderr)[:200])
+
         cell = kernel.run("r=run('echo shape'); print(r.stdout.strip(), r['stdout'].strip())")
         check("kernel: run() answers both r.stdout and r['stdout']",
               "shape shape" in cell.stdout, (cell.stdout + cell.stderr)[:200])
@@ -481,6 +521,19 @@ def main() -> int:
         check("kernel: call(exec) refuses a mutating program",
               "mutation_via_exec" in (cell.result or "") and "one" in (root / "call_a.txt").read_text(),
               (cell.result or "")[:200])
+        (root / "outline.md").write_text("# Title\n\n## Section\ntext\n", encoding="utf-8")
+        (root / "outline.py").write_text("class A:\n    def m(self):\n        pass\n\ndef top():\n    pass\n", encoding="utf-8")
+        cell = kernel.call("outline", {"path": "outline.md"})
+        check("kernel: call(outline) maps markdown headings",
+              "1: h1 Title" in cell.stdout and "3: h2 Section" in cell.stdout,
+              (cell.stdout + cell.stderr)[:220])
+        cell = kernel.call("outline", {"path": "outline.py"})
+        check("kernel: call(outline) maps python defs and methods",
+              "1: class A" in cell.stdout and "2: method A.m" in cell.stdout
+              and "5: function top" in cell.stdout, (cell.stdout + cell.stderr)[:220])
+        cell = kernel.call("outline", {"path": "outline.md", "max_entries": 1})
+        check("kernel: call(outline) respects max_entries",
+              "Title" in cell.stdout and "Section" not in cell.stdout, cell.stdout[:160])
         cell = kernel.call("help", {"topic": ""})
         check("kernel: call(help) documents exec and run",
               "exec(" in cell.stdout and "run(" in (cell.stdout + str(cell.result)),

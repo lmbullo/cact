@@ -289,7 +289,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff"):
+                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "edits") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -403,7 +403,7 @@ for line in sys.stdin:
 HEADERS_SOURCE = Path(__file__).with_name("headers.py").read_text(encoding="utf-8")
 
 PRELUDE = r"""
-import difflib as _difflib, fnmatch as _fnmatch, hashlib as _hashlib, os as _os, re as _re
+import ast as _ast, difflib as _difflib, fnmatch as _fnmatch, hashlib as _hashlib, os as _os, re as _re
 
 _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
@@ -726,6 +726,103 @@ def map(path=".", max_files=400):
             "files": entries[:int(max_files)], "total_files": len(entries)}
 
 
+def _outline_doc(node):
+    try:
+        text = _ast.get_docstring(node) or ""
+    except Exception:
+        return ""
+    return text.strip().splitlines()[0].strip()[:120] if text.strip() else ""
+
+
+def outline(path, max_entries=200):
+    # The structural view: headings and definitions with line numbers, so a long file can
+    # be navigated before (or instead of) reading it whole. This is not a shell equivalent;
+    # it is the map read() and search() do not provide.
+    target, rel = _resolve(path)
+    if target is None:
+        return _Result({"ok": False, "kind": "wrong_call", "path": rel,
+                        "error": {"code": "outside_root", "path": rel}})
+    if not _os.path.exists(target):
+        return _Result({"ok": True, "kind": "miss", "path": rel})
+    if _os.path.isdir(target):
+        return _Result({"ok": False, "kind": "wrong_call", "path": rel,
+                        "error": {"code": "outline_is_file",
+                                  "message": "outline() takes a file; map() lists a directory",
+                                  "use": "map(path) for files, outline(file) for structure"}})
+    try:
+        body = _read_text(target)
+    except OSError as exc:
+        return _Result({"ok": False, "kind": "read_error", "path": rel,
+                        "error": {"code": "read_failed", "message": str(exc)}})
+    lines = body.splitlines()
+    ext = _os.path.splitext(target)[1].lower()
+    entries = []
+
+    if ext == ".py":
+        try:
+            tree = _ast.parse(body)
+        except SyntaxError as exc:
+            return _Result({"ok": True, "kind": "outline", "path": rel, "entries": [],
+                            "total_lines": len(lines),
+                            "text": "# %s: cannot parse Python (%s); use read() or search()" % (rel, exc.msg)})
+        for node in tree.body:
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                kind = "class" if isinstance(node, _ast.ClassDef) else "function"
+                entries.append({"line": node.lineno, "kind": kind, "name": node.name,
+                                "doc": _outline_doc(node)})
+                if isinstance(node, _ast.ClassDef):
+                    for sub in node.body:
+                        if isinstance(sub, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                            entries.append({"line": sub.lineno, "kind": "method",
+                                            "name": node.name + "." + sub.name,
+                                            "doc": _outline_doc(sub)})
+            elif isinstance(node, _ast.Assign):
+                names = [target.id for target in node.targets
+                         if isinstance(target, _ast.Name)]
+                if names:
+                    entries.append({"line": node.lineno, "kind": "assign",
+                                    "name": ", ".join(names)})
+            elif isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
+                entries.append({"line": node.lineno, "kind": "assign",
+                                "name": node.target.id})
+    elif ext in (".md", ".markdown"):
+        for number, line in enumerate(lines, 1):
+            match = _re.match(r"^(#{1,6})\s+(.*\S)\s*$", line)
+            if match:
+                entries.append({"line": number, "kind": "h" + str(len(match.group(1))),
+                                "name": match.group(2)[:160]})
+    elif ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
+        for number, line in enumerate(lines, 1):
+            match = _re.match(
+                r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+                r"(function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)",
+                line)
+            if match:
+                entries.append({"line": number, "kind": match.group(1),
+                                "name": match.group(2)})
+                continue
+            match = _re.match(r"^\s*(?:test|it|describe)\(\s*['\"](.+?)['\"]", line)
+            if match:
+                entries.append({"line": number, "kind": "test", "name": match.group(1)[:120]})
+    else:
+        for number, line in enumerate(lines, 1):
+            match = _re.match(r"^\s*(?:def|class|function|export)\s+([A-Za-z_$][\w$.]*)", line)
+            if match:
+                entries.append({"line": number, "kind": "def", "name": match.group(1)})
+            elif _re.match(r"^#{1,6}\s+", line):
+                entries.append({"line": number, "kind": "heading", "name": line.strip()[:160]})
+
+    entries.sort(key=lambda item: item["line"])
+    entries = entries[:int(max_entries)]
+    if not entries:
+        text = "# %s: no structural lines; use read() or search()" % rel
+    else:
+        text = "\n".join("%d: %s %s" % (item["line"], item["kind"], item["name"])
+                         for item in entries)
+    return _Result({"ok": True, "kind": "outline", "path": rel, "entries": entries,
+                    "total_lines": len(lines), "text": text})
+
+
 def read(path, offset=1, limit=0, raw=False, start=None, end=None):
     # `start`/`end` are the natural line-range names; `offset`/`limit` stay for compatibility.
     if start is not None:
@@ -972,6 +1069,64 @@ def edit(path, old, new, all=False, replace_all=None):
     return {"ok": True, "kind": "edit", "path": rel, "replaced": count if all else 1,
             "lines": entry["after_lines"], "hunk": hunk, "hunk_lines": [lo, hi],
             "adds": entry["adds"], "dels": entry["dels"]}
+
+
+def edit_many(edits, path=None):
+    # Batch exact replacements in one cell. Validate every edit against the in-memory
+    # bodies first, then commit; a bad old string changes nothing. This is the tool for a
+    # docs pass with many small changes, where one edit() per line is pure overhead.
+    if not isinstance(edits, (list, tuple)) or not edits:
+        return {"ok": False, "kind": "edit_many_failed",
+                "reason": "edits must be a non-empty list of {path, old, new}"}
+    originals = {}
+    bodies = {}
+    order = []
+    writes = 0
+    for index, item in enumerate(edits):
+        if not isinstance(item, dict):
+            return {"ok": False, "kind": "edit_many_failed", "index": index,
+                    "reason": "each edit must be an object with path, old, new"}
+        item_path = item.get("path") or path
+        old = item.get("old")
+        new = item.get("new")
+        if not isinstance(item_path, str) or not isinstance(old, str) or not isinstance(new, str) or not old:
+            return {"ok": False, "kind": "edit_many_failed", "index": index,
+                    "reason": "path, old and new must be strings; old must not be empty"}
+        target, rel = _resolve(item_path)
+        if target is None:
+            return {"ok": False, "kind": "edit_many_failed", "index": index,
+                    "error": {"code": "outside_root", "path": rel}}
+        if rel not in originals:
+            if not _os.path.isfile(target):
+                return {"ok": False, "kind": "edit_many_failed", "index": index,
+                        "path": rel, "reason": "missing"}
+            originals[rel] = _read_text(target)
+            bodies[rel] = originals[rel]
+            order.append((target, rel))
+        body = bodies[rel]
+        count = body.count(old)
+        if count == 0:
+            probe = old.splitlines()[0].strip() if old.splitlines() else old
+            near = [{"line": number, "text": line.strip()[:200]}
+                    for number, line in enumerate(body.splitlines(), 1)
+                    if _difflib.SequenceMatcher(None, probe, line.strip()).ratio() > 0.6][:3]
+            return {"ok": False, "kind": "edit_many_failed", "index": index, "path": rel,
+                    "reason": "not_found", "closest": near}
+        if count > 1 and not bool(item.get("all")):
+            return {"ok": False, "kind": "edit_many_failed", "index": index, "path": rel,
+                    "reason": "ambiguous", "count": count,
+                    "action": "extend old until unique, or pass all=True"}
+        bodies[rel] = body.replace(old, new) if bool(item.get("all")) else body.replace(old, new, 1)
+        writes += 1
+    changed = []
+    for target, rel in order:
+        if bodies[rel] != originals[rel]:
+            _commit(target, rel, bodies[rel], "edit_many")
+            changed.append(rel)
+    return {"ok": True, "kind": "edits", "paths": changed, "edits": len(edits),
+            "replaced": writes,
+            "text": "edited %d file(s) in %d replacement(s): %s" % (
+                len(changed), writes, ", ".join(changed)) if changed else "no change"}
 
 
 def splice(path, start, end=None, text=""):
@@ -1540,6 +1695,115 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
     return _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
             "cwd": cwd or _RUN_ROOT, "exit_code": proc.returncode,
             "stdout": out or "", "stderr": err or ""})
+
+
+def _git_page(text, offset=0, max_chars=12000):
+    text = str(text or "")
+    start = max(0, int(offset or 0))
+    limit = int(max_chars or 0)
+    shown = text[start:] if limit <= 0 else text[start:start + limit]
+    return shown, len(text), (start + len(shown) if start + len(shown) < len(text) else None)
+
+
+def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=12000,
+             stat=False, cached=False, rev="HEAD", remote="origin", branch=None,
+             cwd=None):
+    # Typed git: no pager, no shell, no giant undifferentiated dump. diff/show page with
+    # offset/max_chars; status/log/files return parsed fields plus text.
+    action = str(action or "").strip().lower()
+    paths = [str(item) for item in paths] if isinstance(paths, (list, tuple)) else (
+        [str(paths)] if paths else [])
+    base = ["git"]
+    if action == "status":
+        base += ["status", "--porcelain=v1", "-b"]
+    elif action == "diff":
+        base += ["diff", "--no-color"]
+        if cached:
+            base.append("--cached")
+        if stat:
+            base.append("--stat")
+    elif action == "show":
+        base += ["show", "--no-color"]
+        if stat:
+            base.append("--stat")
+        if rev:
+            base.append(str(rev))
+    elif action == "log":
+        base += ["log", "--oneline", "-n", str(max(1, int(limit or 20)))]
+    elif action == "files":
+        base += ["ls-files"]
+    elif action == "add":
+        base += ["add"] + (["--"] + paths if paths else ["-A"])
+    elif action == "commit":
+        if not message or not str(message).strip():
+            return _Result({"ok": False, "kind": "git_error", "action": action,
+                            "error": {"code": "missing_message", "message": "commit needs message"}})
+        if paths:
+            added = exec_argv(["git", "add", "--"] + paths, cwd=cwd)
+            if added.get("exit_code") not in (0, None):
+                return _Result({"ok": False, "kind": "git_error", "action": action,
+                                "stdout": added.get("stdout") or "",
+                                "stderr": added.get("stderr") or ""})
+        base += ["commit", "-m", str(message)]
+    elif action == "push":
+        base += ["push", str(remote or "origin")]
+        if branch:
+            base.append(str(branch))
+    elif action == "remote":
+        base += ["remote", "-v"]
+    elif action == "branch":
+        base += ["branch", "--show-current"]
+    else:
+        return _Result({"ok": False, "kind": "git_error", "action": action,
+                        "error": {"code": "unknown_action",
+                                  "message": "action must be status/diff/show/log/files/add/commit/push/remote/branch"}})
+    if paths and action in ("diff", "show"):
+        base += ["--"] + paths
+    result = exec_argv(base, cwd=cwd)
+    out = str(result.get("stdout") or "")
+    err = str(result.get("stderr") or "")
+    code = result.get("exit_code")
+    ok = code in (0, None)
+    if action in ("diff", "show"):
+        text, total, nxt = _git_page(out, offset, max_chars)
+        return _Result({"ok": ok, "kind": "git_diff" if action == "diff" else "git_show",
+                        "action": action, "paths": paths, "text": text,
+                        "total_chars": total, "next_offset": nxt,
+                        "exit_code": code, "stderr": err})
+    if action == "status":
+        changed = []
+        branch_name = ""
+        for line in out.splitlines():
+            if line.startswith("##"):
+                branch_name = line[2:].strip().split("...")[0].strip()
+                continue
+            if len(line) > 3:
+                changed.append({"status": line[:2].strip(), "path": line[3:].strip()})
+        return _Result({"ok": ok, "kind": "git_status", "action": action,
+                        "branch": branch_name, "changed": changed, "clean": not changed,
+                        "text": out, "exit_code": code, "stderr": err})
+    if action == "log":
+        commits = []
+        for line in out.splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) == 2:
+                commits.append({"sha": parts[0], "subject": parts[1]})
+        return _Result({"ok": ok, "kind": "git_log", "action": action,
+                        "commits": commits, "text": out, "exit_code": code, "stderr": err})
+    if action == "files":
+        files = [line for line in out.splitlines() if line.strip()]
+        return _Result({"ok": ok, "kind": "git_files", "action": action,
+                        "files": files, "text": out, "exit_code": code, "stderr": err})
+    if action == "branch":
+        return _Result({"ok": ok, "kind": "git_branch", "action": action,
+                        "branch": out.strip(), "text": out, "exit_code": code, "stderr": err})
+    sha = ""
+    if action == "commit" and ok:
+        probe = exec_argv(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
+        sha = str(probe.get("stdout") or "").strip()
+    return _Result({"ok": ok, "kind": "git_action", "action": action,
+                    "paths": paths, "sha": sha, "text": out, "stdout": out,
+                    "stderr": err, "exit_code": code})
 """
 
 # --- parent side: supervision, protocol and the Cell the loops consume --------------------

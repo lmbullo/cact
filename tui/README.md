@@ -322,9 +322,9 @@ that need them. Both share the mutation gate: changing tracked files through `te
 helper to use instead. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel prelude
-provides `read()` (one path or a list), `grep()` (the typed `search` tool), `guide()`,
-`map()`, `write()`, `edit()`, `splice()`, `apply()` and `commit()`, plus `recall()` for
-earlier cell output; mutations are
+provides `read()` (one path or a list), `outline()` (headings/defs with line numbers),
+`grep()` (the typed `search` tool), `guide()`, `map()`, `write()`, `edit()`, `edit_many()`,
+`splice()`, `apply()`, `commit()` and `git()`, plus `recall()` for earlier cell output; mutations are
 journalled together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
 launched through `exec`/`run()` can still write files: the journal is a typed-helper contract,
 not a sandbox.

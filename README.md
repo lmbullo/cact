@@ -105,10 +105,10 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: read (path or list)/search (grep)/guide/map/write/edit/splice/
-          │           apply/commit, changes/diff/undo, recall, verbs()/help(),
-          │           final_answer, emit
-          └─ RUN_PRELUDE: exec (argv, no shell) + run() (python shell helper)
+          ├─ PRELUDE: read (path or list)/outline/search (grep)/guide/map/write/
+          │           edit/edit_many/splice/apply/commit, changes/diff/undo, recall,
+          │           verbs()/help(), final_answer, emit
+          └─ RUN_PRELUDE: exec (argv, no shell), git (typed), + run() (python shell)
                   │
                   ▼
               the workspace
@@ -305,7 +305,8 @@ imports `bench.agent` from this repo, so the checkout path matters.
    redirect) are refused with `kind: "wrong_call"` and a `use` hint, because they would
    bypass the journal and make `diff()`/`undo()` lie. `git add`, `commit`, `push`, `fetch`,
    `init` and `clone` are allowed: they do not overwrite working-tree content. `exec` and
-   `run()` share the gate. Mutations
+   `run()` share the gate. Use the typed `git` tool for status/diff/show/log/files/add/
+   commit/push: it has no pager and pages large diffs with `offset`/`max_chars`. Mutations
    whose targets are absolute paths under a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`,
    `$TMPDIR`) are allowed; the journal only promises the tree. Direct process spawning
    (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) goes through

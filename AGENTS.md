@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (read, search, edit, splice, write, apply, commit, exec, changes, diff, undo, help) generated from one registry (`bench/agent/verbs.py`); `python` is the escape hatch for computation and anything the typed tools do not cover, and `run()` inside it is the shell-string escape hatch. `exec(argv)` runs a program without a shell. A cell can read, search, map, write, edit and run whole programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (read, outline, search, edit, edit_many, splice, write, apply, commit, exec, git, changes, diff, undo, help) generated from one registry (`bench/agent/verbs.py`); `python` is the escape hatch for computation and anything the typed tools do not cover, and `run()` inside it is the shell-string escape hatch. `exec(argv)` runs a program without a shell. A cell can read, search, map, write, edit and run whole programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
@@ -93,7 +93,9 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and
    RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
-   **`edit()` reports ambiguity rather than guessing**; **`splice(path, start, end, text)`**
+   **`edit()` reports ambiguity rather than guessing**; **`edit_many([{path, old, new}, ...])`**
+   applies a batch atomically (all old strings must match, or nothing changes);
+   **`splice(path, start, end, text)`**
    replaces 1-based inclusive lines through the same journal (read() numbers lines, so a
    surgical change emits only the changed lines); **`apply(<unified diff>)` and
    `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
