@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (read, outline, search, edit, edit_many, splice, write, apply, commit, exec, git, changes, diff, undo, help) generated from one registry (`bench/agent/verbs.py`); `python` is the escape hatch for computation and anything the typed tools do not cover, and `run()` inside it is the shell-string escape hatch. `exec(argv)` runs a program without a shell. A cell can read, search, map, write, edit and run whole programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (read, outline, search, edit, splice, write, apply, exec, git) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
@@ -80,17 +80,16 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    same message do not run, but each still gets a paired (skipped) tool result. With a goal
    check, no answer is accepted until the check passes. `run.py` grades `result.final`; a
    prose reply with no tool call is the summary.
-2. **`exec` runs argv; `run()` is the python shell; only mutation is gated.** `exec(argv)`
-   runs a program directly with `cwd`, `env`, `stdin` and `commands=[[...]]`; no shell parses
-   it, so there is no `cd` prefix, quoting or pipe grammar. The typed call is bound to the
-   verb function's real signature before dispatch, so a wrong or missing keyword is a
-   `bad_args`/`bad_arguments` answer (`help(tool)` prints the signature), not a traceback.
-   `exec(["bash", "-lc", ...])` still runs, but its result carries a `notice` that it used
-   the shell escape hatch; prefer argv, and `run(command)` inside a Python cell when shell
-   syntax is truly needed. Programs/verbs that change tracked files (`tee`,
-   `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`, `>` redirection; a quoted `>` is an
-   argument) are refused by the same classifier as `kind: "wrong_call"` with a `use` hint,
-   because they bypass the journal.
+2. **`exec` is the one process tool; only mutation is gated.** `exec(argv)` runs a program
+   with `cwd`, `env`, `stdin` and `commands=[[...]]`; `exec(shell=<string>)` is the explicit
+   shell escape hatch. `bash -lc` inside argv is refused (`shell_via_exec`) and points at
+   `shell`. `run()` exists only in python-only modes (repl/bare), not in typed modes. The
+   typed call is bound to the verb function's real signature before dispatch, so a wrong or
+   missing keyword is a `bad_args`/`bad_arguments` answer (`help(tool)` prints the signature),
+   not a traceback. Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`,
+   `sed -i`, `git apply/checkout/...`, `>` redirection; a quoted `>` is an argument) are
+   refused by the same classifier as `kind: "wrong_call"` with a `use` hint, because they
+   bypass the journal.
    `git add/commit/push/fetch/init/clone` are allowed, as is mutating a scratch path
    (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`), which the journal never covered. Direct
    process spawning (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`,
@@ -99,13 +98,12 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and
    RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
-   **`edit()` reports ambiguity rather than guessing**; **`edit_many([{path, old, new}, ...])`**
-   applies a batch atomically (all old strings must match, or nothing changes);
-   **`splice(path, start, end, text)`**
+   **`edit()`** takes one `path/old/new` or `edits=[{path, old, new}, ...]`; the list form is
+   atomic (all old strings must match, or nothing changes); **`splice(path, start, end, text)`**
    replaces 1-based inclusive lines through the same journal (read() numbers lines, so a
-   surgical change emits only the changed lines); **`apply(<unified diff>)` and
-   `commit({path: text})`** write several files in one cell, so one `diff()`/`undo()` covers
-   them. All of them go through `_commit`, which is what makes the journal honest.
+   surgical change emits only the changed lines); **`apply(<unified diff>)`** writes several
+   files in one cell. All of them go through `_commit`, which is what makes the journal
+   honest. `commit()` remains a python helper.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired. The hard suite's oracle lives
    outside the workspace (`bench/hard_hidden/`), so the agent cannot read or edit it.

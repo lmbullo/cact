@@ -6,14 +6,14 @@ WHAT IT IS
        DRIVER       loop: one JSON line per request on stdin -> either exec() a Python cell
                     or dispatch one typed verb call in the namespace that survives between
                     requests -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects the typed verbs from verbs.VERBS (read/search/outline/edit/
-                    edit_many/splice/write/apply/commit/git/changes/diff/undo/help) plus
-                    the python helpers guide/map/grep/recall/final_answer/emit, and
-                    journals every mutation (snapshot at start, tree diff after each cell).
-                    `guide()` is headers.py, shipped as source and exec'd into a private
-                    `_HEADERS` namespace (see HEADERS_SOURCE).
-       RUN_PRELUDE  injects exec_argv() (the typed `exec` tool) and run() (the python shell
-                    escape hatch), behind the file-verb protocol check.
+       PRELUDE      injects the typed verbs from verbs.VERBS (read/outline/search/edit/
+                    splice/write/apply/exec/git) plus the python helpers guide/map/grep/
+                    recall/final_answer/emit, and journals every mutation (snapshot at
+                    start, tree diff after each cell). `guide()` is headers.py, shipped as
+                    source and exec'd into a private `_HEADERS` namespace (see HEADERS_SOURCE).
+       RUN_PRELUDE  injects exec_argv() (the one typed process tool: argv/commands/shell)
+                    and git_tool(); run() is the python-only escape hatch and is removed
+                    from the namespace unless allow_shell is on.
   2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
      when it dies, hangs or desynchronises, and returns a `Cell`.
 
@@ -28,7 +28,7 @@ ENTRY POINTS
              `.protocol_ok` compares its version with PROTOCOL
   ExtendNotice: the interim `{"extend": seconds}` line a long cell sends
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
-         allow_run=False, supervise=True)
+         allow_run=False, allow_shell=None, supervise=True)
     .start()   spawn the child (lazy: .run()/.call() calls it)
     .run(code, check_cache=None)   one Python cell -> Cell
     .call(tool, args, check_cache=None)  one typed verb -> the same Cell pipeline
@@ -37,10 +37,10 @@ ENTRY POINTS
         mutated, changed, deltas, delta, timeout, reads, tool, failed
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor
-  Inside the kernel namespace: the typed verbs in verbs.VERBS (read/search/outline/
-        edit/edit_many/splice/write/apply/commit/git/changes/diff/undo/help), the python
-        helpers guide()/map()/grep()/recall()/verbs(), exec_argv() (the typed `exec` tool),
-        run() (the python shell helper, when allow_run), final_answer(), emit()
+  Inside the kernel namespace: the typed verbs in verbs.VERBS (read/outline/search/
+        edit/splice/write/apply/exec/git), the python helpers guide()/map()/grep()/
+        recall()/verbs()/diff()/changes()/undo()/commit()/help(), exec_argv() (the typed
+        `exec` tool), run() only when allow_shell, final_answer(), emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.deltas` / `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish
   protocol).
@@ -69,14 +69,16 @@ INVARIANTS
     `write()` replaces (refuses to drop a tail without force=True); `edit()` reports
     ambiguity instead of guessing; `splice(path, start, end, text)` replaces 1-based
     inclusive lines through the same journal (read() numbers lines, so a surgical change
-    costs only the changed lines); `apply(unified diff)` and `commit({path: text})` write
-    several files in one cell, so one diff()/undo() covers the whole change set.
+    costs only the changed lines); `apply(unified diff)` writes several files in one cell,
+    so one diff()/undo() covers the whole change set; `commit({path: text})` is a python
+    helper.
   - exec_argv() runs a program and its argv directly, with no shell. It is the typed process
     tool: no quoting, no `cd` prefix (use cwd), no pipes or redirection. The same mutation
     gate applies to argv (rm, cp, mv, tee, sed -i, git apply/checkout/...), with a
-    `kind: "wrong_call"` and a `use` hint. run() is the python shell escape hatch: a shell
-    string, a list of strings, and `>` redirection are classified before it spawns. Both are
-    a correctness boundary, not a capability boundary: a program can still write files, and
+    `kind: "wrong_call"` and a `use` hint. A shell interpreter with `-c`/`-lc` in argv is
+    refused as `shell_via_exec`; `exec(shell=<string>)` is the explicit shell path. run() is
+    the python-only shell helper and exists only when allow_shell is on. Both are a
+    correctness boundary, not a capability boundary: a program can still write files, and
     the docs say so.
   - `guide()` is the only new name the header index adds, and it is read-only: headers.py is
     passed to the child in KERNEL_HEADERS, exec'd into `_HEADERS`, and called with `_ROOT`.
@@ -113,9 +115,10 @@ INVARIANTS
     hint, so a schema mistake is answered rather than raised. The function still validates
     its own values and reports the other `bad_args` codes (`bad_argv`, `bad_commands`,
     `bad_env`) the same way.
-  - `exec` never parses a shell string, but a shell interpreter is not refused: an argv
-    like `["bash", "-lc", ...]` runs and its result carries a `notice` saying it took the
-    `run()` escape hatch, so the model learns the argv path without a lost turn.
+  - `exec` never parses a shell string: a shell interpreter with `-c`/`-lc` in argv is
+    refused as `shell_via_exec` and points at `exec(shell=<string>)`, the one explicit
+    shell path. `run()` is removed from a typed-mode namespace entirely; it exists only
+    when `allow_shell` is on (repl/bare).
   - `changed` is the list of paths; `deltas` is the per-path unified diff the same journal
     produced. `delta` is only the joined text the card renders. The loop reads `deltas`,
     never re-parses `delta`.
@@ -232,6 +235,8 @@ if _prelude:
 _run_prelude = os.environ.get("KERNEL_RUN_PRELUDE")
 if _run_prelude:
     exec(_run_prelude, ns)
+    if os.environ.get("KERNEL_SHELL") != "1":
+        ns.pop("run", None)
 
 class Final(Exception):
     def __init__(self, value):
@@ -1090,12 +1095,19 @@ def edit(path, old, new, all=False, replace_all=None):
             "adds": entry["adds"], "dels": entry["dels"]}
 
 
-def edit_many(edits, path=None):
-    # Batch exact replacements in one cell. Validate every edit against the in-memory
-    # bodies first, then commit; a bad old string changes nothing. This is the tool for a
-    # docs pass with many small changes, where one edit() per line is pure overhead.
+def edit_many(edits=None, path=None, old=None, new=None, all=False):
+    # One typed edit: either edits=[{path, old, new}, ...] or the single path/old/new form.
+    # Validate every edit against the in-memory bodies first, then commit; a bad old string
+    # changes nothing. This is the tool for a docs pass, where one edit() per line is pure
+    # overhead, and for the simple replacement.
+    if edits is None:
+        if isinstance(path, str) and isinstance(old, str) and isinstance(new, str):
+            edits = [{"path": path, "old": old, "new": new, "all": bool(all)}]
+        else:
+            return {"ok": False, "kind": "edit_failed",
+                    "reason": "pass edits=[...] or path, old and new"}
     if not isinstance(edits, (list, tuple)) or not edits:
-        return {"ok": False, "kind": "edit_many_failed",
+        return {"ok": False, "kind": "edit_failed",
                 "reason": "edits must be a non-empty list of {path, old, new}"}
     originals = {}
     bodies = {}
@@ -1103,21 +1115,21 @@ def edit_many(edits, path=None):
     writes = 0
     for index, item in enumerate(edits):
         if not isinstance(item, dict):
-            return {"ok": False, "kind": "edit_many_failed", "index": index,
+            return {"ok": False, "kind": "edit_failed", "index": index,
                     "reason": "each edit must be an object with path, old, new"}
         item_path = item.get("path") or path
         old = item.get("old")
         new = item.get("new")
         if not isinstance(item_path, str) or not isinstance(old, str) or not isinstance(new, str) or not old:
-            return {"ok": False, "kind": "edit_many_failed", "index": index,
+            return {"ok": False, "kind": "edit_failed", "index": index,
                     "reason": "path, old and new must be strings; old must not be empty"}
         target, rel = _resolve(item_path)
         if target is None:
-            return {"ok": False, "kind": "edit_many_failed", "index": index,
+            return {"ok": False, "kind": "edit_failed", "index": index,
                     "error": {"code": "outside_root", "path": rel}}
         if rel not in originals:
             if not _os.path.isfile(target):
-                return {"ok": False, "kind": "edit_many_failed", "index": index,
+                return {"ok": False, "kind": "edit_failed", "index": index,
                         "path": rel, "reason": "missing"}
             originals[rel] = _read_text(target)
             bodies[rel] = originals[rel]
@@ -1129,10 +1141,10 @@ def edit_many(edits, path=None):
             near = [{"line": number, "text": line.strip()[:200]}
                     for number, line in enumerate(body.splitlines(), 1)
                     if _difflib.SequenceMatcher(None, probe, line.strip()).ratio() > 0.6][:3]
-            return {"ok": False, "kind": "edit_many_failed", "index": index, "path": rel,
+            return {"ok": False, "kind": "edit_failed", "index": index, "path": rel,
                     "reason": "not_found", "closest": near}
         if count > 1 and not bool(item.get("all")):
-            return {"ok": False, "kind": "edit_many_failed", "index": index, "path": rel,
+            return {"ok": False, "kind": "edit_failed", "index": index, "path": rel,
                     "reason": "ambiguous", "count": count,
                     "action": "extend old until unique, or pass all=True"}
         bodies[rel] = body.replace(old, new) if bool(item.get("all")) else body.replace(old, new, 1)
@@ -1140,7 +1152,7 @@ def edit_many(edits, path=None):
     changed = []
     for target, rel in order:
         if bodies[rel] != originals[rel]:
-            _commit(target, rel, bodies[rel], "edit_many")
+            _commit(target, rel, bodies[rel], "edit")
             changed.append(rel)
     return {"ok": True, "kind": "edits", "paths": changed, "edits": len(edits),
             "replaced": writes,
@@ -1516,12 +1528,12 @@ import sys as _sys
 _sys.addaudithook(_audit_spawn)
 
 
-def run(command, timeout=60, cwd=None):
+def _run_shell(command, timeout=60, cwd=None):
     global _GATE_IN_RUN
     # A list is one call for several commands: the same gate and journal rules apply to each.
-    # Each sub-run is a normal run(), so _RUN_LOG, check_cache and the spawn gate stay exact.
+    # Each sub-run is a normal _run_shell(), so _RUN_LOG, check_cache and the spawn gate stay exact.
     if isinstance(command, (list, tuple)):
-        items = [run(item, timeout=timeout, cwd=cwd) for item in command]
+        items = [_run_shell(item, timeout=timeout, cwd=cwd) for item in command]
         stdout = "\n".join(str(item.get("stdout") or "") for item in items).strip()
         stderr = "\n".join(str(item.get("stderr") or "") for item in items).strip()
         return _Result({"ok": all(bool(item.get("ok")) for item in items), "kind": "commands",
@@ -1542,7 +1554,7 @@ def run(command, timeout=60, cwd=None):
                 "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."})
     blocked = _mutating_command(command)
     if blocked:
-        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "splice(), edit(), apply() or commit()")
+        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "splice(), edit() or apply()")
         return _Result({
             "ok": False,
             "kind": "wrong_call",
@@ -1574,7 +1586,7 @@ def run(command, timeout=60, cwd=None):
         finally:
             _GATE_IN_RUN -= 1
     except _SpawnBlocked as exc:
-        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "splice(), edit(), apply() or commit()")
+        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "splice(), edit() or apply()")
         return _Result({"ok": False, "kind": "wrong_call", "command": str(command),
                 "blocked": exc.blocked,
                 "error": {"code": "mutation_via_run", "message": str(exc), "use": use},
@@ -1601,6 +1613,9 @@ def run(command, timeout=60, cwd=None):
             "stdout": out or "", "stderr": err or ""})
 
 
+run = _run_shell
+
+
 def _exec_shell_string(argv):
     for index, item in enumerate(argv):
         if _ros.path.basename(str(item)) not in ("bash", "sh", "zsh", "dash", "ksh"):
@@ -1612,11 +1627,18 @@ def _exec_shell_string(argv):
     return False
 
 
-def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=None):
+def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=None, stdin=None):
     # The typed process tool: a program and its argv, never a shell string. A list of
     # commands runs in order and stops at the first non-zero exit. cwd replaces `cd`,
     # stdout/stderr stay separate, and the same orphan journal and mutation gate apply.
     global _GATE_IN_RUN
+    if shell is not None:
+        if argv is not None or commands is not None:
+            return _Result({"ok": False, "kind": "bad_args", "error": {
+                "code": "both_shell_and_argv",
+                "message": "pass shell=<string> or argv/commands, not both",
+                "use": "exec(shell='git status && git diff --stat')"}})
+        return _run_shell(str(shell), timeout=timeout, cwd=cwd)
     if commands is not None:
         if argv is not None:
             return _Result({"ok": False, "kind": "bad_args", "error": {
@@ -1653,10 +1675,6 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
             "use": "exec(argv=['python3','bench/smoke.py'])"}})
     argv = [str(item) for item in argv]
     command = " ".join(argv)
-    shell_string = _exec_shell_string(argv)
-    notice = ("exec ran a shell interpreter with -c/-lc; that is the run() escape hatch, "
-              "not the argv path. Prefer search/read/commands, and python run() only when "
-              "shell syntax is truly needed.") if shell_string else ""
     _RUN_LOG.append(command)
     cached = _CHECK_CACHE.get(_norm_command(command))
     if cached:
@@ -1670,12 +1688,19 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
                 "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."})
     blocked = _gate_check(command, redirection=False)
     if blocked:
-        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "splice(), edit(), apply() or commit()")
+        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "splice(), edit() or apply()")
         return _Result({"ok": False, "kind": "wrong_call", "command": command,
                 "blocked": blocked,
                 "error": {"code": "mutation_via_exec",
                           "message": f"`{blocked}` changes files through a program, so it would bypass the journal; use the helper.",
                           "use": use},
+                "exit_code": None, "stdout": "", "stderr": ""})
+    if _exec_shell_string(argv):
+        return _Result({"ok": False, "kind": "wrong_call", "command": command,
+                "blocked": "bash -c",
+                "error": {"code": "shell_via_exec",
+                          "message": "exec(argv) is for programs; a shell interpreter with -c/-lc is a shell string. Use exec(shell=<command>) explicitly.",
+                          "use": "exec(shell='git status && git diff --stat') or exec(commands=[[...],[...]])"},
                 "exit_code": None, "stdout": "", "stderr": ""})
     if env is not None and not isinstance(env, dict):
         return _Result({"ok": False, "kind": "bad_args", "error": {
@@ -1702,7 +1727,7 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
         finally:
             _GATE_IN_RUN -= 1
     except _SpawnBlocked as exc:
-        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "splice(), edit(), apply() or commit()")
+        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "splice(), edit() or apply()")
         return _Result({"ok": False, "kind": "wrong_call", "command": command,
                 "blocked": exc.blocked,
                 "error": {"code": "mutation_via_exec", "message": str(exc), "use": use},
@@ -1725,11 +1750,9 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
             out, err = "", ""
         return _Result({"ok": True, "kind": "timeout", "argv": argv, "command": command,
                 "timeout_s": float(timeout), "exit_code": None, "stdout": out or "", "stderr": err or "",
-                **({"notice": notice} if notice else {}),
                 "note": "the program hit its own timeout and its process group was killed; the kernel is intact"})
     return _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
             "cwd": cwd or _RUN_ROOT, "exit_code": proc.returncode,
-            **({"notice": notice} if notice else {}),
             "stdout": out or "", "stderr": err or ""})
 
 
@@ -1998,12 +2021,14 @@ def _cap(text: str, limit: int = MAX_OUTPUT) -> str:
 
 class Kernel:
     def __init__(self, root: Path, timeout: float = CELL_TIMEOUT, writable: bool = False,
-                 prelude: str = "off", allow_run: bool = False, supervise: bool = True) -> None:
+                 prelude: str = "off", allow_run: bool = False, allow_shell: bool | None = None,
+                 supervise: bool = True) -> None:
         self.root = Path(root).resolve()
         self.timeout = timeout
         self.writable = writable
         self.prelude = prelude
         self.allow_run = allow_run
+        self.allow_shell = bool(allow_run if allow_shell is None else (allow_shell and allow_run))
         self.supervise = supervise
         self.proc: subprocess.Popen | None = None
         self.orphan_journal: str | None = None
@@ -2091,6 +2116,7 @@ class Kernel:
                 "HOME": os.environ.get("HOME", "/tmp"),
                 "PYTHONIOENCODING": "utf-8",
                 "KERNEL_SUPERVISE": "1" if self.supervise else "0",
+                "KERNEL_SHELL": "1" if self.allow_shell else "0",
                 **{key: os.environ[key] for key in (
                     "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
                     "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL") if key in os.environ},

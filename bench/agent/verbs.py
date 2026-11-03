@@ -97,29 +97,12 @@ VERBS: dict[str, dict] = {
         },
     },
     "edit": {
-        "function": "edit",
-        "summary": "Replace exact old text with new text in an existing file. Reports ambiguity instead of guessing; returns the changed hunk.",
-        "mutates": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "old": {"type": "string"},
-                "new": {"type": "string"},
-                "all": {"type": "boolean", "description": "Replace every occurrence."},
-            },
-            "required": ["path", "old", "new"],
-            "additionalProperties": False,
-        },
-    },
-    "edit_many": {
         "function": "edit_many",
-        "summary": "Apply several exact old->new replacements in one call. Atomic: every old must match exactly (or all=True), otherwise nothing changes. Use it for a batch of doc/source edits instead of one edit per line.",
+        "summary": "Apply one or several exact old->new replacements. A list is atomic: every old must match exactly (or all=True), otherwise nothing changes. Use it for a batch of doc/source edits instead of one call per line.",
         "mutates": True,
         "schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Optional default path for edits that omit their own; usually leave it out."},
                 "edits": {
                     "type": "array",
                     "items": {
@@ -134,8 +117,11 @@ VERBS: dict[str, dict] = {
                         "additionalProperties": False,
                     },
                 },
+                "path": {"type": "string", "description": "Single-edit form: file path (or default path for a list)."},
+                "old": {"type": "string", "description": "Single-edit form: exact text to replace."},
+                "new": {"type": "string", "description": "Single-edit form: replacement text."},
+                "all": {"type": "boolean", "description": "Single-edit form: replace every occurrence."},
             },
-            "required": ["edits"],
             "additionalProperties": False,
         },
     },
@@ -181,20 +167,9 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
-    "commit": {
-        "function": "commit",
-        "summary": "Write several files in one call: pass {path: full text}. One diff and one undo cover the whole change set.",
-        "mutates": True,
-        "schema": {
-            "type": "object",
-            "properties": {"files": {"type": "object", "additionalProperties": {"type": "string"}}},
-            "required": ["files"],
-            "additionalProperties": False,
-        },
-    },
     "exec": {
         "function": "exec_argv",
-        "summary": "Run a program directly by argv (no shell) from the workspace root. Pass commands=[[...],[...]] for several in order; cwd replaces cd. No pipes, && or redirection, and do not wrap a command in bash -lc: use search/read for files, commands for several programs, and python run() only when shell syntax is truly needed.",
+        "summary": "The single process tool: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd replaces cd. Do not pass bash -lc in argv; use shell. For files use search/read, not the shell.",
         "mutates": False,
         "requires_run": True,
         "schema": {
@@ -204,6 +179,8 @@ VERBS: dict[str, dict] = {
                          "description": "Program and arguments, e.g. ['git', 'status', '--short']."},
                 "commands": {"type": "array", "items": {"type": "array", "items": {"type": "string"}},
                              "description": "Several argv commands, run in order."},
+                "shell": {"type": "string",
+                          "description": "Explicit shell string (the escape hatch). Do not pass bash -lc in argv."},
                 "cwd": {"type": "string", "description": "Working directory; default the workspace root."},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},
                 "stdin": {"type": "string"},
@@ -253,48 +230,6 @@ VERBS: dict[str, dict] = {
                 "cwd": {"type": "string"},
             },
             "required": ["action"],
-            "additionalProperties": False,
-        },
-    },
-    "changes": {
-        "function": "changes",
-        "summary": "List the paths this session changed.",
-        "mutates": False,
-        "schema": NO_ARGS,
-    },
-    "diff": {
-        "function": "diff",
-        "summary": "Return the session's unified diff (or one path's). The state card already shows the last cell's diff.",
-        "mutates": False,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "max_chars": {"type": "integer", "minimum": 0},
-            },
-            "additionalProperties": False,
-        },
-    },
-    "undo": {
-        "function": "undo",
-        "summary": "Restore files to their session-start state, newest journal entry first.",
-        "mutates": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "n": {"type": "integer", "minimum": 1},
-            },
-            "additionalProperties": False,
-        },
-    },
-    "help": {
-        "function": "verbs",
-        "summary": "List the kernel verbs with their live signatures and one-line summaries.",
-        "mutates": False,
-        "schema": {
-            "type": "object",
-            "properties": {"topic": {"type": "string"}},
             "additionalProperties": False,
         },
     },

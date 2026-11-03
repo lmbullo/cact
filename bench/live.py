@@ -51,7 +51,7 @@ from bench import ws
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "@@TUI@@"
-VERBS = ("map", "read", "outline", "search", "grep", "write", "edit", "edit_many", "splice", "apply", "commit",
+VERBS = ("map", "read", "outline", "search", "grep", "write", "edit", "splice", "apply", "commit",
          "exec", "git", "run", "diff", "undo", "changes", "help", "final_answer")
 
 

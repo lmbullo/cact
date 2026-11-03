@@ -214,7 +214,8 @@ def main() -> int:
             if args.mode in ("tool", "state") and lib == "off":
                 lib = "all"
             kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=lib,
-                            allow_run=allow_run)
+                            allow_run=allow_run,
+                            allow_shell=args.mode not in ("tool", "state"))
             try:
                 base = (TOOL_RULES if args.mode in ("tool", "state")
                         else BARE_TOOL_RULES if args.mode == "bare"

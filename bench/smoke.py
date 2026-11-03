@@ -343,6 +343,15 @@ def main() -> int:
         current.stop()
 
     # --- kernel: the action space an agent actually gets ---------------------------------
+    typed_kernel = Kernel(root, timeout=20, writable=True, prelude="all", allow_run=True,
+                          allow_shell=False)
+    try:
+        cell = typed_kernel.run("print('run' in globals())")
+        check("kernel: typed mode removes the python run() helper",
+              cell.stdout.strip() == "False", cell.stdout[:120])
+    finally:
+        typed_kernel.stop()
+
     kernel = Kernel(root, timeout=20, writable=True, prelude="all", allow_run=True)
     try:
         cell = kernel.run("print(read('a.txt')['total_lines'])")
@@ -388,23 +397,23 @@ def main() -> int:
               (root / "a.txt").read_text() == "alpha\nbeta\n", (root / "a.txt").read_text()[:80])
 
         kernel.run("write('batch_a.txt', 'one\\ntwo\\n'); write('batch_b.txt', 'red\\nblue\\n')")
-        cell = kernel.call("edit_many", {"edits": [
+        cell = kernel.call("edit", {"edits": [
             {"path": "batch_a.txt", "old": "two", "new": "TWO"},
             {"path": "batch_b.txt", "old": "blue", "new": "BLUE"},
         ]})
-        check("kernel: call(edit_many) applies a batch in one cell",
-              cell.tool == "edit_many" and set(cell.changed) == {"batch_a.txt", "batch_b.txt"}
+        check("kernel: call(edit) applies a batch in one cell",
+              cell.tool == "edit" and set(cell.changed) == {"batch_a.txt", "batch_b.txt"}
               and "TWO" in (root / "batch_a.txt").read_text()
               and "BLUE" in (root / "batch_b.txt").read_text(), str(cell.changed))
-        cell = kernel.call("edit_many", {"path": "batch_a.txt",
+        cell = kernel.call("edit", {"path": "batch_a.txt",
                                         "edits": [{"old": "TWO", "new": "two"}]})
-        check("kernel: call(edit_many) accepts a default path",
+        check("kernel: call(edit) accepts a default path",
               "two" in (root / "batch_a.txt").read_text(), (cell.result or "")[:200])
-        cell = kernel.call("edit_many", {"edits": [
+        cell = kernel.call("edit", {"edits": [
             {"path": "batch_a.txt", "old": "one", "new": "ONE"},
             {"path": "batch_b.txt", "old": "missing", "new": "x"},
         ]})
-        check("kernel: call(edit_many) is atomic on a bad old string",
+        check("kernel: call(edit) is atomic on a bad old string",
               "not_found" in (cell.result or "")
               and (root / "batch_a.txt").read_text().startswith("one"),
               (cell.result or "")[:240])
@@ -522,9 +531,12 @@ def main() -> int:
               "bad_arguments" in (cell.result or "") and not cell.failed,
               (cell.result or "")[:240])
         cell = kernel.call("exec", {"argv": ["bash", "-lc", "echo one"]})
-        check("kernel: call(exec) flags a shell -c string with a notice",
-              "one" in cell.stdout and "notice" in (cell.result or ""),
-              (cell.stdout + (cell.result or ""))[:260])
+        check("kernel: call(exec) points a shell -c string at the shell field",
+              "shell_via_exec" in (cell.result or "") and "exec(shell=" in (cell.result or "")
+              and not cell.stdout, (cell.result or "")[:260])
+        cell = kernel.call("exec", {"shell": "echo one"})
+        check("kernel: call(exec) runs an explicit shell string",
+              "one" in cell.stdout and cell.tool == "exec", (cell.stdout + cell.stderr)[:200])
         cell = kernel.call("exec", {"argv": ["sed", "-i", "s/one/1/", "call_a.txt"]})
         check("kernel: call(exec) refuses a mutating program",
               "mutation_via_exec" in (cell.result or "") and "one" in (root / "call_a.txt").read_text(),
@@ -542,14 +554,13 @@ def main() -> int:
         cell = kernel.call("outline", {"path": "outline.md", "max_entries": 1})
         check("kernel: call(outline) respects max_entries",
               "Title" in cell.stdout and "Section" not in cell.stdout, cell.stdout[:160])
-        cell = kernel.call("help", {"topic": ""})
-        check("kernel: call(help) documents exec and run",
-              "exec(" in cell.stdout and "run(" in (cell.stdout + str(cell.result)),
-              (cell.stdout + (cell.result or ""))[:240])
-        cell = kernel.call("help", {"topic": "read"})
-        check("kernel: call(help) returns live signatures",
-              "read(" in cell.stdout and '"signature"' in (cell.result or ""),
-              (cell.stdout + (cell.result or ""))[:240])
+        cell = kernel.run("print(help()['text'])")
+        check("kernel: help() documents the typed tools",
+              "exec(" in cell.stdout and "edit(" in cell.stdout,
+              (cell.stdout + cell.stderr)[:260])
+        cell = kernel.run("print(help('read')['text'])")
+        check("kernel: help(topic) returns live signatures",
+              "read(" in cell.stdout, (cell.stdout + cell.stderr)[:200])
         kernel.run("undo('call_a.txt'); undo('call_b.txt')")
 
         kernel.run("write('multi_a.txt', 'one\\ntwo\\nthree\\n'); write('multi_b.txt', 'red\\nblue\\n')")

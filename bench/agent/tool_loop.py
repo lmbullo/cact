@@ -2,8 +2,7 @@
 
 WHAT IT IS
   The turn machine the production loop extends. The model gets the typed tools generated
-  from `verbs.VERBS` (read/outline/search/edit/edit_many/splice/write/apply/commit/
-  exec/git/changes/diff/undo/help)
+  from `verbs.VERBS` (read/outline/search/edit/splice/write/apply/exec/git)
   plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is dispatched to
   `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return the same
   `Cell`; a `Verifier` (checks.py) decides whether the task may finish and what the cheap
@@ -118,8 +117,9 @@ PYTHON_TOOL = {
             "Execute Python in a persistent kernel. Variables, imports and data persist between calls. "
             "The value of the last expression and anything printed are returned as the tool result. "
             "Use the typed tools for reading, searching, editing and running programs; use python "
-            "for computation and for anything the typed tools do not cover. run() inside python is "
-            "the shell escape hatch. help() lists the verbs with their live signatures."
+            "for computation and for anything the typed tools do not cover. In typed modes the "
+            "process tool is exec; run() is available only in a python-only repl/bare run. "
+            "help() lists the verbs with their live signatures."
         ),
         "parameters": {
             "type": "object",
@@ -132,15 +132,15 @@ PYTHON_TOOL = {
     },
 }
 
-TOOL_RULES = """You act by calling tools. The typed tools (read, outline, search, edit, edit_many, splice, write, apply, commit, exec, git, changes, diff, undo, help) execute against the workspace and return structured results. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation, multi-step logic, and anything the typed tools do not cover.
+TOOL_RULES = """You act by calling tools. The typed tools (read, outline, search, edit, splice, write, apply, exec, git) execute against the workspace and return structured results. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
 
 For files, use outline, read and search. outline(path) returns headings and definitions with line numbers (Markdown sections, Python classes/functions/methods, TS/JS defs and tests), so read a long file by its structure instead of guessing. read takes a path or a list and a line range (start/end, or offset/limit); search takes a pattern, one path or a list, include='*.py' to filter, context=N for surrounding lines, regex and ignore_case. They return line numbers and handles, so you can go straight to the range you need.
 
-exec(argv, ...) runs a program directly by argv from the workspace root; it is not a shell. Use cwd=... instead of cd, commands=[[...],[...]] for several argv lists, and env/stdin when needed. There are no pipes, &&, globbing or redirection, and do not wrap a command in bash -lc; use read/search for files and python run() only when shell syntax is truly needed. exec refuses programs that mutate tracked files (rm, cp, mv, tee, sed -i, git checkout/apply, ...); use the typed helpers. For git use the git tool: status, diff/show (paged with offset/max_chars), log, files, add, commit, push, remote, branch. It has no pager and returns structured fields.
+exec(argv, ...) is the one process tool. Use argv for one program, commands=[[...],[...]] for several in order, and shell=<string> when shell syntax is truly needed. cwd=... replaces cd; env/stdin are explicit. Do not pass bash -lc in argv; use shell. For files use read/search, not the shell. exec refuses programs that mutate tracked files (rm, cp, mv, tee, sed -i, git checkout/apply, ...); use the typed helpers. For git use the git tool: status, diff/show (paged with offset/max_chars), log, files, add, commit, push, remote, branch. It has no pager and returns structured fields.
 
-Every mutation is journalled through write, edit, edit_many, splice, apply or commit. splice(path, start, end, text) replaces 1-based inclusive lines and avoids re-emitting unchanged text; edit(path, old, new) replaces exact text; edit_many([{path, old, new}, ...]) applies a batch of exact replacements atomically, so use it instead of one edit per line; apply takes a unified diff; commit writes several files in one call. Use write only for a new file or a real rewrite. Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated.
+Every mutation is journalled through write, edit, splice or apply. edit takes one path/old/new or edits=[{path, old, new}, ...]; a list is atomic, so use it instead of one edit per line. splice(path, start, end, text) replaces 1-based inclusive lines; apply takes a unified diff; write is for a new file or a real rewrite. Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated.
 
-Earlier cells keep their full output in _OBS. recall(pattern) searches it, including turns a fold removed, and returns matching snippets plus the handle to page the full text; search is for the tree, recall is for the session. help() lists the verbs with their live signatures.
+Earlier cells keep their full output in _OBS. recall(pattern) searches it, including turns a fold removed, and returns matching snippets plus the handle to page the full text; search is for the tree, recall is for the session. help(), diff(), changes(), undo() and commit() remain python helpers.
 """
 
 @dataclass

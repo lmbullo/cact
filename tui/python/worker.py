@@ -71,7 +71,7 @@ from bench.agent import config  # noqa: E402
 from bench.agent.checks import CheckSpec, Verifier  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
-from bench.agent.repl import RUN_NOTE  # noqa: E402
+from bench.agent.repl import REPL_RULES, RUN_NOTE  # noqa: E402
 from bench.agent.state_loop import STATE_RULES  # noqa: E402
 from bench.agent.tool_loop import TOOL_RULES  # noqa: E402
 
@@ -237,7 +237,8 @@ def main() -> int:
         max(10.0, args.max_wall),
         args.max_output,
     )
-    base_rules = STATE_RULES if config.MODE == "state" else TOOL_RULES
+    base_rules = (STATE_RULES if config.MODE == "state"
+                  else TOOL_RULES if config.MODE == "tool" else REPL_RULES)
     rules = base_rules + AUTONOMOUS
     if allow_run:
         rules += RUN_NOTE
@@ -267,6 +268,7 @@ def main() -> int:
             writable=True,
             prelude="all",
             allow_run=allow_run,
+            allow_shell=config.MODE not in ("state", "tool"),
             supervise=os.environ.get("CODE_TUI_LEGACY_TIMEOUT") != "1",
             emit_event=emit,
         )

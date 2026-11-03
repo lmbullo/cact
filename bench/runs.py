@@ -29,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-VERBS = ("map", "read", "outline", "search", "grep", "guide", "recall", "write", "edit", "edit_many", "splice",
+VERBS = ("map", "read", "outline", "search", "grep", "guide", "recall", "write", "edit", "splice",
          "apply", "commit", "exec", "git", "run", "diff", "undo", "changes", "help",
          "final_answer")
 

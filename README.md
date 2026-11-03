@@ -107,10 +107,10 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the typed verbs in verbs.VERBS (read/search/outline/edit/
-          │           edit_many/splice/write/apply/commit/git/changes/diff/undo/help),
-          │           plus guide/map/recall/final_answer/emit
-          └─ RUN_PRELUDE: exec (argv, no shell) + run() (python shell)
+          ├─ PRELUDE: the typed verbs in verbs.VERBS (read/outline/search/edit/
+          │           splice/write/apply/exec/git), plus guide/map/recall/
+          │           final_answer/emit
+          └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
                   ▼
               the workspace
@@ -167,8 +167,8 @@ bench/run.py                        tui/bin/code
   bind of the workspace only when `writable=True`).
 - **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
   what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
-  `edit()`, `splice()`, `apply()` and `commit()` all funnel through the same `_commit`, so a
-  multi-file `apply()`/`commit()` is one diff and one `undo()`.
+  `edit()`, `splice()` and `apply()` all funnel through the same `_commit`, so a multi-file
+  `apply()` is one diff and one `undo()`.
 - **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`
   and the `Verifier` that owns it: the cheap subset, the `scope` filter, the 20s throttle,
   the check cache and the `Check` rendering. Results are cached until the next mutating
@@ -304,13 +304,12 @@ imports `bench.agent` from this repo, so the checkout path matters.
    a paired tool result, marked skipped, so the next request stays valid). When a goal check
    exists, no answer is accepted until the check passes. `run.py` grades `result.final`; a
    prose reply with no tool call is the summary.
-2. **`exec` runs argv; `run()` is the python shell; only mutation is gated.** `exec(argv)`
-   runs a program directly (no shell) from the workspace root; `cwd=` replaces `cd`,
-   `commands=[[...]]` runs several, and `env`/`stdin` are explicit. `run(command)` inside a
-   Python cell remains the escape hatch for pipes and shell syntax. A shell interpreter with
-   `-c`/`-lc` still runs, but the result carries a `notice` that it took the `run()` path
-   rather than the argv path; a call whose keywords do not match the verb's signature is
-   answered with `bad_args`/`bad_arguments`, never a traceback. Programs/verbs that
+2. **`exec` is the one process tool; only mutation is gated.** `exec(argv)` runs a program
+   from the workspace root; `cwd=` replaces `cd`, `commands=[[...]]` runs several,
+   `env`/`stdin` are explicit, and `shell=<string>` is the explicit shell escape hatch.
+   `bash -lc` inside argv is refused as `shell_via_exec` and points at `shell`. `run()` is
+   available only in python-only modes (repl/bare). A call whose keywords do not match the
+   verb's signature is answered with `bad_args`/`bad_arguments`, never a traceback. Programs/verbs that
    change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
    `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument, not a
    redirect) are refused with `kind: "wrong_call"` and a `use` hint, because they would
@@ -326,10 +325,10 @@ imports `bench.agent` from this repo, so the checkout path matters.
    typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and the RUN_NOTE
    text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without
-   `force=True`); **`edit()` reports ambiguity instead of guessing**; `splice(path, start, end,
-   text)` replaces a 1-based inclusive line range; `apply(<unified diff>)` and
-   `commit({path: text})` write several files in one cell. All of them go through the same
-   journalled `_commit`.
+   `force=True`); **`edit()`** takes one `path/old/new` or a list of edits and validates the
+   whole batch before writing; `splice(path, start, end, text)` replaces a 1-based inclusive
+   line range; `apply(<unified diff>)` writes several files in one cell. All of them go
+   through the same journalled `_commit`; `commit()` is a python helper.
 4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or
    `test_calc2.py` scores zero — repair the source.
 5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the
