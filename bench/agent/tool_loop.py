@@ -1,10 +1,12 @@
-"""ToolLoop: one tool (`python`) executed as a kernel cell (`--mode tool`).
+"""ToolLoop: typed kernel verbs plus the `python` escape hatch (`--mode tool`).
 
 WHAT IT IS
-  The turn machine the production loop extends. The model gets a single function,
-  `PYTHON_TOOL`, whose `code` argument is run by `Kernel.run`. The cell's stdout/stderr/result
-  becomes the observation; a `Verifier` (checks.py) decides whether the task may finish and
-  what the cheap `[check]` line says.
+  The turn machine the production loop extends. The model gets the typed tools generated
+  from `verbs.VERBS` (read/search/edit/splice/write/apply/commit/exec/changes/diff/undo/help)
+  plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is dispatched to
+  `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return the same
+  `Cell`; a `Verifier` (checks.py) decides whether the task may finish and what the cheap
+  `[check]` line says.
 
   One `run()` is a sequence of *turns*; one turn is one reply with zero or more tool calls.
   The machine keeps four explicit pieces of state instead of ad-hoc locals:
@@ -14,12 +16,13 @@ WHAT IT IS
     Tally         the run counters (steps, calls, errors, repeats, llm_calls)
 
 ENTRY POINTS
-  PYTHON_TOOL .. the single tool spec sent to the client
-  TOOL_RULES ... system prompt: use the kernel for everything, finish with final_answer
+  PYTHON_TOOL ... the persistent-kernel tool spec (the escape hatch)
+  tools.TYPE_TOOLS .. the typed specs generated from verbs.VERBS (the default set)
+  TOOL_RULES ... system prompt: typed tools for I/O and mutation, python for computation
   Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, TRUNCATED,
                    BAD_ARGS, LLM_FAILED (module constants, collected in STOPS)
   FinishState()  .stage(v) / .accept(v) / .clear() / .staged / .terminal
-  CallRecord(index, name, call_id) .. .code/.observation/.runs/.reads/.notice/.stop
+  CallRecord(index, name, call_id) .. .code/.args/.observation/.runs/.reads/.notice/.stop
   TurnOutcome(stop, final, end)
   ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
            health, verifier)
@@ -55,8 +58,8 @@ INVARIANTS
     refresh `self.last_check` (the `[check]` line of the next card). It never ends the run;
     the full goal does. `goal=`/`health=` remain accepted for the benchmark and smoke tests.
   - A finish is never rejected for citation coverage: `read()` records ranges for the
-    `[read]` card, but reads through `run()`/`open()` are equally valid and the ledger cannot
-    see them, so gating the finish on it was inconsistent.
+    `[read]` card, but reads through python `run()`/`open()` are equally valid and the ledger
+    cannot see them, so gating the finish on it was inconsistent.
   - BAD_ARGS / TRUNCATED mean nothing ran and the model is told why.
   - A primary `client.complete` failure (LLMError) is not an exception out of `run`: the
     loop stops with LLM_FAILED, keeping whatever final/staged answer exists, and still writes
@@ -72,7 +75,9 @@ WHERE TO CHANGE
   What the model sees per cell ......... `_observe` (StateLoop overrides it with state cards)
   Another reply dialect ................ `_reply` (ReplLoop overrides it in repl.py)
   Budget / goal-check wording .......... BUDGET_NOTE, CHECK_NOUN, REJECT_*_TAIL
-  Rules and tool description ........... TOOL_RULES, PYTHON_TOOL
+  Rules and the python escape hatch .... TOOL_RULES, PYTHON_TOOL
+  Typed tool names, schemas, summaries . verbs.VERBS (tools.py follows); `_dispatch` routes
+                                          python to Kernel.run and every typed name to Kernel.call
   When a task counts as done ........... the `verifier` passed in by run.py / worker.py (or
                                           `goal=` for a bare callable)
   The cheap check in the card .......... `_refresh_health`, `last_check`, checks.Verifier
@@ -88,6 +93,8 @@ from .check import Check, evaluate
 from .kernel import Kernel
 from .llm import Client, LLMError
 from .loop import Budget, RunResult, _usage_add
+from .tools import TOOL_NAMES, TYPE_TOOLS
+from .verbs import VERBS
 
 # --- stop vocabulary: the only stop names a RunResult or a trace record may carry ---------
 DONE = "DONE"                    # the model finished; its answer (or prose) is final
@@ -109,10 +116,9 @@ PYTHON_TOOL = {
         "description": (
             "Execute Python in a persistent kernel. Variables, imports and data persist between calls. "
             "The value of the last expression and anything printed are returned as the tool result. "
-            "Helpers: read(path or [paths]) -> numbered lines with total_lines/next, write(path, content), "
-            "edit(path, old, new), splice(path, start, end, text) for 1-based line replace/insert, "
-            "apply(unified_diff), commit({path: text}), grep, map, guide, run(command or [commands]), diff, undo, "
-            "changes, recall, final_answer."
+            "Use the typed tools for reading, searching, editing and running programs; use python "
+            "for computation and for anything the typed tools do not cover. run() inside python is "
+            "the shell escape hatch. help() lists the verbs with their live signatures."
         ),
         "parameters": {
             "type": "object",
@@ -125,23 +131,15 @@ PYTHON_TOOL = {
     },
 }
 
-TOOL_RULES = """You act by calling the python tool. The call is executed in a persistent kernel: variables, imports and data persist between calls, and the value of the last expression plus anything printed come back as the tool result.
+TOOL_RULES = """You act by calling tools. The typed tools (read, search, edit, splice, write, apply, commit, exec, changes, diff, undo, help) execute against the workspace and return structured results. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation, multi-step logic, and anything the typed tools do not cover.
 
-Use the kernel for everything: read(), write(), edit(), splice(), grep(), map() for files, guide() for a repo that documents its own modules (guide(query) returns the module that owns a topic, with its entry points and where to change it), and run() for whole programs such as tests, builds and linters.
+For files, use read and search. read takes a path or a list and a line range (start/end, or offset/limit); search takes a pattern, one path or a list, include='*.py' to filter, context=N for surrounding lines, regex and ignore_case. They return line numbers and handles, so you can go straight to the range you need.
 
-Prefer one large call over many small ones. read() accepts a list of paths and run() accepts a list of commands, so several files or checks can come back in one call; a single cell can also loop over files, run several commands, inspect and compute, and print everything you need. Do not spend one call per read or grep.
+exec(argv, ...) runs a program directly by argv from the workspace root; it is not a shell. Use cwd=... instead of cd, commands=[[...],[...]] for several argv lists, and env/stdin when needed. There are no pipes, &&, globbing or redirection; use read/search for files and python run() only when shell syntax is truly needed. exec refuses programs that mutate tracked files (rm, cp, mv, tee, sed -i, git checkout/apply, ...); use the typed helpers.
 
-Every write and edit is journalled: changes() lists what this session changed, diff(path=None) returns the unified diff as a string, and undo(path=None) restores files to their session-start state. Read diff() before you finish, so you review what you actually changed.
+Every mutation is journalled through write, edit, splice, apply or commit. splice(path, start, end, text) replaces 1-based inclusive lines and avoids re-emitting unchanged text; edit(path, old, new) replaces exact text; apply takes a unified diff; commit writes several files in one call. Use write only for a new file or a real rewrite. Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated.
 
-For an existing file, splice(path, start, end, text) replaces the 1-based inclusive lines in one call and returns the resulting hunk; edit() replaces exact old text. Use write() only for a new file or a real rewrite. For several files in one change, apply(<unified diff>) or commit({path: text, ...}) lands them in one diff and one undo.
-
-Earlier cells keep their full output in _OBS. recall(pattern) searches it, including turns a fold removed, and returns matching snippets plus the handle to page the full text; grep() is for the tree, recall() is for the session. Use recall() before re-running a command whose result you need again.
-
-run() runs any command or list of commands, including cat/grep/sed/tests/git; only shell verbs that mutate files inside the workspace (tee, cp, mv, rm, sed -i, `>`) are refused, because they would bypass the journal; scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated.
-
-Finish by calling the python tool with a cell that calls final_answer("<summary>") and prints nothing. If a cell prints output and also calls final_answer, the answer is rejected and the output is returned to you to read first. When the task asks for a specific value, put that value in final_answer, not in prose.
-
-A reply with no tool call also ends the task; its text is the summary.
+Earlier cells keep their full output in _OBS. recall(pattern) searches it, including turns a fold removed, and returns matching snippets plus the handle to page the full text; search is for the tree, recall is for the session. help() lists the verbs with their live signatures.
 """
 
 @dataclass
@@ -189,6 +187,7 @@ class CallRecord:
     name: str
     call_id: str
     code: str | None = None
+    args: dict | None = None
     observation: dict | None = None
     runs: list = field(default_factory=list)
     reads: dict | None = None
@@ -204,6 +203,7 @@ class CallRecord:
             "name": self.name,
             "call_id": self.call_id,
             "code": self.code,
+            "args": self.args,
             "observation": self.observation,
             "runs": list(self.runs or []),
             "reads": self.reads or {},
@@ -264,7 +264,11 @@ class ToolLoop:
         self.kernel = kernel
         self.budget = budget or Budget()
         self.rules = rules
-        self.tools = tools or [PYTHON_TOOL]
+        if tools is None:
+            allow_run = bool(getattr(kernel, "allow_run", True))
+            tools = [PYTHON_TOOL, *[spec for spec in TYPE_TOOLS
+                                    if allow_run or not VERBS[spec["function"]["name"]].get("requires_run")]]
+        self.tools = tools
         self.goal = goal
         self.goal_label = goal_label
         self.goal_stops = goal_stops
@@ -404,12 +408,13 @@ class ToolLoop:
     def _dispatch(self, fn: dict, name: str, record: CallRecord, finish_reason,
                   finish: FinishState, tally: Tally, seen: set[str], step: int) -> str:
         """Run one tool call and return the text of its paired tool message."""
-        if name != "python":
-            record.notice = f"[observation] unknown tool {name!r}; the only tool is python"
+        if name != "python" and name not in TOOL_NAMES:
+            record.notice = (f"[observation] unknown tool {name!r}; use the typed tools or python. "
+                             "help() lists the available verbs.")
             return record.notice
         if finish_reason == "length":
             record.stop = TRUNCATED
-            record.notice = "[observation] the call arguments were truncated by the output limit. Nothing ran. Split the work into smaller cells."
+            record.notice = "[observation] the call arguments were truncated by the output limit. Nothing ran. Split the work into smaller calls."
             return record.notice
         try:
             args = json.loads(fn.get("arguments") or "{}")
@@ -417,31 +422,45 @@ class ToolLoop:
             record.stop = BAD_ARGS
             record.notice = f"[observation] arguments were not valid JSON: {exc}. Nothing ran."
             return record.notice
-        code = args.get("code")
-        if not isinstance(code, str) or not code.strip():
+        if not isinstance(args, dict):
             record.stop = BAD_ARGS
-            record.notice = "[observation] the code argument was empty. Nothing ran."
+            record.notice = "[observation] arguments must be a JSON object. Nothing ran."
             return record.notice
 
-        if code in seen:
+        if name == "python":
+            code = args.get("code")
+            if not isinstance(code, str) or not code.strip():
+                record.stop = BAD_ARGS
+                record.notice = "[observation] the code argument was empty. Nothing ran."
+                return record.notice
+            key = code
+            record.code = code
+        else:
+            key = name + ":" + json.dumps(args, sort_keys=True, default=repr)
+            record.args = args
+
+        if key in seen:
             tally.repeats += 1
         else:
-            seen.add(code)
+            seen.add(key)
         tally.calls += 1
-        record.code = code
-        cell = self.kernel.run(code, check_cache=self._check_cache())
+        if name == "python":
+            cell = self.kernel.run(code, check_cache=self._check_cache())
+        else:
+            cell = self.kernel.call(name, args, check_cache=self._check_cache())
         record.runs = (record.runs or []) + (cell.runs or [])
         record.reads = cell.reads or {}
         self._note_cell(cell)
         record.observation = {
-            "exit": "raise" if cell.stderr else "ok",
+            "tool": name,
+            "exit": "raise" if cell.failed else "ok",
             "result": cell.result,
             "stdout": cell.stdout,
             "stderr": cell.stderr,
             "restarted": cell.restarted,
             "duration_ms": cell.duration_ms,
         }
-        if cell.stderr:
+        if cell.failed:
             tally.errors += 1
         if cell.mutated:
             if self.verifier is not None:

@@ -6,7 +6,8 @@ WHAT IT IS
   builds. Read in this order: kernel.py -> tool_loop.py -> state_loop.py -> config.py.
 
 ENTRY POINTS
-  Kernel / Cell .................... kernel.py
+  Kernel / Cell .................... kernel.py (`run` for a python cell, `call` for a typed verb)
+  Verb registry / tool specs ....... verbs.py (schema + summary + function), tools.py (specs)
   guide() / the header index ....... headers.py (also shipped to a kernel cell as a verb)
   ToolLoop / StateLoop / ReplLoop .. the loop modules; config.build() picks one
   Client, LLMError ................. llm.py

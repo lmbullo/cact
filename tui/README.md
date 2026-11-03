@@ -236,7 +236,7 @@ Environment variables are read by the server (and inherited by workers), plus
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per model reply (clamped to 393216) |
 | `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
-| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `run()` and runs the kernel under bwrap |
+| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `exec`/`run()` and runs the kernel under bwrap |
 | `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
 | `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |
 | `CODE_TUI_LEGACY_CHECK` | unset | `1` makes the goal return a bare pass/fail, not a parsed `Check` |
@@ -312,19 +312,21 @@ launch directory. It can edit files and run commands as your user.
 
 For untrusted tasks use `CODE_TUI_ALLOW_RUN=0`: the kernel runs under `bwrap` with a
 read-only `/`, the workspace is bind-mounted writable so the agent can still do its job,
-and `run()` is not injected at all. Test-repair tasks will then be much harder.
+and `exec`/`run()` are not injected at all. Test-repair tasks will then be much harder.
 
-`run()` executes one bash command (tests, builds, servers, read-only git). Reads,
-searches, tests and builds work as written (`cat`, `sed -n`, `rg`, `git diff`,
-`python3 -c`); only mutating shell verbs (`tee`, `cp`, `mv`, `rm`, `sed -i`,
-`git apply/...`, `>` redirection; a quoted `>` is an argument) are refused as
-`kind: "wrong_call"` with the helper to use instead. Direct process spawning
+`exec(argv)` runs a program directly (tests, builds, servers, read-only git) with `cwd`,
+`env`, `stdin` and `commands=[[...]]`; no shell parses it, so `cwd=` replaces `cd` and there
+are no pipes or redirection. `run(command)` is the python shell escape hatch for the cases
+that need them. Both share the mutation gate: changing tracked files through `tee`, `cp`,
+`mv`, `rm`, `sed -i`, `git apply/...` or `>` is refused as `kind: "wrong_call"` with the
+helper to use instead. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel prelude
-provides `read()` (one path or a list), `grep()`, `guide()`, `map()`, `write()`, `edit()`,
-`splice()`, `apply()` and `commit()`, plus `recall()` for earlier cell output; mutations are
+provides `read()` (one path or a list), `grep()` (the typed `search` tool), `guide()`,
+`map()`, `write()`, `edit()`, `splice()`, `apply()` and `commit()`, plus `recall()` for
+earlier cell output; mutations are
 journalled together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
-launched through `run()` can still write files: the journal is a typed-helper contract,
+launched through `exec`/`run()` can still write files: the journal is a typed-helper contract,
 not a sandbox.
 
 The server binds to `127.0.0.1` with a random port. It has no authentication; do not

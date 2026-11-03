@@ -206,12 +206,16 @@ function EventView({ event, width }: { event: TaskEvent; width: number }) {
   const kind = event.kind;
 
   if (kind === "cell.start") {
-    // Just the marker and the arguments: no verb, no cell index, no counters.
+    // Just the marker and the arguments: no verb, no cell index, no counters. A typed call
+    // shows its tool and JSON args; a python cell shows its first call, as before.
     const room = Math.max(2, fit - 2);
+    const label = event.tool && event.tool !== "python"
+      ? `${event.tool}(${oneLine(JSON.stringify(event.args ?? {}))})`
+      : toolArgs(event.code ?? "");
     return (
       <text>
         <span fg={C.faint}>{"▸ "}</span>
-        <span fg={C.tool}>{clip(toolArgs(event.code ?? ""), room)}</span>
+        <span fg={C.tool}>{clip(label, room)}</span>
       </text>
     );
   }

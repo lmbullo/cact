@@ -72,17 +72,21 @@ REPL_RULES = """PYTHON REPL CONTRACT
 RUN_NOTE = """
 
 RUNNING PROGRAMS
-run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list of them) from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Prefer the helpers when you want structured output (path, line numbers, total_lines, next.offset): read() (a path or a list of paths), grep(), map().
+In tools modes, exec(argv, timeout=60, cwd=None, env=None, stdin=None) runs a program directly by argv, with no shell. Use cwd=... instead of `cd`, commands=[[...],[...]] for several argv lists, and env/stdin when needed. There are no pipes, &&, globbing or redirection: use search()/read() for files, and the python run() helper only when shell syntax is truly needed.
 
-Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), splice(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
+In a python cell, run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list) from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`.
+
+Mutation inside the workspace goes through the journal, not a process. Use write(), edit(), splice(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; exec and run refuse those with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
 """
 
 RUN_NOTE_MUT = """
 
 RUNNING PROGRAMS
-run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list of them) from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git all work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`. Read files with open(path).read() or let a program read them.
+In tools modes, exec(argv, timeout=60, cwd=None, env=None, stdin=None) runs a program directly by argv, with no shell; cwd replaces `cd`, and commands=[[...],[...]] runs several. There are no pipes, &&, globbing or redirection: use search()/read() for files, and python run() only when shell syntax is truly needed.
 
-Mutation inside the workspace goes through the journal, not the shell. Use write(), edit(), splice(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; those are refused with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
+In a python cell, run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list) from the project root and returns kind, exit_code, stdout, stderr.
+
+Mutation inside the workspace goes through the journal, not a process. Use write(), edit(), splice(), apply() or commit() instead of tee, touch, cp, mv, rm, sed -i or `>`; exec and run refuse those with kind "wrong_call" because they would bypass diff() and undo(). Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated: rm/mkdir/cp there is fine. A program you run can still write files; the journal only covers the typed helpers, so do not claim undo() covers a script's output.
 """
 
 BARE_RULES = """Write Python in one ```python block. Cells share a kernel; variables persist. Set ANSWER to the final value to end the task.

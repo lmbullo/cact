@@ -35,6 +35,10 @@ INVARIANTS
     summary -> partial, anything else -> failed. Exit 0 only for done.
   - A missing DEEPSEEK_API_KEY or an empty prompt fails fast with NO_API_KEY/EMPTY_PROMPT
     rather than burning a kernel.
+  - A fire-and-forget task may be asked to commit. The worker supplies a default git identity
+    through GIT_AUTHOR_*/GIT_COMMITTER_* (CODE_TUI_GIT_NAME / CODE_TUI_GIT_EMAIL override),
+    and Kernel.start forwards those four variables to run() children. It never writes the
+    user's git config.
   - history_brief is prepended to the prompt (state mode only) so the next task in the same
     workspace knows what the previous ones changed; record_history is appended after a
     completed run even when the task failed, because a failed attempt still moved files.
@@ -140,8 +144,13 @@ class StreamingKernel(Kernel):
 
     def run(self, code: str, check_cache: dict | None = None):
         self._cell_no += 1
-        self._emit_event({"kind": "cell.start", "cell": self._cell_no, "code": code})
+        self._emit_event({"kind": "cell.start", "cell": self._cell_no, "tool": "python", "code": code})
         return super().run(code, check_cache=check_cache)
+
+    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None):
+        self._cell_no += 1
+        self._emit_event({"kind": "cell.start", "cell": self._cell_no, "tool": tool, "args": args or {}})
+        return super().call(tool, args, check_cache=check_cache)
 
 
 class EventTrace:
@@ -208,6 +217,14 @@ def main() -> int:
         return 2
 
     allow_run = args.allow_run != "0"
+    # Fire-and-forget tasks can be asked to commit; a fresh workspace has no git identity.
+    # Supply one for the kernel's run() children without touching the user's git config.
+    git_name = os.environ.get("CODE_TUI_GIT_NAME", "code-tui agent")
+    git_mail = os.environ.get("CODE_TUI_GIT_EMAIL", "agent@code-tui.local")
+    os.environ.setdefault("GIT_AUTHOR_NAME", git_name)
+    os.environ.setdefault("GIT_AUTHOR_EMAIL", git_mail)
+    os.environ.setdefault("GIT_COMMITTER_NAME", git_name)
+    os.environ.setdefault("GIT_COMMITTER_EMAIL", git_mail)
     client = Client(
         api_key=key,
         model=args.model,

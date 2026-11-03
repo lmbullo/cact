@@ -285,7 +285,9 @@ function handleWorkerLine(task: Task, raw: string): void {
       appendEvent(task, {
         kind: "cell.start",
         cell: message.cell,
-        code: capString(message.code, 12000) as string,
+        tool: message.tool,
+        args: capValue(message.args ?? {}) as Record<string, unknown>,
+        code: message.code ? (capString(message.code, 12000) as string) : undefined,
       });
       break;
     case "turn": {

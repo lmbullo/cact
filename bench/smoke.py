@@ -3,8 +3,9 @@ touched.
 
 WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
-  It imports every module, drives the kernel prelude end to end (read/write/edit/splice/
-  changes/diff/undo, batched read and run, run() allowing reads and refusing mutation) and
+  It imports every module, drives the kernel prelude end to end (read/search/write/edit/
+  splice/changes/diff/undo, batched read and exec, exec/run allowing reads and refusing
+  mutation) and
   checks the pure helpers (reply parsing, state digests, read coverage, the spawn gate,
   check plans), plus the header index (`bench/agent/headers.py`) and the contract CLI
   (`bench/map.py`).
@@ -49,6 +50,8 @@ import bench.agent.reply as reply
 import bench.agent.repl as repl
 import bench.agent.state_loop as state_loop
 import bench.agent.tool_loop as tool_loop
+import bench.agent.tools as tools
+import bench.agent.verbs as verbs
 import bench.agent.checks as checks
 import bench.agent.headers as headers
 import bench.agent.trace as trace
@@ -106,10 +109,13 @@ class FakeClient:
 class FakeKernel:
     """Maps a cell's code to a scripted Cell; `raises` makes dispatch blow up."""
 
-    def __init__(self, cells: dict, raises: set[str] | None = None) -> None:
+    def __init__(self, cells: dict, raises: set[str] | None = None,
+                 typed: dict | None = None) -> None:
         self.cells = dict(cells)
         self.raises = set(raises or ())
+        self.typed = dict(typed or {})
         self.codes: list[str] = []
+        self.calls: list[tuple[str, dict]] = []
 
     def run(self, code: str, check_cache: dict | None = None) -> Cell:
         self.codes.append(code)
@@ -117,10 +123,22 @@ class FakeKernel:
             raise RuntimeError("kernel exploded")
         return self.cells.get(code) or _cell()
 
+    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None) -> Cell:
+        self.calls.append((tool, dict(args or {})))
+        if tool in self.raises:
+            raise RuntimeError("kernel exploded")
+        cell = self.typed.get(tool)
+        if cell is None:
+            cell = _cell()
+        if cell.tool is None:
+            cell.tool = tool
+        return cell
 
-def _run_loop(replies: list[dict], cells: dict, goal=None, raises: set[str] | None = None):
+
+def _run_loop(replies: list[dict], cells: dict, goal=None, raises: set[str] | None = None,
+              typed: dict | None = None):
     client = FakeClient(replies)
-    kernel = FakeKernel(cells, raises)
+    kernel = FakeKernel(cells, raises, typed)
     loop_ = tool_loop.ToolLoop(client, kernel, loop.Budget(), goal=goal)
     return loop_.run("smoke", "do the task"), client, kernel
 
@@ -151,6 +169,10 @@ def main() -> int:
     check("reply: prose is not an action", action.kind == "none")
 
     check("state: clip", state_loop.clip("abcdef", 3).startswith("abc"))
+    typed_cell = Cell(stdout="", stderr="", result='{"ok": true, "kind": "file"}',
+                      final=None, duration_ms=1, tool="read")
+    typed_card, _ = state_loop.render_observation(typed_cell, 1)
+    check("state: a typed call names its tool", "[tool] read" in typed_card, typed_card[:200])
     card = state_loop.digest("\n".join(f"line {i}" for i in range(400)), 800, "_OBS[0]")
     check("state: digest names the handle", "_OBS[0]" in card and len(card) < 4000)
     check("state: an undigested stream is reported whole",
@@ -162,6 +184,19 @@ def main() -> int:
     check("trace: render is callable", callable(trace.render))
     check("runs: verbs", "final_answer" in runs.VERBS)
     check("ws: workspace helpers", callable(ws.manifest) and callable(ws.clone) and callable(ws.changed))
+    typed_names = tuple(name for name, meta in verbs.VERBS.items() if meta.get("typed", True))
+    check("verbs: every typed tool has a spec",
+          tools.TOOL_NAMES == typed_names
+          and [t["function"]["name"] for t in tools.TYPE_TOOLS] == list(typed_names),
+          str(tools.TOOL_NAMES))
+    check("verbs: every schema is an object and every summary is text",
+          all(t["function"]["parameters"].get("type") == "object"
+              and isinstance(t["function"].get("description"), str)
+              for t in tools.TYPE_TOOLS))
+    check("verbs: python is not generated as a typed tool", "python" not in tools.TOOL_NAMES)
+    check("verbs: run is a python helper; exec is the typed process tool",
+          "run" not in tools.TOOL_NAMES and "run" in verbs.VERBS and "exec" in tools.TOOL_NAMES,
+          str(tools.TOOL_NAMES))
 
     # --- the contract index: every module explains itself --------------------------------
     rows = headers.index(ROOT)
@@ -411,6 +446,51 @@ def main() -> int:
         cell = kernel.run("print(read('a.txt')['content'][:20])")
         check("kernel: read()['content'] is the delivered text", "alpha" in cell.stdout, (cell.stdout + cell.stderr)[:200])
 
+        kernel.run("write('call_a.txt', 'one\\ntwo\\n'); write('call_b.txt', 'red\\nblue\\n')")
+        cell = kernel.call("read", {"path": ["call_a.txt", "call_b.txt"]})
+        check("kernel: call(read) runs a typed verb through the same pipeline",
+              cell.tool == "read" and "call_a.txt" in cell.stdout
+              and cell.reads.get("call_a.txt", {}).get("total") == 2, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("read", {"path": "call_a.txt", "start": 1, "end": 1})
+        check("kernel: call(read) accepts start/end line ranges",
+              "one" in cell.stdout and "two" not in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("search", {"pattern": "red", "path": ["call_a.txt", "call_b.txt"]})
+        check("kernel: call(search) searches a path list",
+              "call_b.txt:1" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("search", {"pattern": "RED", "path": ".", "include": "*.txt",
+                                      "context": 1, "ignore_case": True})
+        check("kernel: call(search) filters include and adds context",
+              "call_b.txt:1:" in cell.stdout and "call_b.txt:2-" in cell.stdout
+              and "call_b.txt:2- blue" in cell.stdout, (cell.stdout + cell.stderr)[:300])
+        cell = kernel.call("splice", {"path": "call_a.txt", "start": 2, "end": 2, "text": "TWO"})
+        check("kernel: call(splice) journals through the typed path",
+              cell.tool == "splice" and "call_a.txt" in cell.changed
+              and "TWO" in (root / "call_a.txt").read_text(), (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("exec", {"argv": ["echo", "one"]})
+        check("kernel: call(exec) runs a program by argv",
+              cell.tool == "exec" and "one" in cell.stdout and not cell.failed,
+              (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("exec", {"commands": [["echo", "one"], ["echo", "two"]]})
+        check("kernel: call(exec) runs several argv commands",
+              cell.tool == "exec" and "one" in cell.stdout and "two" in cell.stdout,
+              (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("exec", {"argv": "echo one"})
+        check("kernel: call(exec) refuses a shell string",
+              "shell_string" in (cell.result or ""), (cell.result or "")[:200])
+        cell = kernel.call("exec", {"argv": ["sed", "-i", "s/one/1/", "call_a.txt"]})
+        check("kernel: call(exec) refuses a mutating program",
+              "mutation_via_exec" in (cell.result or "") and "one" in (root / "call_a.txt").read_text(),
+              (cell.result or "")[:200])
+        cell = kernel.call("help", {"topic": ""})
+        check("kernel: call(help) documents exec and run",
+              "exec(" in cell.stdout and "run(" in (cell.stdout + str(cell.result)),
+              (cell.stdout + (cell.result or ""))[:240])
+        cell = kernel.call("help", {"topic": "read"})
+        check("kernel: call(help) returns live signatures",
+              "read(" in cell.stdout and '"signature"' in (cell.result or ""),
+              (cell.stdout + (cell.result or ""))[:240])
+        kernel.run("undo('call_a.txt'); undo('call_b.txt')")
+
         kernel.run("write('multi_a.txt', 'one\\ntwo\\nthree\\n'); write('multi_b.txt', 'red\\nblue\\n')")
         cell = kernel.run("r = read(['multi_a.txt', 'multi_b.txt']); print(r['kind'], r['count'], 'multi_a' in r['text'], 'multi_b' in r['text'])")
         check("kernel: read() accepts a list and concatenates the delivery",
@@ -594,6 +674,21 @@ def main() -> int:
     check("turn: the staging notice reaches the model as the tool result",
           "answer staged" in (result.turns[0]["calls"][0]["notice"] or "")
           and "answer staged" in client.requests[1][-1]["content"], str(result.turns[0])[:200])
+
+    typed_read = Cell(stdout="     1| alpha\n", stderr="",
+                      result='{"ok": true, "kind": "file"}', final=None, duration_ms=1,
+                      tool="read", reads={"a.txt": {"ranges": [[1, 1]], "total": 2}})
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("r1", None, name="read", arguments='{"path": "a.txt"}')]),
+         _reply(content="done", finish="stop")],
+        {}, typed={"read": typed_read})
+    check("turn: a typed tool dispatches to Kernel.call",
+          kernel.calls == [("read", {"path": "a.txt"})]
+          and result.turns[0]["calls"][0]["name"] == "read", str(kernel.calls))
+    check("turn: a typed call keeps its args and tool in the record",
+          result.turns[0]["calls"][0]["args"] == {"path": "a.txt"}
+          and result.turns[0]["calls"][0]["observation"]["tool"] == "read",
+          str(result.turns[0]["calls"][0])[:240])
 
     result, client, kernel = _run_loop(
         [_reply(calls=[_call("c1", staged_code), _call("c2", "print('more')")]),

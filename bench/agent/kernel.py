@@ -3,35 +3,43 @@
 WHAT IT IS
   Two layers in one file.
   1. Source strings executed *inside* the child interpreter:
-       DRIVER       loop: one JSON line per cell on stdin -> exec() in a namespace that
-                    survives between cells -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects read/grep/guide/map/write/edit/splice/changes/diff/undo/recall into
-                    that namespace and journals every mutation (snapshot at start, tree diff
-                    after each cell). `guide()` is headers.py, shipped as source and exec'd
-                    into a private `_HEADERS` namespace (see HEADERS_SOURCE).
-       RUN_PRELUDE  injects run(): whole programs only, behind the file-verb protocol check.
+       DRIVER       loop: one JSON line per request on stdin -> either exec() a Python cell
+                    or dispatch one typed verb call in the namespace that survives between
+                    requests -> one `@@K@@` JSON line back on stdout.
+       PRELUDE      injects read/grep(search)/guide/map/write/edit/splice/changes/diff/undo/
+                    recall/ verbs into that namespace and journals every mutation (snapshot
+                    at start, tree diff after each cell). `guide()` is headers.py, shipped as
+                    source and exec'd into a private `_HEADERS` namespace (see HEADERS_SOURCE).
+       RUN_PRELUDE  injects exec_argv() (the typed `exec` tool) and run() (the python shell
+                    escape hatch), behind the file-verb protocol check.
   2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
      when it dies, hangs or desynchronises, and returns a `Cell`.
 
 ENTRY POINTS
   PROTOCOL = the version both halves speak; bump it when either shape below changes
-  CellRequest(code, timeout, protocol=PROTOCOL, check_cache={})
+  verbs.VERBS = the typed registry: name -> schema/summary/function. Shipped to the child as
+                KERNEL_VERBS and used by tools.py to build the provider tool specs.
+  CellRequest(timeout, code=None, kind="code"|"call", tool=None, args={},
+              protocol=PROTOCOL, check_cache={})
     .to_wire() -> the one JSON line written to the child's stdin
   CellReply: the typed body of one `@@K@@` line; `.from_wire(dict)` parses it,
              `.protocol_ok` compares its version with PROTOCOL
   ExtendNotice: the interim `{"extend": seconds}` line a long cell sends
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, supervise=True)
-    .start()   spawn the child (lazy: .run() calls it)
-    .run(code, check_cache=None) write one cell, wait for it, -> Cell
-    .stop()    SIGKILL the process group, reap run() groups, delete the observation log
+    .start()   spawn the child (lazy: .run()/.call() calls it)
+    .run(code, check_cache=None)   one Python cell -> Cell
+    .call(tool, args, check_cache=None)  one typed verb -> the same Cell pipeline
+    .stop()    SIGKILL the process group, reap exec/run groups, delete the observation log
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
-        mutated, changed, deltas, delta, timeout, reads
+        mutated, changed, deltas, delta, timeout, reads, tool, failed
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor
-  Inside the kernel namespace: read() (a path or a list of paths), grep(), guide(), map(),
-        write(), edit(), splice(), apply(), commit(), changes(), diff(), undo(), recall(),
-        run() (when allow_run), final_answer(), emit()
+  Inside the kernel namespace: read() (a path or a list of paths), grep() (the typed
+        `search` tool), guide(), map(), write(), edit(), splice(), apply(), commit(),
+        changes(), diff(), undo(), recall(), exec_argv() (the typed `exec` tool),
+        run() (the python shell helper, when allow_run), verbs()/help(), final_answer(),
+        emit()
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.deltas` / `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish
   protocol).
@@ -46,10 +54,10 @@ INVARIANTS
   - The session's observation log (`_OBS`) is the exception: it is appended to
     `KERNEL_OBS_LOG` after each cell and reloaded by the new child, so `recall()` survives
     a crash/restart even though variables do not. `stop()` deletes the log.
-  - run() starts each command in a NEW session, so killing the kernel group does not reach
-    it. The child journals its group leader (pid + /proc start id) to
+  - exec_argv() and run() start each program in a NEW session, so killing the kernel group
+    does not reach it. The child journals its group leader (pid + /proc start id) to
     `KERNEL_ORPHAN_JOURNAL`; `stop()`/`_restart()` kill those groups before starting a new
-    child. Without this, a timed-out or crashed cell leaks whatever run() started.
+    child. Without this, a timed-out or crashed cell leaks whatever exec/run started.
   - `final_answer(v)` raises `Final`; the driver reports the value as `Cell.final`
     unconditionally, and also reports `Cell.answer` (the `ANSWER` variable, used when a repl
     loop stops on "var"). It is the LOOP, not the kernel, that decides what an answer from a
@@ -62,13 +70,13 @@ INVARIANTS
     inclusive lines through the same journal (read() numbers lines, so a surgical change
     costs only the changed lines); `apply(unified diff)` and `commit({path: text})` write
     several files in one cell, so one diff()/undo() covers the whole change set.
-  - run() runs whole commands, not a whitelist. Reads, searches, tests, builds, linters and
-    read-only git are allowed as they are; the shell is a normal tool. A list argument runs
-    every command through the same gate. Only *mutating* shell
-    verbs (tee, cp, mv, rm, sed -i, git apply/checkout/..., `>` redirection, ...) are refused
-    with `kind: "wrong_call"` plus a `use` hint, because they would bypass the journal and
-    make diff()/undo() lie. That is a correctness boundary, not a capability boundary: a
-    program can still write files, and the docs say so.
+  - exec_argv() runs a program and its argv directly, with no shell. It is the typed process
+    tool: no quoting, no `cd` prefix (use cwd), no pipes or redirection. The same mutation
+    gate applies to argv (rm, cp, mv, tee, sed -i, git apply/checkout/...), with a
+    `kind: "wrong_call"` and a `use` hint. run() is the python shell escape hatch: a shell
+    string, a list of strings, and `>` redirection are classified before it spawns. Both are
+    a correctness boundary, not a capability boundary: a program can still write files, and
+    the docs say so.
   - `guide()` is the only new name the header index adds, and it is read-only: headers.py is
     passed to the child in KERNEL_HEADERS, exec'd into `_HEADERS`, and called with `_ROOT`.
     Never inline that source again: a shared namespace let its private `_walk` overwrite the
@@ -77,15 +85,15 @@ INVARIANTS
     RUN_PRELUDE sees `subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn` and
     `os.spawn`; a spawn containing a mutating verb raises `_SpawnBlocked`, which the driver
     turns into a `wrong_call` result with the helper hint. Allowed spawns are appended to
-    `Cell.runs`. Inside run() the gate classifies but does not double-log.
+    `Cell.runs`. Inside run()/exec_argv() the gate classifies but does not double-log.
   - `read()` is a ledger, not a firehose: `limit=0` returns the whole file only while it fits
     400 lines / 9 KB; beyond that the result carries `next.offset`. A list argument reads
     several files in one cell (same offset/limit, `text` concatenated with `# path` headers),
     so batching is the tool's shape rather than a rule. Every delivered range is returned as
     `Cell.reads = {path: {ranges, total}}`, so the loop can see holes.
-  - `check_cache` is sent with each cell (`{command: {text, ok}}`); `run()` answers a
-    matching command with `kind: "check_cached"` instead of spawning the same check twice.
-  - run() enabled => the child is a plain `python3 -u -c DRIVER`. run() disabled => the child
+  - `check_cache` is sent with each cell (`{command: {text, ok}}`); `run()`/`exec_argv()`
+    answer a matching command with `kind: "check_cached"` instead of spawning it twice.
+  - run/exec enabled => the child is a plain `python3 -u -c DRIVER`. Disabled => the child
     runs under bwrap with a read-only `/` (the root is bind-mounted writable only when
     `writable=True`).
   - The protocol is versioned. Every request carries `protocol: PROTOCOL` and every child
@@ -93,6 +101,11 @@ INVARIANTS
     a mismatch restarts the child with an empty namespace (history is kept) and returns a
     `Cell` error, so a stale child can never be read through the current shape. Bump
     PROTOCOL whenever a field changes meaning or a field is removed.
+  - A typed call and a Python cell are the same cell: the request kind only chooses how the
+    child computes the value. Both reset `_READS_CELL`/`_CELL_CHANGED`, journal mutations,
+    record `_OBS`, and return the same `CellReply` (with `tool` naming the typed verb). The
+    driver writes the helper's stdout/stderr/text/hunk into the cell buffers, so the state
+    card digests typed results exactly like printed output.
   - `changed` is the list of paths; `deltas` is the per-path unified diff the same journal
     produced. `delta` is only the joined text the card renders. The loop reads `deltas`,
     never re-parses `delta`.
@@ -108,7 +121,7 @@ WHERE TO CHANGE
   Change the protocol version ............. `PROTOCOL` (child placeholder replaced at import)
   Change timeout/crash handling ........... `Kernel.run`, `_restart`, `_kill_group`, `_arm`,
                                             `_reap_orphans` + `_journal_orphan`, `obs_log`
-  Change what run() refuses .............. `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` /
+  Change what exec/run refuse ............ `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` /
                                             `_mutating_command` + `_HINT`, then the RUN_NOTE
                                             text in repl.py and the README contract list
   The spawn gate .......................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
@@ -127,10 +140,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .verbs import VERBS
+
 # --- protocol: one typed request/response pair over the `@@K@@` line ----------------------
 # Bump PROTOCOL when either half's shape changes. The child embeds the same number through
 # the __PROTOCOL__ placeholder; the parent compares it on the first message of every cell.
-PROTOCOL = 2
+PROTOCOL = 3
 
 # --- child side 1/3: DRIVER, the cell loop (stdin JSON in, `@@K@@` line out) -------------
 DRIVER = r'''
@@ -171,6 +186,10 @@ def _disarm():
     signal.setitimer(signal.ITIMER_REAL, 0)
 
 ns = {"__name__": "__agent__", "_CELL_EXTEND": _extend}
+try:
+    ns["_VERB_META"] = json.loads(os.environ.get("KERNEL_VERBS") or "{}")
+except Exception:
+    ns["_VERB_META"] = {}
 
 
 class _Result(dict):
@@ -233,17 +252,23 @@ for line in sys.stdin:
         continue
     try:
         request = json.loads(line)
-        code = request["code"]
+        kind = request.get("kind") or "code"
+        code = request.get("code")
         budget = float(request.get("timeout") or 15.0)
         ns["_CHECK_CACHE"] = request.get("check_cache") or {}
         ns["_READS_CELL"] = {}
+        if kind == "call" and not isinstance(request.get("args") or {}, dict):
+            raise ValueError("call args must be an object")
+        if kind == "code" and not isinstance(code, str):
+            raise ValueError("code must be a string")
     except Exception:
-        emit({"stdout": "", "stderr": "kernel: bad request", "result": None, "final": None, "timeout": False})
+        emit({"protocol": _PROTOCOL, "stdout": "", "stderr": "kernel: bad request", "result": None, "final": None, "timeout": False})
         continue
     out, err = io.StringIO(), io.StringIO()
     result_repr = None
     final = None
     timed_out = False
+    failed = False
     if "_CELL_CHANGED" in ns:
         ns["_CELL_CHANGED"] = []
     saved_stdin = sys.stdin
@@ -251,34 +276,68 @@ for line in sys.stdin:
     try:
         sys.stdin = io.StringIO("")
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            tree = ast.parse(code, "<cell>", "exec")
-            if tree.body and isinstance(tree.body[-1], ast.Expr):
-                head = ast.Module(tree.body[:-1], type_ignores=[])
-                exec(compile(head, "<cell>", "exec"), ns)
-                value = eval(compile(ast.Expression(tree.body[-1].value), "<cell>", "eval"), ns)
-                if value is not None:
-                    result_repr = repr(value)
+            if kind == "call":
+                tool = str(request.get("tool") or "")
+                meta = ns.get("_VERB_META") or {}
+                fn_name = (meta.get(tool) or {}).get("function") or tool
+                fn = ns.get(fn_name)
+                if not callable(fn):
+                    raise NameError("unknown kernel verb %r; call help() for the list" % tool)
+                value = fn(**(request.get("args") or {}))
+                if isinstance(value, dict):
+                    if value.get("stdout"):
+                        out.write(str(value.get("stdout")))
+                    if value.get("stderr"):
+                        err.write(str(value.get("stderr")))
+                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff"):
+                        out.write(str(value.get("text") or ""))
+                    if value.get("hunk"):
+                        out.write(str(value.get("hunk")))
+                    if value.get("kind") == "commands":
+                        summary = {k: v for k, v in value.items()
+                                   if k in ("ok", "kind", "count", "exit_code", "results")}
+                    else:
+                        summary = {k: v for k, v in value.items()
+                                   if k not in ("stdout", "stderr", "text", "raw", "files", "hunk")}
+                    result_repr = json.dumps(summary, default=repr)
+                elif isinstance(value, str):
+                    out.write(value)
+                    result_repr = json.dumps({"ok": True, "kind": tool, "chars": len(value)})
+                else:
+                    if tool == "changes" and isinstance(value, list):
+                        out.write("\n".join(str(item) for item in value))
+                    result_repr = json.dumps(value, default=repr)
             else:
-                exec(compile(tree, "<cell>", "exec"), ns)
+                tree = ast.parse(code, "<cell>", "exec")
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    head = ast.Module(tree.body[:-1], type_ignores=[])
+                    exec(compile(head, "<cell>", "exec"), ns)
+                    value = eval(compile(ast.Expression(tree.body[-1].value), "<cell>", "eval"), ns)
+                    if value is not None:
+                        result_repr = repr(value)
+                else:
+                    exec(compile(tree, "<cell>", "exec"), ns)
     except Final as f:
         final = f.value if isinstance(f.value, str) else repr(f.value)
     except _CellTimeout:
         timed_out = True
+        failed = True
         err.write(
             "timeout: the cell exceeded %.0fs and was interrupted. "
             "The namespace, imports and variables are intact.\n" % budget
         )
     except BaseException as exc:
+        failed = True
         _blocked_cls = ns.get("_SpawnBlocked")
         if _blocked_cls is not None and isinstance(exc, _blocked_cls):
-            _hint = (ns.get("_HINT") or {}).get(str(getattr(exc, "blocked", "")).split()[0], "read(), grep(), map(), write() or edit()")
+            _hint = (ns.get("_HINT") or {}).get(str(getattr(exc, "blocked", "")).split()[0], "read(), search(), map(), write() or edit()")
             result_repr = json.dumps({
                 "ok": False, "kind": "wrong_call",
                 "blocked": getattr(exc, "blocked", ""),
                 "command": getattr(exc, "command", ""),
                 "error": {"code": "mutation_via_run", "message": str(exc), "use": _hint},
             })
-            err.write("run() blocked this process: " + str(exc) + "\n")
+            err.write("the mutation gate blocked this process: " + str(exc) + "\n")
         else:
             err.write(traceback.format_exc())
     finally:
@@ -326,9 +385,11 @@ for line in sys.stdin:
             pass
     emit({"protocol": _PROTOCOL,
           "stdout": out.getvalue(), "stderr": err.getvalue(), "result": result_repr, "final": final,
+          "tool": request.get("tool"),
           "runs": emitted_runs, "reads": dict(ns.get("_READS_CELL") or {}),
           "obs_index": len(_obs_log) - 1, "mutated": _mutated,
           "changed": _changed, "deltas": _deltas, "delta": _delta, "timeout": timed_out,
+          "failed": failed,
           "answer": None if answer is None else (answer if isinstance(answer, str) else repr(answer))})
 '''.replace("__PROTOCOL__", str(PROTOCOL))
 
@@ -342,7 +403,7 @@ for line in sys.stdin:
 HEADERS_SOURCE = Path(__file__).with_name("headers.py").read_text(encoding="utf-8")
 
 PRELUDE = r"""
-import difflib as _difflib, hashlib as _hashlib, os as _os, re as _re
+import difflib as _difflib, fnmatch as _fnmatch, hashlib as _hashlib, os as _os, re as _re
 
 _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
@@ -665,7 +726,12 @@ def map(path=".", max_files=400):
             "files": entries[:int(max_files)], "total_files": len(entries)}
 
 
-def read(path, offset=1, limit=0, raw=False):
+def read(path, offset=1, limit=0, raw=False, start=None, end=None):
+    # `start`/`end` are the natural line-range names; `offset`/`limit` stay for compatibility.
+    if start is not None:
+        offset = start
+    if end is not None:
+        limit = max(0, int(end) - int(offset) + 1)
     # A list is one call for several files: the model's natural batch shape. Each sub-read
     # records its own _READS_CELL ranges, so coverage stays exact. `text` is the concatenation
     # with a `# path` header, so print(read([a, b])['text']) gives the model everything at once.
@@ -724,36 +790,88 @@ def read(path, offset=1, limit=0, raw=False):
     return _Result(result)
 
 
-def grep(pattern, path=".", max_results=50, regex=False):
+def _grep_result(hits, occurrences, truncated):
+    lines = []
+    for hit in hits:
+        for item in hit.get("before") or []:
+            lines.append("%s:%s- %s" % (hit["path"], item["line"], item["text"]))
+        lines.append("%s:%s: %s" % (hit["path"], hit["line"], hit["text"]))
+        for item in hit.get("after") or []:
+            lines.append("%s:%s- %s" % (hit["path"], item["line"], item["text"]))
+    text = "\n".join(lines)
+    return _Result({"ok": True, "kind": "matches", "matches": hits,
+                    "occurrences": occurrences, "truncated": truncated, "text": text})
+
+
+def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0, ignore_case=False):
+    # Typed `search`: one path or a list, an optional include glob, and optional context.
+    # The python helper of the same name keeps the old call shape.
+    if isinstance(path, (list, tuple, set)):
+        hits, occurred, truncated = [], 0, False
+        for item in (sorted(path) if isinstance(path, set) else path):
+            result = grep(pattern, item, max_results=max_results, regex=regex,
+                          include=include, context=context, ignore_case=ignore_case)
+            hits.extend(result.get("matches") or [])
+            occurred += int(result.get("occurrences") or 0)
+            truncated = truncated or bool(result.get("truncated"))
+            if len(hits) >= int(max_results):
+                return _grep_result(hits[:int(max_results)], None, True)
+        return _grep_result(hits, occurred, truncated)
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
     if not _os.path.exists(target):
         return {"ok": True, "kind": "miss", "path": rel}
     matcher = None
+    flags = _re.IGNORECASE if ignore_case else 0
     if regex:
         try:
-            matcher = _re.compile(pattern)
+            matcher = _re.compile(pattern, flags)
         except _re.error as exc:
             return {"ok": True, "kind": "bad_regex", "pattern": pattern, "message": str(exc)}
-    files = [target] if _os.path.isfile(target) else list(_walk(target))
+    needle = pattern.lower() if ignore_case else pattern
+    includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
+    explicit_file = _os.path.isfile(target)
+    files = [target] if explicit_file else list(_walk(target))
     hits = []
     occurrences = 0
     for full in files:
+        full_rel = _os.path.relpath(full, _ROOT)
+        if includes and not explicit_file:
+            if not any(_fnmatch.fnmatch(full_rel, pat) or
+                       _fnmatch.fnmatch(_os.path.basename(full_rel), pat)
+                       for pat in includes):
+                continue
         try:
             body = _read_text(full)
         except OSError:
             continue
-        occurrences += len(matcher.findall(body)) if matcher else body.count(pattern)
-        for number, line in enumerate(body.splitlines(), 1):
-            if matcher.search(line) if matcher else pattern in line:
-                hits.append({"path": _os.path.relpath(full, _ROOT), "line": number,
-                             "text": line.strip()[:200]})
-                if len(hits) >= int(max_results):
-                    return {"ok": True, "kind": "matches", "matches": hits,
-                            "occurrences": None, "truncated": True}
-    return {"ok": True, "kind": "matches", "matches": hits,
-            "occurrences": occurrences, "truncated": False}
+        if matcher:
+            occurrences += len(matcher.findall(body))
+        else:
+            occurrences += (body.lower() if ignore_case else body).count(needle)
+        lines = body.splitlines()
+        for number, line in enumerate(lines, 1):
+            hay = line.lower() if ignore_case else line
+            if not (matcher.search(line) if matcher else needle in hay):
+                continue
+            hit = {"path": full_rel, "line": number, "text": line.strip()[:200]}
+            if context:
+                width = int(context)
+                hit["before"] = [{"line": n, "text": lines[n - 1].strip()[:200]}
+                                 for n in range(max(1, number - width), number)]
+                hit["after"] = [{"line": n, "text": lines[n - 1].strip()[:200]}
+                                for n in range(number + 1, min(len(lines), number + width) + 1)]
+            hits.append(hit)
+            if len(hits) >= int(max_results):
+                return _grep_result(hits, None, True)
+    return _grep_result(hits, occurrences, False)
+
+
+def search(pattern, path=".", max_results=50, regex=False, include=None, context=0, ignore_case=False):
+    # The typed `search` tool is the public name; grep() stays the python helper.
+    return grep(pattern, path=path, max_results=max_results, regex=regex,
+                include=include, context=context, ignore_case=ignore_case)
 
 
 def recall(pattern, limit=10, context=100):
@@ -776,6 +894,34 @@ def recall(pattern, limit=10, context=100):
                 if len(out) >= int(limit):
                     return out
     return out
+
+
+def verbs(topic=None):
+    # The live catalog: the same registry the parent uses for tool specs. Summaries come
+    # from KERNEL_VERBS; signatures are introspected here, so they cannot drift from the
+    # functions a typed call actually dispatches to.
+    import inspect as _inspect
+    meta = globals().get("_VERB_META") or {}
+    out = []
+    for name in sorted(meta):
+        if topic and str(topic) not in name:
+            continue
+        fn = globals().get((meta[name].get("function") or name))
+        if not callable(fn):
+            continue
+        try:
+            signature = str(_inspect.signature(fn))
+        except (TypeError, ValueError):
+            signature = "(...)"
+        out.append({"name": name, "signature": signature,
+                    "summary": meta[name].get("summary") or "",
+                    "mutates": bool(meta[name].get("mutates"))})
+    return {"ok": True, "kind": "verbs", "verbs": out,
+            "text": "\n".join("%s%s  %s" % (item["name"], item["signature"], item["summary"])
+                             for item in out)}
+
+
+help = verbs
 
 
 def write(path, content, force=False):
@@ -967,11 +1113,11 @@ def commit(files, force=False):
 _snapshot()
 """
 
-# --- child side 3/3: RUN_PRELUDE, run() for whole programs, behind the protocol check -----
+# --- child side 3/3: RUN_PRELUDE, exec()/run() for programs, behind the protocol check -----
 RUN_PRELUDE = r"""
 import json as _json, os as _ros, re as _re, signal as _rsig, subprocess as _rsp
 _RUN_ROOT = _ros.getcwd()
-# run() children get their own session, so killing the kernel group does not reach them.
+# exec()/run() children get their own session, so killing the kernel group does not reach them.
 # Journal each group leader here; the parent reaps leftovers when the kernel stops/restarts.
 _ORPHAN_JOURNAL = _ros.environ.get("KERNEL_ORPHAN_JOURNAL")
 
@@ -1279,6 +1425,121 @@ def run(command, timeout=60, cwd=None):
                 "note": "the command hit its own timeout and its process group was killed; the kernel is intact"})
     return _Result({"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
             "stdout": out or "", "stderr": err or ""})
+
+
+def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=None):
+    # The typed process tool: a program and its argv, never a shell string. A list of
+    # commands runs in order and stops at the first non-zero exit. cwd replaces `cd`,
+    # stdout/stderr stay separate, and the same orphan journal and mutation gate apply.
+    global _GATE_IN_RUN
+    if commands is not None:
+        if argv is not None:
+            return _Result({"ok": False, "kind": "bad_args", "error": {
+                "code": "both_argv_and_commands",
+                "message": "pass argv=[...] or commands=[[...], ...], not both",
+                "use": "exec(argv=['git','status']) or exec(commands=[['git','status'], ['git','diff']])"}})
+        if not isinstance(commands, (list, tuple)) or not commands:
+            return _Result({"ok": False, "kind": "bad_args", "error": {
+                "code": "bad_commands", "message": "commands must be a non-empty list of argv lists",
+                "use": "exec(commands=[['git','status'], ['git','diff']])"}})
+        items = []
+        for item in commands:
+            result = exec_argv(item, timeout=timeout, cwd=cwd, env=env, stdin=stdin)
+            items.append(result)
+            if not result.get("ok") or result.get("exit_code") not in (0, None):
+                break
+        ok = all(bool(item.get("ok")) and item.get("exit_code") in (0, None) for item in items)
+        stdout = "\n".join(str(item.get("stdout") or "") for item in items).strip()
+        stderr = "\n".join(str(item.get("stderr") or "") for item in items).strip()
+        results = [{"argv": item.get("argv"), "exit_code": item.get("exit_code"),
+                    "ok": item.get("ok")} for item in items]
+        return _Result({"ok": ok, "kind": "commands", "count": len(items),
+                        "results": results, "stdout": stdout, "stderr": stderr,
+                        "exit_code": next((item.get("exit_code") for item in items
+                                           if item.get("exit_code") not in (0, None)), 0)})
+    if isinstance(argv, str):
+        return _Result({"ok": False, "kind": "wrong_call", "argv": argv, "error": {
+            "code": "shell_string",
+            "message": "exec() runs a program by argv; it does not parse a shell string",
+            "use": "exec(argv=['git','status']) -- or python run(<shell command>) when you truly need shell syntax"}})
+    if not isinstance(argv, (list, tuple)) or not argv:
+        return _Result({"ok": False, "kind": "bad_args", "error": {
+            "code": "bad_argv", "message": "argv must be a non-empty list of strings",
+            "use": "exec(argv=['python3','bench/smoke.py'])"}})
+    argv = [str(item) for item in argv]
+    command = " ".join(argv)
+    _RUN_LOG.append(command)
+    cached = _CHECK_CACHE.get(_norm_command(command))
+    if cached:
+        if isinstance(cached, dict):
+            text = str(cached.get("text") or "")
+            ok = bool(cached.get("ok", True))
+        else:
+            text, ok = str(cached), True
+        return _Result({"ok": True, "kind": "check_cached", "command": command,
+                "result": text, "exit_code": 0 if ok else 1, "stdout": text, "stderr": "",
+                "note": "this command is the project check for the current mutation batch; its recorded result is authoritative."})
+    blocked = _gate_check(command, redirection=False)
+    if blocked:
+        use = _HINT.get(blocked) or _HINT.get(blocked.split()[0], "splice(), edit(), apply() or commit()")
+        return _Result({"ok": False, "kind": "wrong_call", "command": command,
+                "blocked": blocked,
+                "error": {"code": "mutation_via_exec",
+                          "message": f"`{blocked}` changes files through a program, so it would bypass the journal; use the helper.",
+                          "use": use},
+                "exit_code": None, "stdout": "", "stderr": ""})
+    if env is not None and not isinstance(env, dict):
+        return _Result({"ok": False, "kind": "bad_args", "error": {
+            "code": "bad_env", "message": "env must be an object of string values",
+            "use": "exec(argv=['git','status'], env={'GIT_PAGER': 'cat'})"}})
+    child_env = None
+    if env:
+        child_env = dict(_ros.environ)
+        child_env.update({str(key): str(value) for key, value in env.items()})
+    extend = globals().get("_CELL_EXTEND")
+    if extend is not None:
+        extend(float(timeout) + 20)
+    try:
+        _GATE_IN_RUN += 1
+        try:
+            proc = _rsp.Popen(
+                argv, shell=False, cwd=cwd or _RUN_ROOT,
+                stdout=_rsp.PIPE, stderr=_rsp.PIPE, text=True,
+                encoding="utf-8", errors="replace",
+                stdin=_rsp.PIPE if stdin is not None else _rsp.DEVNULL,
+                env=child_env, start_new_session=True,
+            )
+            _journal_orphan(proc.pid)
+        finally:
+            _GATE_IN_RUN -= 1
+    except _SpawnBlocked as exc:
+        use = _HINT.get(str(exc.blocked)) or _HINT.get(str(exc.blocked).split()[0], "splice(), edit(), apply() or commit()")
+        return _Result({"ok": False, "kind": "wrong_call", "command": command,
+                "blocked": exc.blocked,
+                "error": {"code": "mutation_via_exec", "message": str(exc), "use": use},
+                "exit_code": None, "stdout": "", "stderr": ""})
+    except OSError as exc:
+        return _Result({"ok": False, "kind": "spawn_error", "command": command,
+                "error": {"code": "spawn_failed", "message": str(exc)},
+                "exit_code": None, "stdout": "", "stderr": ""})
+    try:
+        out, err = proc.communicate(input=(str(stdin) if stdin is not None else None),
+                                    timeout=float(timeout))
+    except _rsp.TimeoutExpired:
+        try:
+            _ros.killpg(_ros.getpgid(proc.pid), _rsig.SIGKILL)
+        except OSError:
+            proc.kill()
+        try:
+            out, err = proc.communicate(timeout=10)
+        except Exception:
+            out, err = "", ""
+        return _Result({"ok": True, "kind": "timeout", "argv": argv, "command": command,
+                "timeout_s": float(timeout), "exit_code": None, "stdout": out or "", "stderr": err or "",
+                "note": "the program hit its own timeout and its process group was killed; the kernel is intact"})
+    return _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
+            "cwd": cwd or _RUN_ROOT, "exit_code": proc.returncode,
+            "stdout": out or "", "stderr": err or ""})
 """
 
 # --- parent side: supervision, protocol and the Cell the loops consume --------------------
@@ -1294,15 +1555,23 @@ _RESTART_DESYNC = "kernel protocol desync; restarted with an empty namespace (ea
 
 @dataclass
 class CellRequest:
-    """One cell as it goes on the wire: exactly one JSON line to the child's stdin."""
+    """One request as it goes on the wire: a code cell or a typed verb call."""
 
-    code: str
     timeout: float
+    code: str | None = None
+    kind: str = "code"
+    tool: str | None = None
+    args: dict = field(default_factory=dict)
     protocol: int = PROTOCOL
     check_cache: dict = field(default_factory=dict)
 
     def to_wire(self) -> dict:
-        payload = {"protocol": self.protocol, "code": self.code, "timeout": float(self.timeout)}
+        payload = {"protocol": self.protocol, "timeout": float(self.timeout), "kind": self.kind}
+        if self.kind == "call":
+            payload["tool"] = self.tool
+            payload["args"] = dict(self.args or {})
+        else:
+            payload["code"] = self.code
         if self.check_cache:
             payload["check_cache"] = self.check_cache
         return payload
@@ -1325,6 +1594,8 @@ class CellReply:
     delta: str = ""
     timeout: bool = False
     reads: dict = field(default_factory=dict)
+    tool: str | None = None
+    failed: bool = False
     protocol: int | None = None
 
     @classmethod
@@ -1343,6 +1614,8 @@ class CellReply:
             delta=str(data.get("delta") or ""),
             timeout=bool(data.get("timeout")),
             reads=dict(data.get("reads") or {}),
+            tool=data.get("tool"),
+            failed=bool(data.get("failed")),
             protocol=data.get("protocol"),
         )
 
@@ -1382,13 +1655,16 @@ class Cell:
     delta: str = ""
     timeout: bool = False
     reads: dict = field(default_factory=dict)
+    tool: str | None = None
+    failed: bool = False
 
     @classmethod
     def failure(cls, message: str, *, restarted: bool = True, timeout: bool = False,
                 duration_ms: int = 0) -> "Cell":
         """The one error/restart constructor: no namespace state, the message is the card."""
         return cls(stdout="", stderr=message, result=None, final=None,
-                   duration_ms=duration_ms, restarted=restarted, timeout=timeout)
+                   duration_ms=duration_ms, restarted=restarted, timeout=timeout,
+                   failed=True)
 
     @classmethod
     def from_reply(cls, reply: CellReply, *, duration_ms: int) -> "Cell":
@@ -1409,6 +1685,8 @@ class Cell:
             delta=reply.delta,
             timeout=reply.timeout,
             reads=dict(reply.reads),
+            tool=reply.tool,
+            failed=reply.failed,
         )
 
 
@@ -1456,9 +1734,9 @@ class Kernel:
             return None
 
     def _reap_orphans(self) -> None:
-        """Kill run() process groups the dead/stopped kernel left behind.
+        """Kill exec()/run() process groups the dead/stopped kernel left behind.
 
-        `run()` starts each command in its own session, so `_kill_group()` (the kernel's
+        `exec()`/`run()` start each program in its own session, so `_kill_group()` (the kernel's
         group) never reaches it. The child journals its group leader; reaping is best-effort
         and identity-checked so a reused pid is not killed by mistake.
         """
@@ -1513,12 +1791,15 @@ class Kernel:
                 "HOME": os.environ.get("HOME", "/tmp"),
                 "PYTHONIOENCODING": "utf-8",
                 "KERNEL_SUPERVISE": "1" if self.supervise else "0",
+                **{key: os.environ[key] for key in (
+                    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL") if key in os.environ},
                 **({"KERNEL_ALLOW_RUN": "1", "KERNEL_RUN_PRELUDE": RUN_PRELUDE,
                     **({"KERNEL_ORPHAN_JOURNAL": self.orphan_journal} if self.orphan_journal else {})}
                    if self.allow_run else {}),
                 **({"KERNEL_OBS_LOG": self.obs_log} if self.obs_log else {}),
                 **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude,
-                    "KERNEL_HEADERS": HEADERS_SOURCE}
+                    "KERNEL_HEADERS": HEADERS_SOURCE, "KERNEL_VERBS": json.dumps(VERBS)}
                    if self.prelude != "off" else {}),
             },
         )
@@ -1564,16 +1845,24 @@ class Kernel:
                 "restarted with an empty namespace (earlier output survives in recall())")
 
     def run(self, code: str, check_cache: dict | None = None) -> Cell:
-        if self.proc is None:
-            self.start()
-        assert self.proc is not None and self.proc.stdin and self.proc.stdout
         if len(code) > MAX_CODE:
             return Cell.failure("kernel: code exceeds 20000 characters; split it into smaller cells",
                                 restarted=False)
+        return self._execute(CellRequest(code=code, timeout=float(self.timeout),
+                                         check_cache=dict(check_cache or {})))
+
+    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None) -> Cell:
+        """Execute one typed verb through the same child, journal and Cell pipeline."""
+        return self._execute(CellRequest(kind="call", tool=str(tool), args=dict(args or {}),
+                                         timeout=float(self.timeout),
+                                         check_cache=dict(check_cache or {})))
+
+    def _execute(self, request: CellRequest) -> Cell:
+        if self.proc is None:
+            self.start()
+        assert self.proc is not None and self.proc.stdin and self.proc.stdout
 
         started = time.perf_counter()
-        request = CellRequest(code=code, timeout=float(self.timeout),
-                              check_cache=dict(check_cache or {}))
         try:
             self.proc.stdin.write(json.dumps(request.to_wire()) + "\n")
             self.proc.stdin.flush()

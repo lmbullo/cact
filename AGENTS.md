@@ -17,19 +17,52 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. A cell can read, grep,
-map, write, edit and run whole programs; every mutation is journalled so `changes()`,
-`diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a
-task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (read, search, edit, splice, write, apply, commit, exec, changes, diff, undo, help) generated from one registry (`bench/agent/verbs.py`); `python` is the escape hatch for computation and anything the typed tools do not cover, and `run()` inside it is the shell-string escape hatch. `exec(argv)` runs a program without a shell. A cell can read, search, map, write, edit and run whole programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
+
+## Agent-first contract
+
+The human owner does not read this code and does not sit in the loop. A task is
+fire-and-forget: a prompt goes in, the agent works unattended, and the check plan is the
+acceptance signal. That makes these properties part of the architecture, not style:
+
+- **Self-describing surface.** Every source module has the four-section header; `map.py`
+  and `guide()` index it; every typed tool carries a JSON schema and a one-line summary from
+  `verbs.py`; `help()` returns the live signatures. An agent must never need to read an
+  implementation to learn how to call it.
+- **Self-verifying work.** `final_answer` is rejected until the `Verifier` plan passes. A
+  failed check is a repair instruction, not a question for a human. There are no interactive
+  prompts in production (`worker.py` is unattended).
+- **Buildable by other agents.** One fact lives in one place. Adding a verb is: registry entry
+  in `verbs.py`, function in `kernel.PRELUDE`, smoke call. Do not add a second hand-written
+  catalog in a prompt or a README. A new module gets a header before it gets code.
+- **Machine-readable failure.** Unknown tools, bad arguments, refused mutations and check
+  failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`), not prose that only a
+  human can parse.
+- **Design the tool for the job, not a wrapper around a shell.** `exec` takes an argv and a
+  `cwd`, not a command string: no quoting, no `cd` prefix, no shell grammar to classify, and
+  no reason to build another layer around it. `search` takes `include`/`context` instead of
+  reproducing `grep -rn --include ... | head`. When the common path is a typed tool, the
+  shell stops being the catch-all. Add the capability to the typed surface first; keep
+  `python run()` for the cases that genuinely need shell syntax.
+- **The bottleneck is reasoning and turns, not typing.** Do not fix an efficiency problem by
+  lowering `max_steps`, truncating context, or making the model dumber. Reduce wasted turns
+  (self-describing tools, typed results, batching, idempotent reads) and wasted verification
+  (the check plan and its `[check]` line). The human loop is already out; the remaining
+  bottlenecks are model reasoning, turn count, context size, and tool ergonomics.
+
+The agent is built to be modified by agents: prefer a clean contract over a patch, and
+prefer deleting a duplicated catalog over keeping two copies in sync.
 
 ## Read these first
 
 | File | Why |
 |---|---|
-| `bench/agent/kernel.py` | `DRIVER` + `PRELUDE` + `RUN_PRELUDE` define the agent's entire action space, and `Kernel` is the subprocess that enforces it |
+| `bench/agent/kernel.py` | `DRIVER` + `PRELUDE` + `RUN_PRELUDE` implement the action space, and `Kernel` is the subprocess that enforces it; `Kernel.run(code)` and `Kernel.call(tool, args)` share one Cell pipeline |
+| `bench/agent/verbs.py` | The typed verb registry: name, JSON schema, summary, mutates, implementing function. `tools.py` builds the provider specs from it; the child gets it as `KERNEL_VERBS` for dispatch and `help()` |
+| `bench/agent/tools.py` | `TYPE_TOOLS` generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
 | `bench/agent/headers.py` | The header index: `index()`, `guide()`, `problems()`. Shipped as source to every kernel child, so `python3 bench/map.py` and the `guide()` verb run the same code |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
@@ -45,11 +78,13 @@ inside `tui/`.
    same message do not run, but each still gets a paired (skipped) tool result. With a goal
    check, no answer is accepted until the check passes. `run.py` grades `result.final`; a
    prose reply with no tool call is the summary.
-2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
-   read-only git work (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`). Shell verbs
-   that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`,
-   `>` redirection; a quoted `>` is an argument) are refused by `_mutating_command` as
-   `kind: "wrong_call"` with a `use` hint, because they bypass the journal.
+2. **`exec` runs argv; `run()` is the python shell; only mutation is gated.** `exec(argv)`
+   runs a program directly with `cwd`, `env`, `stdin` and `commands=[[...]]`; no shell parses
+   it, so there is no `cd` prefix, quoting or pipe grammar. `run(command)` inside a Python
+   cell stays for pipes and shell syntax. Programs/verbs that change tracked files (`tee`,
+   `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`, `>` redirection; a quoted `>` is an
+   argument) are refused by the same classifier as `kind: "wrong_call"` with a `use` hint,
+   because they bypass the journal.
    `git add/commit/push/fetch/init/clone` are allowed, as is mutating a scratch path
    (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`), which the journal never covered. Direct
    process spawning (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`,
@@ -95,7 +130,7 @@ inside `tui/`.
     stdlib-only, free of `__file__`, and read-only, or the verb breaks where `bench` is not
     importable. Do not inline the index into `PRELUDE` again — a shared namespace let its
     `_walk` shadow the prelude's.
-11. **`run()` children are journalled and reaped.** Each command starts in its own session;
+11. **`exec`/`run()` children are journalled and reaped.** Each program starts in its own session;
     the child writes its group leader to `KERNEL_ORPHAN_JOURNAL`, and `Kernel.stop()` /
     `_restart()` kill those groups. Removing the journal or the reap leaks processes when a
     cell times out or the kernel dies. `recall(pattern)` is the session-side search over

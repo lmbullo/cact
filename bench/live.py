@@ -51,7 +51,8 @@ from bench import ws
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "@@TUI@@"
-VERBS = ("map", "read", "grep", "write", "edit", "run", "diff", "undo", "changes", "final_answer")
+VERBS = ("map", "read", "search", "grep", "write", "edit", "splice", "apply", "commit",
+         "exec", "run", "diff", "undo", "changes", "help", "final_answer")
 
 
 def load_key() -> str:

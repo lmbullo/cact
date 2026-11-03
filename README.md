@@ -30,7 +30,9 @@ index is the `guide()` verb.
 
 | File | Why |
 |---|---|
-| `bench/agent/kernel.py` | The driver + `PRELUDE` that define the agent's entire action space (`read`, `grep`, `guide`, `map`, `write`, `edit`, `splice`, `apply`, `commit`, `run`, `changes`, `diff`, `undo`, `recall`, `final_answer`, `emit`) |
+| `bench/agent/kernel.py` | The driver + `PRELUDE` that implement the action space, plus `Kernel.run(code)` and `Kernel.call(tool, args)` over one Cell pipeline |
+| `bench/agent/verbs.py` | The typed verb registry (schema + summary + mutates + function); `tools.py` builds the provider specs from it and the child gets it as `KERNEL_VERBS` for dispatch and `help()` |
+| `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, with output digests and context compaction |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
@@ -98,14 +100,15 @@ bench/run.py                        tui/bin/code
    │ builds Kernel + Loop               │            │ spawns python/worker.py per task
    └──────────────┬─────────────────────┘            │
                   ▼                                  ▼
-        bench/agent/*.py  ── LLM (DeepSeek) ──►  tool call / fenced python block
+        bench/agent/*.py  ── LLM (DeepSeek) ──►  typed tool call / python cell
                   │
                   ▼
         Kernel (subprocess, one per task)
-          stdin/stdout JSON, @@K@@ marker per cell
-          ├─ PRELUDE: read (a path or a list)/grep/guide/map/write/edit/splice/apply/commit,
-          │           changes/diff/undo, recall, final_answer, emit
-          └─ RUN_PRELUDE: run() — whole programs only
+          stdin/stdout JSON, @@K@@ marker per request
+          ├─ PRELUDE: read (path or list)/search (grep)/guide/map/write/edit/splice/
+          │           apply/commit, changes/diff/undo, recall, verbs()/help(),
+          │           final_answer, emit
+          └─ RUN_PRELUDE: exec (argv, no shell) + run() (python shell helper)
                   │
                   ▼
               the workspace
@@ -114,15 +117,19 @@ bench/run.py                        tui/bin/code
 - **Model client:** `bench/agent/llm.py` posts to `https://api.deepseek.com/chat/completions`
   (`DEEPSEEK_BASE_URL` overrides). Responses are cached under `bench/.cache/llm/` by
   request hash; `--no-cache` disables it.
-- **Kernel cell:** `Kernel.run(code)` writes one `CellRequest` JSON line (`PROTOCOL` plus
-  `code`/`timeout`/`check_cache`), reads one `@@K@@` `CellReply` line back, and returns a
-  `Cell` (`stdout`, `stderr`, `result`, `final`, `duration_ms`, `restarted`, `answer`,
-  `runs`, `obs_index`, `mutated`, `changed`, `deltas`, `delta`, `timeout`, `reads`).
+- **Kernel cell or typed call:** `Kernel.run(code)` and `Kernel.call(tool, args)` write one
+  `CellRequest` JSON line (`PROTOCOL` plus `kind`/`code` or `kind`/`tool`/`args`, `timeout`,
+  `check_cache`), read one `@@K@@` `CellReply` line back, and return a `Cell` (`stdout`,
+  `stderr`, `result`, `final`, `duration_ms`, `restarted`, `answer`, `runs`, `obs_index`,
+  `mutated`, `changed`, `deltas`, `delta`, `timeout`, `reads`, `tool`, `failed`). The typed
+  call and the Python cell share every step after dispatch, so a typed edit is journalled,
+  covered and digested exactly like a printed cell. The typed process tool is `exec(argv)`;
+  `run(command)` is the shell escape hatch inside a Python cell.
   `deltas` is the per-file unified diff; `delta` is only their joined text for the card. A
   reply whose `protocol` does not match `PROTOCOL` is never read through the current shape:
   the child is restarted and the cell returns an error. A dead or hung kernel is killed and
   restarted **with an empty namespace**; the loop tells the model rather than hiding it.
-- **Orphan reaping:** `run()` starts each command in its own session, so killing the kernel
+- **Orphan reaping:** `exec`/`run()` start each program in its own session, so killing the kernel
   group cannot reach it. The child journals the group leader (pid + `/proc` start id) and
   `Kernel.stop()`/`_restart()` kills those groups, so a timed-out cell or a crashed kernel
   does not leak a test server, browser or build process.
@@ -141,14 +148,14 @@ bench/run.py                        tui/bin/code
   `[read] path ranges/total`. Coverage is pure data: the loop opens no file and inverse-parses
   no card — an undigested card counts exactly the ranges `read()` recorded, a digested one only
   the numbered lines it kept. Coverage is guidance, not a finish gate: reads through
-  `run()`/`open()` are equally valid and are not tracked.
+  python `run()`/`open()` are equally valid and are not tracked.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —
   including turns the `[session state]` fold removed — and returns snippets plus the
-  `_OBS[n]` handle to page the full text. `grep()` is for the tree; `recall()` is for the
-  session, and a crash does not erase it.
-- **Sandbox:** `run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
-  `run()` disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
+  `_OBS[n]` handle to page the full text. `search`/`grep()` is for the tree; `recall()` is
+  for the session, and a crash does not erase it.
+- **Sandbox:** `exec`/`run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
+  Disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
   bind of the workspace only when `writable=True`).
 - **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
   what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
@@ -157,15 +164,16 @@ bench/run.py                        tui/bin/code
 - **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`
   and the `Verifier` that owns it: the cheap subset, the `scope` filter, the 20s throttle,
   the check cache and the `Check` rendering. Results are cached until the next mutating
-  cell: a matching `run()` is answered from `check_cache` (`kind: "check_cached"`) instead
-  of spawning the same command twice. The whole plan is the goal (`final_answer` is
+  cell: a matching `run()`/`exec` is answered from `check_cache` (`kind: "check_cached"`)
+  instead of spawning the same command twice. The whole plan is the goal (`final_answer` is
   rejected until it passes); the `cheap` subset re-runs after a mutating cell (at most once
   every 20s) and appears as the `[check]` line of the next state card. A spec may carry a
   `scope` list of path prefixes that filters the cheap health run only, so a docs-only edit
-  does not typecheck the TUI on every cell; the goal still runs the whole plan. `run()` is a shell, not a redirect layer:
-  reads, searches, tests, builds and read-only git run as written; only verbs that mutate
-  the workspace are refused (see the contract below). Mutating scratch space (`/tmp`,
-  `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed: the journal covers the tree, not scratch.
+  does not typecheck the TUI on every cell; the goal still runs the whole plan. `exec` takes
+  an argv and a cwd, so tests, builds and read-only git need no shell; `run()` is the shell
+  escape hatch. Only programs/verbs that mutate the workspace are refused (see the contract
+  below). Mutating scratch space (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed:
+  the journal covers the tree, not scratch.
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
   `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
   persistent state of its own and reconnects every second. A `turn` message updates
@@ -288,13 +296,16 @@ imports `bench.agent` from this repo, so the checkout path matters.
    a paired tool result, marked skipped, so the next request stays valid). When a goal check
    exists, no answer is accepted until the check passes. `run.py` grades `result.final`; a
    prose reply with no tool call is the summary.
-2. **`run()` runs commands; only mutation is gated.** Reads, searches, tests, builds and
-   read-only git work as written (`cat`, `sed -n`, `rg`, `pytest`, `git diff`, `python3 -c`).
-   Shell verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
+2. **`exec` runs argv; `run()` is the python shell; only mutation is gated.** `exec(argv)`
+   runs a program directly (no shell) from the workspace root; `cwd=` replaces `cd`,
+   `commands=[[...]]` runs several, and `env`/`stdin` are explicit. `run(command)` inside a
+   Python cell remains the escape hatch for pipes and shell syntax. Programs/verbs that
+   change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
    `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument, not a
    redirect) are refused with `kind: "wrong_call"` and a `use` hint, because they would
    bypass the journal and make `diff()`/`undo()` lie. `git add`, `commit`, `push`, `fetch`,
-   `init` and `clone` are allowed: they do not overwrite working-tree content. Mutations
+   `init` and `clone` are allowed: they do not overwrite working-tree content. `exec` and
+   `run()` share the gate. Mutations
    whose targets are absolute paths under a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`,
    `$TMPDIR`) are allowed; the journal only promises the tree. Direct process spawning
    (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) goes through
@@ -336,7 +347,7 @@ imports `bench.agent` from this repo, so the checkout path matters.
 | Change | Touch |
 |---|---|
 | The header index, the map CLI or the `guide()` verb | `bench/agent/headers.py` (parsing, ranking, rendering), `bench/map.py` (flags), `kernel.PRELUDE` (`guide` is a one-line wrapper over `_HEADERS["guide"]`) |
-| What the agent can do (new file/exec helper) | `kernel.PRELUDE` or `RUN_PRELUDE`, plus the matching rule text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`; if it replaces a mutating shell verb, `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` + `_HINT` |
+| What the agent can do (new file/exec/typed verb) | `bench/agent/verbs.py` (schema + summary + function), `kernel.PRELUDE` or `RUN_PRELUDE` (implementation), `bench/smoke.py` (a `Kernel.call` case). The tool specs, `help()` and the prompt catalog are generated from the registry; do not add a second hand-written list. |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run`; a different reply dialect overrides `_reply` (see `repl.ReplLoop`) |
 | A new benchmark task | `tasks.py` (read/mutation) or `edge.py` (edge), then a run to record the trace |

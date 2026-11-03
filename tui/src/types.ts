@@ -68,6 +68,8 @@ export type TaskEvent = {
   cell?: number;
   text?: string;
   code?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
   data?: Record<string, unknown>;
 };
 
@@ -108,7 +110,7 @@ export type WsMessage =
   | { type: "ping"; ts: number };
 
 export type WorkerMessage =
-  | { kind: "cell.start"; cell: number; code: string }
+  | { kind: "cell.start"; cell: number; code?: string; tool?: string; args?: Record<string, unknown> }
   | { kind: "turn"; turn: number; data: Record<string, unknown> }
   | { kind: "final"; status: "done" | "partial" | "failed"; final?: string; stop?: string; usage?: Record<string, number>; steps?: number; calls?: number; llmCalls?: number; errors?: number; wallMs?: number }
   | { kind: "error"; text: string }

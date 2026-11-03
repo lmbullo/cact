@@ -60,7 +60,7 @@ if __package__ in (None, ""):
     from bench.agent.loop import Budget
     from bench.agent.repl import BARE_RULES, REPL_RULES, RUN_NOTE, RUN_NOTE_MUT, ReplLoop
     from bench.agent.state_loop import StateLoop
-    from bench.agent.tool_loop import TOOL_RULES, ToolLoop
+    from bench.agent.tool_loop import PYTHON_TOOL, TOOL_RULES, ToolLoop
     from bench import edge as bench_edge
     from bench import hard as bench_hard
     from bench.agent.trace import Trace, render
@@ -72,7 +72,7 @@ else:
     from .agent.loop import Budget
     from .agent.repl import BARE_RULES, REPL_RULES, RUN_NOTE, RUN_NOTE_MUT, ReplLoop
     from .agent.state_loop import StateLoop
-    from .agent.tool_loop import TOOL_RULES, ToolLoop
+    from .agent.tool_loop import PYTHON_TOOL, TOOL_RULES, ToolLoop
     from . import edge as bench_edge
     from . import hard as bench_hard
     from .agent.trace import Trace, render
@@ -243,6 +243,7 @@ def main() -> int:
                     loop = ToolLoop(
                         client, kernel, budget,
                         rules=rules + prefix,
+                        tools=[PYTHON_TOOL],
                         goal=None,
                         goal_stops=False,
                         obs_chars=args.obs_chars,

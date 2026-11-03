@@ -6,6 +6,7 @@ WHAT IT IS
   state card instead of a transcript:
 
     [state]  turn, elapsed, prompt tokens, and the files this cell changed
+    [tool]   the typed tool that ran, when the call was not a python cell
     [diff]   the exact hunks this cell changed (empty when nothing changed)
     [stderr] / [stdout]  digested: head, error lines, tail, plus an _OBS[n] handle
     [result] the last expression, clipped
@@ -81,13 +82,14 @@ STATE_RULES = TOOL_RULES + """
 STATE CARDS
 Every tool result is a state card, not a terminal transcript:
   [state]  the turn, its cost, and the files this cell changed
+  [tool]   the typed tool that ran, when the call was not a python cell
   [diff]   the exact hunks this cell changed; empty when nothing changed
   [stderr] and [stdout] are bounded: when the text is large you get the head, the tail, the error lines and a handle
   [result] the last expression, clipped
   [read]   the file ranges this cell delivered; anything past them is not in your context
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; page the rest with read(path, offset=next). Coverage is guidance, not a finish gate: reads through run() or open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; page the rest with read(path, offset=next). Coverage is guidance, not a finish gate: reads through python run() or open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
@@ -226,6 +228,8 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
     so `[read] path a-b/total (next N)` and the `reads:` fold line cannot drift from the card.
     """
     parts = [f"[state] turn={steps} elapsed={cell.duration_ms}ms prompt_tokens={prompt_tokens}"]
+    if getattr(cell, "tool", None):
+        parts.append(f"[tool] {cell.tool}")
     if cell.changed:
         parts.append(f"[state] changed: {', '.join(cell.changed)}")
     if cell.timeout:
