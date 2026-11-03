@@ -19,8 +19,11 @@ ENTRY POINTS
 INVARIANTS
   - Stdlib-only and import-free: kernel.py imports it in the parent and ships its JSON to the
     child, so it must never touch the filesystem or import bench modules.
-  - The schema is the contract. A function's real signature is checked against it by
-    bench/smoke.py; a mismatch is a bug in one of the two, never a reason to loosen the test.
+  - The schema is the contract, and the function's real signature is the authority: the
+    driver binds each typed call with `inspect.signature().bind`, so a schema/signature
+    mismatch surfaces as `bad_args`/`bad_arguments` instead of a traceback, and `help()`
+    prints each live signature. A mismatch is a bug in the schema or the function, never a
+    reason to loosen the check.
   - `mutates=True` means the function writes the workspace and must go through `_commit`.
     The loop uses it only for rendering; the kernel's journal is still the authority.
   - `python` is deliberately absent. It is the persistent-kernel escape hatch, not a verb.

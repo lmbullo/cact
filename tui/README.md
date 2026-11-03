@@ -112,8 +112,9 @@ stderr — are not rendered, with one exception: when a turn carries a `notice` 
 rejected or staged `final_answer`, recorded by `bench/agent/tool_loop.py`), the log
 prints its first line and a `(+NL)` count. That is how the reason a finish did not
 take becomes visible. The full payload is still written to the event journal and
-still reaches the model. The log keeps up to 1000 events in memory, seeded from the
-journal (last 800) when the screen opens.
+still reaches the model. An `exec` shell-notice (`bash -lc`) is not a turn notice: it
+rides inside the tool result, so no `↺` row is drawn for it. The log keeps up to 1000
+events in memory, seeded from the journal (last 800) when the screen opens.
 
 `esc` (with an empty prompt) or `enter` (on an empty prompt) go back to the board;
 `Ctrl-K` cancels the task from either screen.
@@ -322,7 +323,11 @@ and `exec`/`run()` are not injected at all. Test-repair tasks will then be much 
 are no pipes or redirection. `run(command)` is the python shell escape hatch for the cases
 that need them. Both share the mutation gate: changing tracked files through `tee`, `cp`,
 `mv`, `rm`, `sed -i`, `git apply/...` or `>` is refused as `kind: "wrong_call"` with the
-helper to use instead. Direct process spawning
+helper to use instead. A typed call is bound to the verb's live signature first, so a keyword
+that does not exist (for example `exec` with `code=`) comes back as `kind: "bad_args"` with
+`error.code: "bad_arguments"` and a `use` hint instead of a traceback. A shell interpreter
+with `-c`/`-lc` still runs, but the result carries a `notice` that exec took the `run()`
+escape hatch rather than the argv path. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel prelude
 provides `read()` (one path or a list), `search()` (`grep()` is the python alias),

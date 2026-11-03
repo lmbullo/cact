@@ -89,6 +89,11 @@ Did not earn its keep:
   temp build (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. The same
   classifier gates direct process spawning, so a program cannot route around it with
   `subprocess`. Cell errors on the edge suite fell from 8 to 0.
+- **Refusing `exec(["bash", "-lc", ...])`.** A hard refusal of a shell interpreter was tested
+  and reverted: the model answered by moving into `python` cells (31-36 calls across the docs
+  runs), and the run got slower (64-86 turns) than the typed path (63 turns). The command now
+  runs and the result carries a `notice` instead. Same lesson as the shell-verb wall: move the
+  common path with a nudge, do not pretend to a capability boundary the kernel cannot hold.
 - **Read-coverage gating at finish.** Removed after the 142-turn docs run hit five `UNREAD`
   rejections and the 83-turn guide run never engaged the gate at all: it only saw `read()`,
   while the model read through `run("sed ...")` and `Path.read_text()`. A partial `read()`

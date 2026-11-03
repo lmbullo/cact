@@ -39,9 +39,10 @@ acceptance signal. That makes these properties part of the architecture, not sty
   in `verbs.py`, function in `kernel.PRELUDE`, smoke call, and a mention in the rules text (the
   schemas and `help()` are generated; the prose rules are hand-written). Do not add a second
   hand-written catalog in a prompt or a README. A new module gets a header before it gets code.
-- **Machine-readable failure.** Unknown tools, bad arguments, refused mutations and check
-  failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`), not prose that only a
-  human can parse.
+- **Machine-readable failure.** Unknown tools, bad arguments (`kind: "bad_args"`,
+  `error.code: "bad_arguments"`, plus the offending signature hint), refused mutations
+  (`wrong_call`) and check failures return structured dicts (`kind`, `error`, `use`,
+  `_OBS[n]`), not prose that only a human can parse.
 - **Design the tool for the job, not a wrapper around a shell.** `exec` takes an argv and a
   `cwd`, not a command string: no quoting, no `cd` prefix, no shell grammar to classify, and
   no reason to build another layer around it. `search` takes `include`/`context` instead of
@@ -81,8 +82,12 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    prose reply with no tool call is the summary.
 2. **`exec` runs argv; `run()` is the python shell; only mutation is gated.** `exec(argv)`
    runs a program directly with `cwd`, `env`, `stdin` and `commands=[[...]]`; no shell parses
-   it, so there is no `cd` prefix, quoting or pipe grammar. `run(command)` inside a Python
-   cell stays for pipes and shell syntax. Programs/verbs that change tracked files (`tee`,
+   it, so there is no `cd` prefix, quoting or pipe grammar. The typed call is bound to the
+   verb function's real signature before dispatch, so a wrong or missing keyword is a
+   `bad_args`/`bad_arguments` answer (`help(tool)` prints the signature), not a traceback.
+   `exec(["bash", "-lc", ...])` still runs, but its result carries a `notice` that it used
+   the shell escape hatch; prefer argv, and `run(command)` inside a Python cell when shell
+   syntax is truly needed. Programs/verbs that change tracked files (`tee`,
    `cp`, `mv`, `rm`, `sed -i`, `git apply/checkout/...`, `>` redirection; a quoted `>` is an
    argument) are refused by the same classifier as `kind: "wrong_call"` with a `use` hint,
    because they bypass the journal.

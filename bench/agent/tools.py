@@ -19,8 +19,10 @@ INVARIANTS
     drifting.
   - `python` is not generated. It is the persistent-kernel escape hatch and is defined in
     `tool_loop.PYTHON_TOOL` so the benchmark's `--mode bare` can send it alone.
-  - Schemas are passed through verbatim. Validation is the provider's job; the kernel still
-    rejects a bad call with a traceback and the loop pairs the tool message.
+  - Schemas are passed through verbatim. The provider validates shape; the kernel binds the
+    arguments to the verb function's live signature before dispatch, so a wrong or missing
+    keyword comes back as `kind: "bad_args"` / `error.code: "bad_arguments"` (never a
+    traceback) and the loop still pairs the tool message.
 
 WHERE TO CHANGE
   A typed tool ................ verbs.VERBS (this module follows)

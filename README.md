@@ -144,6 +144,12 @@ bench/run.py                        tui/bin/code
 - **Tool results are dicts that also answer attributes:** `run()` returns `result['stdout']`
   (or `result.stdout`), and `read(raw=True)[:n]` / `read(...)['content']` work, so a natural
   model mistake does not cost a cell. The canonical keys are still the contract.
+- **A bad typed call is an answer, not a traceback:** before dispatch the driver binds the
+  arguments to the verb function's live signature. An unknown keyword or a missing argument
+  returns `{ok: false, kind: "bad_args", error: {code: "bad_arguments", message, use}}`
+  (the signature failure's `use` points at `help(tool)`), and a malformed
+  `argv`/`commands`/`env` returns the same envelope with its own `code`, so the model gets a
+  repair instruction and the turn keeps its paired tool message.
 - **A read is a ledger, not a firehose:** `read(limit=0)` returns the whole file only while
   it fits 400 lines / 9 KB; past that the result carries `next.offset`. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
@@ -301,7 +307,10 @@ imports `bench.agent` from this repo, so the checkout path matters.
 2. **`exec` runs argv; `run()` is the python shell; only mutation is gated.** `exec(argv)`
    runs a program directly (no shell) from the workspace root; `cwd=` replaces `cd`,
    `commands=[[...]]` runs several, and `env`/`stdin` are explicit. `run(command)` inside a
-   Python cell remains the escape hatch for pipes and shell syntax. Programs/verbs that
+   Python cell remains the escape hatch for pipes and shell syntax. A shell interpreter with
+   `-c`/`-lc` still runs, but the result carries a `notice` that it took the `run()` path
+   rather than the argv path; a call whose keywords do not match the verb's signature is
+   answered with `bad_args`/`bad_arguments`, never a traceback. Programs/verbs that
    change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
    `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument, not a
    redirect) are refused with `kind: "wrong_call"` and a `use` hint, because they would

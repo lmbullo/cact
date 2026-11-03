@@ -107,6 +107,15 @@ INVARIANTS
     record `_OBS`, and return the same `CellReply` (with `tool` naming the typed verb). The
     driver writes the helper's stdout/stderr/text/hunk into the cell buffers, so the state
     card digests typed results exactly like printed output.
+  - Before dispatch the driver binds the args to the verb function's live signature
+    (`inspect.signature().bind(**args)`). An unknown keyword or a missing argument is a
+    `kind: "bad_args"` result with `error.code: "bad_arguments"` and a `use: help(tool)`
+    hint, so a schema mistake is answered rather than raised. The function still validates
+    its own values and reports the other `bad_args` codes (`bad_argv`, `bad_commands`,
+    `bad_env`) the same way.
+  - `exec` never parses a shell string, but a shell interpreter is not refused: an argv
+    like `["bash", "-lc", ...]` runs and its result carries a `notice` saying it took the
+    `run()` escape hatch, so the model learns the argv path without a lost turn.
   - `changed` is the list of paths; `deltas` is the per-path unified diff the same journal
     produced. `delta` is only the joined text the card renders. The loop reads `deltas`,
     never re-parses `delta`.
