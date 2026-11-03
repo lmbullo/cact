@@ -517,6 +517,14 @@ def main() -> int:
         cell = kernel.call("exec", {"argv": "echo one"})
         check("kernel: call(exec) refuses a shell string",
               "shell_string" in (cell.result or ""), (cell.result or "")[:200])
+        cell = kernel.call("exec", {"code": "print(1)"})
+        check("kernel: call(exec) turns a bad keyword into bad_args",
+              "bad_arguments" in (cell.result or "") and not cell.failed,
+              (cell.result or "")[:240])
+        cell = kernel.call("exec", {"argv": ["bash", "-lc", "echo one"]})
+        check("kernel: call(exec) flags a shell -c string with a notice",
+              "one" in cell.stdout and "notice" in (cell.result or ""),
+              (cell.stdout + (cell.result or ""))[:260])
         cell = kernel.call("exec", {"argv": ["sed", "-i", "s/one/1/", "call_a.txt"]})
         check("kernel: call(exec) refuses a mutating program",
               "mutation_via_exec" in (cell.result or "") and "one" in (root / "call_a.txt").read_text(),

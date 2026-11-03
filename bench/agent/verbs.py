@@ -191,7 +191,7 @@ VERBS: dict[str, dict] = {
     },
     "exec": {
         "function": "exec_argv",
-        "summary": "Run a program directly by argv (no shell) from the workspace root. Pass commands=[[...],[...]] for several in order; cwd replaces cd. No pipes, && or redirection: use search/read for files and python run() only when shell syntax is truly needed.",
+        "summary": "Run a program directly by argv (no shell) from the workspace root. Pass commands=[[...],[...]] for several in order; cwd replaces cd. No pipes, && or redirection, and do not wrap a command in bash -lc: use search/read for files, commands for several programs, and python run() only when shell syntax is truly needed.",
         "mutates": False,
         "requires_run": True,
         "schema": {

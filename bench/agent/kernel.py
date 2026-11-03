@@ -150,7 +150,7 @@ PROTOCOL = 3
 
 # --- child side 1/3: DRIVER, the cell loop (stdin JSON in, `@@K@@` line out) -------------
 DRIVER = r'''
-import ast, contextlib, io, json, os, signal, sys, time, traceback
+import ast, contextlib, inspect as _inspect, io, json, os, signal, sys, time, traceback
 
 _PROTOCOL = __PROTOCOL__
 
@@ -284,7 +284,16 @@ for line in sys.stdin:
                 fn = ns.get(fn_name)
                 if not callable(fn):
                     raise NameError("unknown kernel verb %r; call help() for the list" % tool)
-                value = fn(**(request.get("args") or {}))
+                call_args = request.get("args") or {}
+                try:
+                    _inspect.signature(fn).bind(**call_args)
+                except TypeError as exc:
+                    value = {"ok": False, "kind": "bad_args",
+                             "error": {"code": "bad_arguments",
+                                       "message": str(exc),
+                                       "use": "help(%r) prints the live signature" % tool}}
+                else:
+                    value = fn(**call_args)
                 if isinstance(value, dict):
                     if value.get("stdout"):
                         out.write(str(value.get("stdout")))
@@ -1583,6 +1592,17 @@ def run(command, timeout=60, cwd=None):
             "stdout": out or "", "stderr": err or ""})
 
 
+def _exec_shell_string(argv):
+    for index, item in enumerate(argv):
+        if _ros.path.basename(str(item)) not in ("bash", "sh", "zsh", "dash", "ksh"):
+            continue
+        tail = argv[index + 1:]
+        if any(str(arg) == "-c" or (str(arg).startswith("-") and not str(arg).startswith("--")
+                                    and "c" in str(arg)[1:]) for arg in tail):
+            return True
+    return False
+
+
 def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=None):
     # The typed process tool: a program and its argv, never a shell string. A list of
     # commands runs in order and stops at the first non-zero exit. cwd replaces `cd`,
@@ -1624,6 +1644,10 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
             "use": "exec(argv=['python3','bench/smoke.py'])"}})
     argv = [str(item) for item in argv]
     command = " ".join(argv)
+    shell_string = _exec_shell_string(argv)
+    notice = ("exec ran a shell interpreter with -c/-lc; that is the run() escape hatch, "
+              "not the argv path. Prefer search/read/commands, and python run() only when "
+              "shell syntax is truly needed.") if shell_string else ""
     _RUN_LOG.append(command)
     cached = _CHECK_CACHE.get(_norm_command(command))
     if cached:
@@ -1692,9 +1716,11 @@ def exec_argv(argv=None, commands=None, timeout=60, cwd=None, env=None, stdin=No
             out, err = "", ""
         return _Result({"ok": True, "kind": "timeout", "argv": argv, "command": command,
                 "timeout_s": float(timeout), "exit_code": None, "stdout": out or "", "stderr": err or "",
+                **({"notice": notice} if notice else {}),
                 "note": "the program hit its own timeout and its process group was killed; the kernel is intact"})
     return _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
             "cwd": cwd or _RUN_ROOT, "exit_code": proc.returncode,
+            **({"notice": notice} if notice else {}),
             "stdout": out or "", "stderr": err or ""})
 
 
