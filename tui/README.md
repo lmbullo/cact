@@ -237,7 +237,7 @@ Environment variables are read by the server (and inherited by workers), plus
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per model reply (clamped to 393216) |
 | `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
-| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `exec`/`run()` and runs the kernel under bwrap |
+| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `exec`, `git` and `run()` and runs the kernel under bwrap |
 | `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
 | `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |
 | `CODE_TUI_LEGACY_CHECK` | unset | `1` makes the goal return a bare pass/fail, not a parsed `Check` |
@@ -298,7 +298,9 @@ sends `SIGTERM` to the worker, then `SIGKILL` after 5 seconds; the task ends as
 
 Each task's journal is append-only JSONL with `seq`, `ts`, `kind`, and kind-specific
 fields. Kinds: `queued`, `started`, `pid`, `cell.start`, `turn`, `log`, `stderr`,
-`error`, `final`, `finished`.
+`error`, `final`, `finished`. Event payloads are capped for the wire before they are
+stored: strings at 16000 chars, arrays at 40 items, nesting at depth 12 (`[depth]` marks
+the cut), so nested call arguments survive and one huge observation cannot bloat a journal.
 
 The worker reports `done` for `DONE` / `VERIFIED`, `partial` for `STEP_LIMIT` /
 `WALL_LIMIT` with a non-empty summary, and `failed` otherwise. The server keeps the
@@ -315,7 +317,7 @@ launch directory. It can edit files and run commands as your user.
 
 For untrusted tasks use `CODE_TUI_ALLOW_RUN=0`: the kernel runs under `bwrap` with a
 read-only `/`, the workspace is bind-mounted writable so the agent can still do its job,
-and `exec`/`run()` are not injected at all. Test-repair tasks will then be much harder.
+and `exec`/`git`/`run()` are not injected at all. Test-repair tasks will then be much harder.
 
 `exec(argv)` runs a program directly (tests, builds, servers, read-only git) with `cwd`,
 `env`, `stdin` and `commands=[[...]]`; no shell parses it, so `cwd=` replaces `cd` and there
@@ -328,12 +330,12 @@ that does not exist (for example `exec` with `code=`) comes back as `kind: "bad_
 with `-c`/`-lc` inside argv is refused as `shell_via_exec`; use `exec(shell=<string>)` for
 an explicit shell string. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
-the same classifier, so a program cannot shell out around the gate. The kernel prelude
-provides `read()` (one path or a list), `search()` (`grep()` is the python alias),
-`outline()` (headings/defs with line numbers), `guide()`, `map()`, `write()`, `edit()`,
-`splice()`, `apply()`, `exec()` and `git()`, plus `recall()` for earlier cell output;
-mutations are journalled together so `changes()`/`diff()`/`undo()` cover
-multi-file edits. A program
+the same classifier, so a program cannot shell out around the gate. The kernel provides
+`read()` (one path or a list), `search()` (`grep()` is the python alias), `outline()`
+(headings/defs with line numbers), `guide()`, `map()`, `write()`, `edit()`, `splice()`,
+`apply()` and `recall()` for earlier cell output; `exec()` and `git()` arrive with the
+process prelude, so they are absent when `CODE_TUI_ALLOW_RUN=0`. Mutations are journalled
+together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
 launched through `exec`/`run()` can still write files: the journal is a typed-helper contract,
 not a sandbox.
 

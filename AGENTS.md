@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (map, read, outline, search, edit, splice, write, apply, exec, git) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (map, read, search, outline, edit, splice, write, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
@@ -47,8 +47,8 @@ acceptance signal. That makes these properties part of the architecture, not sty
   `cwd`, not a command string: no quoting, no `cd` prefix, no shell grammar to classify, and
   no reason to build another layer around it. `search` takes `include`/`context` instead of
   reproducing `grep -rn --include ... | head`. When the common path is a typed tool, the
-  shell stops being the catch-all. Add the capability to the typed surface first; keep
-  `python run()` for the cases that genuinely need shell syntax.
+  shell stops being the catch-all. Add the capability to the typed surface first; use
+  `exec(shell=...)` (or `run()` in repl/bare) for the cases that genuinely need shell syntax.
 - **The bottleneck is reasoning and turns, not typing.** Do not fix an efficiency problem by
   lowering `max_steps`, truncating context, or making the model dumber. Reduce wasted turns
   (self-describing tools, typed results, batching, idempotent reads) and wasted verification
@@ -67,7 +67,7 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 | `bench/agent/tools.py` | `TYPE_TOOLS` generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
 | `bench/agent/headers.py` | The header index: `index()`, `guide()`, `problems()`. Shipped as source to every kernel child, so `python3 bench/map.py` and the `guide()` verb run the same code |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
-| `bench/harness.py` | The tool-path evals L1-L7: outline/search/exec/edit/read tasks that grade the call record too |
+| `bench/harness.py` | The tool-path evals L1-L7 (HTML outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum); each grades the call record as well as the answer |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `bench/HARD.md` | Why the envelope exists: hard-suite results against `--mode bare` |

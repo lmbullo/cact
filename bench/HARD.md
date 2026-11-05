@@ -37,9 +37,9 @@ Per task, the gap concentrates where the envelope has something to say:
 | task | state steps | bare steps | why |
 |---|---|---|---|
 | `H1_spec` | 3, 3 | 9, 8 | per-cell `changed` and the check line stop the model from re-reading its own work |
-| `H2_bughunt` | 5, 4 | 17, 9 | one batched `commit` plus the failing-test names beats ten discover-edit cycles |
+| `H2_bughunt` | 5, 4 | 17, 9 | one batched `commit` (today `edit`/`apply`) plus the failing-test names beats ten discover-edit cycles |
 | `H3_bigcsv` | 3, 4 | 5, 3 | no envelope advantage; both write one program |
-| `H4_refactor` | 4, 4 | 11, 14 | `commit({path: text})` edits sixteen modules in one journalled cell |
+| `H4_refactor` | 4, 4 | 11, 14 | one batched `commit({path: text})` (today `edit(edits=[...])`/`apply`) edits sixteen modules in one journalled cell |
 
 With a 15s per-task wall budget the gap becomes a completion gap:
 
@@ -63,18 +63,19 @@ Earned:
 - **Per-cell `changed`/`delta`** from the tree snapshot. This used to be session-cumulative
   by mistake, which made `[state] changed:` lie and re-triggered health checks. Fixing it
   cut `H1_spec` from 7-9 steps to 3 and `E6_repair` from 9 to 3.
-- **Batched, journalled mutation** (`commit`/`apply`). The control has to rediscover that it
-  can edit many files in one cell; the rules tell the envelope, and `diff()`/`undo()` cover
-  the batch.
+- **Batched, journalled mutation** (typed `edit(edits=[...])`/`apply`, `commit()` from a
+  python cell). The control has to rediscover that it can edit many files in one cell; the
+  rules tell the envelope, and `diff()`/`undo()` cover the batch.
 - **Held-out verification** (`check` plan / `[check]` line). The control stops when the
   visible tests are green; the envelope is rejected until the real oracle passes.
 - **A staged finish** instead of the `UNREVIEWED` rejection: output is shown, the answer is
   held, and the next no-tool reply accepts it. This removed a whole class of wasted turns.
 - **Reliable `open(path, "w").write(text)` journalling**. The model writes this way even when
   told to use `write()`, and a deferred commit used to land in the next cell.
-- **Process-group journalling for `run()`**. A cell that times out kills the kernel's group,
-  but `run()` children are in their own sessions; they used to survive and hold ports. Each
-  group leader is now journaled and reaped on stop/restart. Contract test: `bench/smoke.py`.
+- **Process-group journalling for `exec`/`run()` children**. A cell that times out kills the
+  kernel's group, but programs started by `exec`/`run()` are in their own sessions; they used
+  to survive and hold ports. Each group leader is now journaled and reaped on stop/restart.
+  Contract test: `bench/smoke.py`.
 - **`recall()` over `_OBS`**. The `[session state]` fold drops old messages, but the full
   cell output stays in the kernel (and is persisted across a restart); the model can search
   it instead of re-running a command.
@@ -82,18 +83,21 @@ Earned:
 Did not earn its keep:
 
 - **The shell-verb wall.** Refusing `cat`/`grep`/`sed` while allowing `open().read()` was
-  incoherent. `exec(argv)` and `run()` now allow reads, searches, tests and read-only git,
-  and refuse only programs/verbs that mutate the workspace (`tee`, `cp`, `mv`, `rm`,
-  `sed -i`, `git apply`, `>`), because those would make `diff()`/`undo()` lie. Mutations
-  targeting a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed, so a
-  temp build (`rm -rf /tmp/base`) is not blocked; `rm -rf /home` still is. The same
-  classifier gates direct process spawning, so a program cannot route around it with
-  `subprocess`. Cell errors on the edge suite fell from 8 to 0.
-- **Refusing `exec(["bash", "-lc", ...])`.** A hard refusal of a shell interpreter was tested
-  and reverted: the model answered by moving into `python` cells (31-36 calls across the docs
-  runs), and the run got slower (64-86 turns) than the typed path (63 turns). The command now
-  runs and the result carries a `notice` instead. Same lesson as the shell-verb wall: move the
-  common path with a nudge, do not pretend to a capability boundary the kernel cannot hold.
+  incoherent. `exec` (`argv`, `commands=[[...]]`, `shell=`) and `run()` now allow reads,
+  searches, tests and read-only git, and refuse only programs/verbs that mutate the
+  workspace (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply`, `>`), because those would make
+  `diff()`/`undo()` lie. Mutations targeting a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`,
+  `$TMPDIR`) are allowed, so a temp build (`rm -rf /tmp/base`) is not blocked; `rm -rf /home`
+  still is. The same classifier gates direct process spawning, so a program cannot route
+  around it with `subprocess`. Cell errors on the edge suite fell from 8 to 0.
+- **Refusing `exec(["bash", "-lc", ...])` without a destination.** A bare hard refusal of a
+  shell interpreter was tested and reverted: the model answered by moving into `python`
+  cells (31-36 calls across the docs runs), and the run got slower (64-86 turns) than the
+  typed path (63 turns). The current shape keeps the refusal and names the destination:
+  `bash -lc` in argv is `shell_via_exec`, pointing at the explicit `exec(shell=<string>)`,
+  so the intent survives and there is still exactly one process tool. Same lesson as the
+  shell-verb wall: move the common path with a nudge, do not pretend to a capability
+  boundary the kernel cannot hold.
 - **Read-coverage gating at finish.** Removed after the 142-turn docs run hit five `UNREAD`
   rejections and the 83-turn guide run never engaged the gate at all: it only saw `read()`,
   while the model read through `run("sed ...")` and `Path.read_text()`. A partial `read()`

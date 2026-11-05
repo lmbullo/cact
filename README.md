@@ -55,7 +55,8 @@ cact/
 │   ├── live.py              run ONE task through tui/python/worker.py and journal it
 │   ├── smoke.py             offline contract check: imports, kernel prelude, helpers, checks
 │   ├── map.py               contract CLI: the header index per module (`--query`, `--module`, `--json`, `--check`)
-│   ├── runs.py              summarise a task journal; `--recent` spans every workspace
+│   ├── runs.py              summarise a task journal (steps, typed `tool_mix`, rejected
+│   │                        calls, files touched); `--recent` spans every workspace
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
 │   ├── harness_fixtures/    the HARNESS workspace: HTML-in-JS, regex hits, a local checksum, two edit targets
@@ -109,9 +110,9 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the typed verbs in verbs.VERBS (map/read/outline/search/
-          │           edit/splice/write/apply/exec/git), plus guide/recall/
-          │           final_answer/emit
+          ├─ PRELUDE: the workspace verbs — map/read/search/outline/edit/splice/
+          │           write/apply — plus the python helpers guide/grep/recall/
+          │           diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
                   ▼
@@ -125,10 +126,12 @@ bench/run.py                        tui/bin/code
   `CellRequest` JSON line (`PROTOCOL` plus `kind`/`code` or `kind`/`tool`/`args`, `timeout`,
   `check_cache`), read one `@@K@@` `CellReply` line back, and return a `Cell` (`stdout`,
   `stderr`, `result`, `final`, `duration_ms`, `restarted`, `answer`, `runs`, `obs_index`,
-  `mutated`, `changed`, `deltas`, `delta`, `timeout`, `reads`, `tool`, `failed`). The typed
-  call and the Python cell share every step after dispatch, so a typed edit is journalled,
-  covered and digested exactly like a printed cell. The typed process tool is `exec(argv)`;
-  `run(command)` is the shell escape hatch inside a Python cell.
+  `mutated`, `changed`, `deltas`, `delta`, `timeout`, `reads`, `tool`, `failed`,
+  `rejected`). The typed call and the Python cell share every step after dispatch, so a
+  typed edit is journalled, covered and digested exactly like a printed cell. The typed
+  process tool is `exec` — `argv`, `commands=[[...]]` or the explicit `shell=<string>`; the
+  typed `git` tool covers status/diff/show/log/files/add/commit/push without a pager.
+  `run(command)` is the shell escape hatch inside a Python cell, and exists only in repl/bare.
   `deltas` is the per-file unified diff; `delta` is only their joined text for the card. A
   reply whose `protocol` does not match `PROTOCOL` is never read through the current shape:
   the child is restarted and the cell returns an error. A dead or hung kernel is killed and
@@ -143,15 +146,18 @@ bench/run.py                        tui/bin/code
   a private `_HEADERS` namespace and exposes one verb, `guide(query|path)`, so an agent can ask
   which module owns a topic from inside a cell. It only answers where the repo documents
   itself; on a task workspace with no headers it returns a miss and says so.
-- **Tool results are dicts that also answer attributes:** `run()` returns `result['stdout']`
-  (or `result.stdout`), and `read(raw=True)[:n]` / `read(...)['content']` work, so a natural
-  model mistake does not cost a cell. The canonical keys are still the contract.
+- **Tool results are dicts that also answer attributes:** `exec(...)` and `run()` return
+  `result['stdout']` (or `result.stdout`), and `read(raw=True)[:n]` / `read(...)['content']`
+  work, so a natural model mistake does not cost a cell. The canonical keys are still the
+  contract.
 - **A bad typed call is an answer, not a traceback:** before dispatch the driver binds the
   arguments to the verb function's live signature. An unknown keyword or a missing argument
   returns `{ok: false, kind: "bad_args", error: {code: "bad_arguments", message, use}}`
   (the signature failure's `use` points at `help(tool)`), and a malformed
   `argv`/`commands`/`env` returns the same envelope with its own `code`, so the model gets a
-  repair instruction and the turn keeps its paired tool message.
+  repair instruction and the turn keeps its paired tool message. A structured `ok: false` is
+  `Cell.rejected`, not `Cell.failed`: it renders `exit: "error"` and counts in the run's
+  errors, so a wrong argument shape is visible instead of hiding behind `ok: true`.
 - **Search is regex by default:** `search` uses the grep mental model, so `legacy|deprecated`
   is one call; pass `regex=false` for a literal substring. `map` lists files with line counts,
   so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
@@ -163,14 +169,14 @@ bench/run.py                        tui/bin/code
   `[read] path ranges/total`. Coverage is pure data: the loop opens no file and inverse-parses
   no card — an undigested card counts exactly the ranges `read()` recorded, a digested one only
   the numbered lines it kept. Coverage is guidance, not a finish gate: reads through
-  python `run()`/`open()` are equally valid and are not tracked.
+  python `open()` (or `run()` in repl/bare) are equally valid and are not tracked.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —
   including turns the `[session state]` fold removed — and returns snippets plus the
   `_OBS[n]` handle to page the full text. `search`/`grep()` is for the tree; `recall()` is
   for the session, and a crash does not erase it.
-- **Sandbox:** `exec`/`run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER` child.
-  Disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
+- **Sandbox:** `exec`/`git`/`run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER`
+  child. Disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
   bind of the workspace only when `writable=True`).
 - **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
   what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
@@ -185,9 +191,10 @@ bench/run.py                        tui/bin/code
   every 20s) and appears as the `[check]` line of the next state card. A spec may carry a
   `scope` list of path prefixes that filters the cheap health run only, so a docs-only edit
   does not typecheck the TUI on every cell; the goal still runs the whole plan. `exec` takes
-  an argv and a cwd, so tests, builds and read-only git need no shell; `run()` is the shell
-  escape hatch. Only programs/verbs that mutate the workspace are refused (see the contract
-  below). Mutating scratch space (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed:
+  an argv and a cwd, so tests, builds and read-only git need no shell; `exec(shell=...)` is
+  the explicit shell string, and `run()` is the python-only equivalent (repl/bare). Only
+  programs/verbs that mutate the workspace are refused (see the contract below).
+  Mutating scratch space (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed:
   the journal covers the tree, not scratch.
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
   `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
