@@ -1,0 +1,10 @@
+/* Brand */
+:root {
+  --brand: #111111;
+  --paper: #f4efe4;
+}
+
+/* Cards */
+.card {
+  border: 1px solid var(--brand);
+}

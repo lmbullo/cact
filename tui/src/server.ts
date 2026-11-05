@@ -184,7 +184,7 @@ function capString(value: unknown, limit: number): unknown {
 }
 
 function capValue(value: any, depth = 0): any {
-  if (depth > 5) return "[depth]";
+  if (depth > 12) return "[depth]";
   if (typeof value === "string") return capString(value, 16000);
   if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
   if (Array.isArray(value)) return value.slice(0, 40).map((item) => capValue(item, depth + 1));

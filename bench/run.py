@@ -1,4 +1,4 @@
-"""The benchmark CLI. Scores the agent on the read, mutation, edge and hard suites.
+"""The benchmark CLI. Scores the agent on the read, mutation, edge, harness and hard suites.
 
 WHAT IT IS
   For each selected task: copy the task's fixtures into `bench/.tmp/<task>/fixtures`, build
@@ -13,7 +13,7 @@ ENTRY POINTS
   workspace(task) -> Path             fresh copy under bench/.tmp
   main() -> int                       0 only when every selected task passes
 
-  Flags: --suite read|mutation|all|edge|hard, --mode repl|tool|state|bare, --tasks a,b,
+  Flags: --suite read|mutation|all|edge|harness|hard, --mode repl|tool|state|bare, --tasks a,b,
   --steps, --wall, --max-output, --obs-chars, --map off|tool|inline, --context map|full,
   --context-chars, --allow-run off|on, --cell-timeout, --health on|off, --repl-rules,
   --repl-stop, --repl-history, --repl-lib, --model, --effort, --temperature, --seed,
@@ -63,6 +63,7 @@ if __package__ in (None, ""):
     from bench.agent.tool_loop import PYTHON_TOOL, TOOL_RULES, ToolLoop
     from bench import edge as bench_edge
     from bench import hard as bench_hard
+    from bench import harness as bench_harness
     from bench.agent.trace import Trace, render
     from bench import tasks as bench_tasks
 else:
@@ -75,6 +76,7 @@ else:
     from .agent.tool_loop import PYTHON_TOOL, TOOL_RULES, ToolLoop
     from . import edge as bench_edge
     from . import hard as bench_hard
+    from . import harness as bench_harness
     from .agent.trace import Trace, render
     from . import tasks as bench_tasks
 
@@ -154,7 +156,8 @@ def main() -> int:
     ap.add_argument("--cell-timeout", type=float, default=0.0)
     ap.add_argument("--repl-stop", default="call", choices=["call", "var"])
     ap.add_argument("--repl-history", default="full", choices=["full", "obs", "drop", "action"])
-    ap.add_argument("--suite", default="read", choices=["read", "mutation", "all", "edge", "hard"])
+    ap.add_argument("--suite", default="read",
+                    choices=["read", "mutation", "all", "edge", "hard", "harness"])
     ap.add_argument("--health", default="on", choices=["on", "off"])
     ap.add_argument("--repl-lib", default="off", choices=["off", "all", "mut"])
     ap.add_argument("--obs-chars", type=int, default=4000)
@@ -187,8 +190,10 @@ def main() -> int:
         "all": bench_tasks.ALL_TASKS,
         "edge": bench_edge.EDGE_TASKS,
         "hard": bench_hard.HARD_TASKS,
+        "harness": bench_harness.HARNESS_TASKS,
     }[args.suite]
-    lookup = {"edge": bench_edge.by_id, "hard": bench_hard.by_id}.get(args.suite, bench_tasks.by_id)
+    lookup = {"edge": bench_edge.by_id, "hard": bench_hard.by_id,
+              "harness": bench_harness.by_id}.get(args.suite, bench_tasks.by_id)
     selected = pool if args.tasks == "all" else [lookup(t) for t in args.tasks.split(",")]
 
     TRACES.mkdir(parents=True, exist_ok=True)
@@ -281,8 +286,10 @@ def main() -> int:
             print(f"    -> {detail}")
         mix: dict = {}
         for turn in result.turns:
-            for res in turn.get("results", []):
-                mix[res["name"]] = mix.get(res["name"], 0) + 1
+            for call in turn.get("calls") or []:
+                name = call.get("name")
+                if name:
+                    mix[name] = mix.get(name, 0) + 1
         rows.append({
             "task": task.id,
             "mix": mix,

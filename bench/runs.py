@@ -54,6 +54,15 @@ def summarize(state_dir: Path, task_id: str) -> dict:
     verbs = {verb: len(re.findall(rf"\b{verb}\(", code)) for verb in VERBS}
     writes = re.findall(r"write\(\s*['\"]([^'\"]+)", code)
     edits = re.findall(r"edit\(\s*['\"]([^'\"]+)", code)
+    tool_mix: dict[str, int] = {}
+    rejected = 0
+    for turn in turns:
+        for call in turn.get("calls") or []:
+            name = str(call.get("name") or "")
+            if name:
+                tool_mix[name] = tool_mix.get(name, 0) + 1
+            if (call.get("observation") or {}).get("rejected") or (call.get("observation") or {}).get("exit") == "error":
+                rejected += 1
     return {
         "id": task_id,
         "status": task.get("status"),
@@ -62,6 +71,8 @@ def summarize(state_dir: Path, task_id: str) -> dict:
         "untouched_src_writes": sum(1 for path in writes if path.startswith("src/")),
         "edits": len(edits),
         "verbs": verbs,
+        "tool_mix": dict(sorted(tool_mix.items())),
+        "rejected": rejected,
         "restarts": obs.count("empty namespace"),
         "goal_unmet": obs.count("final_answer rejected") + obs.count("without a passing check"),
         "refused": obs.count("refused_truncation"),
@@ -140,7 +151,7 @@ def main() -> int:
         print(f"{row['id']:22} status={row['status']:8} stop={str(row['stop']):12} steps={row['steps']:3}")
         print(f"   src-writes={row['untouched_src_writes']:2} edits={row['edits']:2} restarts={row['restarts']} "
               f"goal-unmet={row['goal_unmet']} refused={row['refused']} checks={row['check_runs']} tests={row['test_runs']}")
-        print(f"   verbs={row['verbs']}")
+        print(f"   verbs={row['verbs']} tools={row.get('tool_mix')} rejected={row.get('rejected')}")
     return 0
 
 

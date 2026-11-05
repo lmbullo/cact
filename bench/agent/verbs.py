@@ -42,6 +42,19 @@ from __future__ import annotations
 NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 
 VERBS: dict[str, dict] = {
+    "map": {
+        "function": "map",
+        "summary": "List the files under a directory with line counts, without shell ls/find. Use it to orient in a repo, then outline/read/search a file.",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File or directory; default the workspace root."},
+                "max_files": {"type": "integer", "minimum": 1},
+            },
+            "additionalProperties": False,
+        },
+    },
     "read": {
         "function": "read",
         "summary": "Read one file or several files. Returns kind/total_lines/shown/next/truncated and the numbered text; a list of paths is one call.",
@@ -63,14 +76,15 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search files for a literal or regex. Returns path:line:text and optional context; include filters paths (e.g. '*.py'), and path takes one path or a list.",
+        "summary": "Search files for a regex (default) or a literal. Returns path:line:text and optional context; include filters paths (e.g. '*.py'), and path takes one path or a list.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
                 "pattern": {"type": "string"},
                 "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
-                "regex": {"type": "boolean", "description": "Treat pattern as a regular expression."},
+                "regex": {"type": "boolean", "default": True,
+                          "description": "Treat pattern as a regular expression (default true). Set false for a literal substring."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
                             "description": "Glob(s) a file's relative path must match, e.g. '*.py'."},
                 "context": {"type": "integer", "minimum": 0,
@@ -84,7 +98,7 @@ VERBS: dict[str, dict] = {
     },
     "outline": {
         "function": "outline",
-        "summary": "Return a file's structure with line numbers (Markdown headings; Python classes/functions/methods; TS/JS defs and tests). Use it before reading a long file, then read only the ranges you need.",
+        "summary": "Return a file's structure with line numbers (Markdown headings; Python classes/functions/methods; TS/JS defs and tests; HTML sections/headings inside JS template literals; CSS section comments). Use it before reading a long file, then read only the ranges you need.",
         "mutates": False,
         "schema": {
             "type": "object",

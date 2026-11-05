@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (read, outline, search, edit, splice, write, apply, exec, git) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (map, read, outline, search, edit, splice, write, apply, exec, git) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
@@ -67,6 +67,7 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 | `bench/agent/tools.py` | `TYPE_TOOLS` generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
 | `bench/agent/headers.py` | The header index: `index()`, `guide()`, `problems()`. Shipped as source to every kernel child, so `python3 bench/map.py` and the `guide()` verb run the same code |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
+| `bench/harness.py` | The tool-path evals L1-L7: outline/search/exec/edit/read tasks that grade the call record too |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `bench/HARD.md` | Why the envelope exists: hard-suite results against `--mode bare` |
@@ -86,7 +87,9 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    `shell`. `run()` exists only in python-only modes (repl/bare), not in typed modes. The
    typed call is bound to the verb function's real signature before dispatch, so a wrong or
    missing keyword is a `bad_args`/`bad_arguments` answer (`help(tool)` prints the signature),
-   not a traceback. Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`,
+   not a traceback. A typed verb returning `ok: false` is a structured rejection
+   (`Cell.rejected`) and counts as an error, so a bad argument shape is visible in the run
+   metrics rather than hidden behind `ok: true`. Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`,
    `sed -i`, `git apply/checkout/...`, `>` redirection; a quoted `>` is an argument) are
    refused by the same classifier as `kind: "wrong_call"` with a `use` hint, because they
    bypass the journal.
@@ -166,6 +169,7 @@ framework: `bench/smoke.py` plus a real benchmark task is the whole story, e.g.
 
 ```bash
 DEEPSEEK_API_KEY=... python3 bench/run.py --suite edge --tasks E1_tests --mode state --traces
+DEEPSEEK_API_KEY=... python3 bench/run.py --suite harness --mode state  # tool-path evals L1-L7
 ```
 
 which needs network and a key; without one, fall back to the smoke checks above plus reading

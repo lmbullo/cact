@@ -48,6 +48,7 @@ cact/
 │   ├── run.py               benchmark CLI (also `python3 -m bench.run`)
 │   ├── tasks.py             READ suite T1-T5 (answer in text) + MUTATION suite M1-M3 (grade the workspace)
 │   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
+│   ├── harness.py           HARNESS suite L1-L7: grades the answer and the tool path
 │   ├── hard.py              HARD suite H1-H4 with a held-out oracle; `bench/HARD.md` has the numbers
 │   ├── hard_runner.py       runs a held-out test directory against a workspace (the hard oracle)
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
@@ -57,6 +58,7 @@ cact/
 │   ├── runs.py              summarise a task journal; `--recent` spans every workspace
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
+│   ├── harness_fixtures/    the HARNESS workspace: HTML-in-JS, regex hits, a local checksum, two edit targets
 │   ├── hard_fixtures/       the H1-H4 workspaces; the H3 CSV is generated and gitignored
 │   ├── hard_hidden/         the held-out test tree for H1/H2/H4, outside every workspace
 │   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, hard/, sweep/
@@ -107,8 +109,8 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the typed verbs in verbs.VERBS (read/outline/search/edit/
-          │           splice/write/apply/exec/git), plus guide/map/recall/
+          ├─ PRELUDE: the typed verbs in verbs.VERBS (map/read/outline/search/
+          │           edit/splice/write/apply/exec/git), plus guide/recall/
           │           final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
@@ -150,6 +152,11 @@ bench/run.py                        tui/bin/code
   (the signature failure's `use` points at `help(tool)`), and a malformed
   `argv`/`commands`/`env` returns the same envelope with its own `code`, so the model gets a
   repair instruction and the turn keeps its paired tool message.
+- **Search is regex by default:** `search` uses the grep mental model, so `legacy|deprecated`
+  is one call; pass `regex=false` for a literal substring. `map` lists files with line counts,
+  so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
+  and headings inside a JS template literal, and CSS section comments, so the common
+  component file is navigable without shell `grep`/`sed`.
 - **A read is a ledger, not a firehose:** `read(limit=0)` returns the whole file only while
   it fits 400 lines / 9 KB; past that the result carries `next.offset`. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
@@ -248,13 +255,14 @@ export DEEPSEEK_API_KEY=...            # or --key
 python3 bench/run.py                                   # read suite, state mode, fixtures/
 python3 bench/run.py --suite all --mode state          # read + mutation, production loop
 python3 bench/run.py --suite edge --tasks E1_tests,E6_repair --mode state --traces
+python3 bench/run.py --suite harness --mode state      # tool-path evals L1-L7
 python3 bench/run.py --suite hard --mode state         # envelope vs `--mode bare`; see bench/HARD.md
 python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-lib all
 ```
 
 Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and rewrites
 `bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` of each run
-(`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|hard`,
+(`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|harness|hard`,
 `--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--read-chars`,
 `--obs-chars`, `--map off|tool|inline`, `--context map|full`, `--context-chars`,
 `--allow-run off|on`, `--cell-timeout`, `--health on|off`,
@@ -331,8 +339,8 @@ imports `bench.agent` from this repo, so the checkout path matters.
    through the same journalled `_commit`; `commit()` is a python helper.
 4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or
    `test_calc2.py` scores zero — repair the source.
-5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` from the
-   fixtures. Editing a fixture silently redefines the expected answers. The hard suite's
+5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `harness.py`
+   from the fixtures. Editing a fixture silently redefines the expected answers. The hard suite's
    held-out tests live in `bench/hard_hidden/`, never in the workspace; `H3_bigcsv`'s CSV is
    generated and gitignored.
 6. **`bench/traces/` is append-only evidence.** Add new runs; never rewrite recorded
@@ -347,9 +355,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
    indexed: they are graded input, not code an agent maintains.
 8. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
    `bench/.cache/` (LLM replies), `bench/ws/` (frozen workspaces), `tui/node_modules/`, and
-   the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is
-   recreated by `edge.build()` whenever it is missing — if you add an edge task, add its fixture
-   there (or extend `build()`).
+   the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` and
+   `bench/harness_fixtures/` are committed but recreated by `build()` whenever missing — if you
+   add a task there, add its fixture in the same module.
 
 ---
 
@@ -361,8 +369,8 @@ imports `bench.agent` from this repo, so the checkout path matters.
 | What the agent can do (new file/exec/typed verb) | `bench/agent/verbs.py` (schema + summary + function), `kernel.PRELUDE` or `RUN_PRELUDE` (implementation), `bench/smoke.py` (a `Kernel.call` case), and the rules text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`. The tool specs and `help()` are generated from the registry; the prose rules are the one hand-written catalog. |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run`; a different reply dialect overrides `_reply` (see `repl.ReplLoop`) |
-| A new benchmark task | `tasks.py` (read/mutation) or `edge.py` (edge), then a run to record the trace |
-| Grading semantics | the `grade_*` functions in `tasks.py` / `edge.py` |
+| A new benchmark task | `tasks.py` (read/mutation), `edge.py` (edge) or `harness.py` (tool path), then a run to record the trace |
+| Grading semantics | the `grade_*` functions in `tasks.py` / `edge.py` / `harness.py` |
 | Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env vars |
 | Goal check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |
 | The check plan / cheap health check | `checks.py` (`CheckSpec.parse`, `Verifier`, `run_plan` / `run_specs`, `scope`), `tui/src/detect-checks.ts` |
@@ -377,9 +385,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
 - `bench/run.py` has two import blocks: script mode (`python3 bench/run.py`) inserts the
   repo root on `sys.path`, package mode (`python3 -m bench.run`) uses relative imports.
   Keep both working.
-- The default `--suite read` tasks only need text answers; `mutation`/`edge` tasks and
-  `H1`/`H2`/`H4` in the hard suite set `mutates=True` and get the file helpers plus a
-  writable kernel. `H3_bigcsv` is a text answer over a generated CSV.
+- The default `--suite read` tasks only need text answers; `mutation`/`edge` tasks,
+  `harness.L4_edit_batch`, and `H1`/`H2`/`H4` in the hard suite set `mutates=True` and get
+  the file helpers plus a writable kernel. `H3_bigcsv` is a text answer over a generated CSV.
 - Budget mismatch: `run.py` defaults to 200 steps / 3600 s, the TUI defaults to 300 steps
   / 1800 s / 120 s per cell (`CODE_TUI_MAX_*`).
 - The TUI server detects the check plan **when a task starts**, so a script an earlier task

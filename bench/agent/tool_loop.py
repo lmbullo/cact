@@ -2,7 +2,7 @@
 
 WHAT IT IS
   The turn machine the production loop extends. The model gets the typed tools generated
-  from `verbs.VERBS` (read/outline/search/edit/splice/write/apply/exec/git)
+  from `verbs.VERBS` (map/read/outline/search/edit/splice/write/apply/exec/git)
   plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is dispatched to
   `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return the same
   `Cell`; a `Verifier` (checks.py) decides whether the task may finish and what the cheap
@@ -132,9 +132,9 @@ PYTHON_TOOL = {
     },
 }
 
-TOOL_RULES = """You act by calling tools. The typed tools (read, outline, search, edit, splice, write, apply, exec, git) execute against the workspace and return structured results. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
+TOOL_RULES = """You act by calling tools. The typed tools (map, read, outline, search, edit, splice, write, apply, exec, git) execute against the workspace and return structured results. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
 
-For files, use outline, read and search. outline(path) returns headings and definitions with line numbers (Markdown sections, Python classes/functions/methods, TS/JS defs and tests), so read a long file by its structure instead of guessing. read takes a path or a list and a line range (start/end, or offset/limit); search takes a pattern, one path or a list, include='*.py' to filter, context=N for surrounding lines, regex and ignore_case. They return line numbers and handles, so you can go straight to the range you need.
+For files, use map, outline, read and search. map(path) lists files with line counts (use it instead of ls/find through exec); outline(path) returns headings and definitions with line numbers (Markdown sections, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS template literals, CSS section comments), so read a long file by its structure instead of guessing. read takes a path or a list and a line range (start/end, or offset/limit); search takes a pattern, one path or a list, include='*.py' to filter, context=N for surrounding lines, and ignore_case. Search is regex by default, so `a|b` is one call; pass regex=False for a literal substring. They return line numbers and handles, so you can go straight to the range you need.
 
 exec(argv, ...) is the one process tool. Use argv for one program, commands=[[...],[...]] for several in order, and shell=<string> when shell syntax is truly needed. cwd=... replaces cd; env/stdin are explicit. Do not pass bash -lc in argv; use shell. For files use read/search, not the shell. exec refuses programs that mutate tracked files (rm, cp, mv, tee, sed -i, git checkout/apply, ...); use the typed helpers. For git use the git tool: status, diff/show (paged with offset/max_chars), log, files, add, commit, push, remote, branch. It has no pager and returns structured fields.
 
@@ -454,14 +454,15 @@ class ToolLoop:
         self._note_cell(cell)
         record.observation = {
             "tool": name,
-            "exit": "raise" if cell.failed else "ok",
+            "exit": "raise" if cell.failed else "error" if cell.rejected else "ok",
             "result": cell.result,
             "stdout": cell.stdout,
             "stderr": cell.stderr,
             "restarted": cell.restarted,
+            "rejected": cell.rejected,
             "duration_ms": cell.duration_ms,
         }
-        if cell.failed:
+        if cell.failed or cell.rejected:
             tally.errors += 1
         if cell.mutated:
             if self.verifier is not None:

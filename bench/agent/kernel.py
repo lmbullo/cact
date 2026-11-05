@@ -6,7 +6,7 @@ WHAT IT IS
        DRIVER       loop: one JSON line per request on stdin -> either exec() a Python cell
                     or dispatch one typed verb call in the namespace that survives between
                     requests -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects the typed verbs from verbs.VERBS (read/outline/search/edit/
+       PRELUDE      injects the typed verbs from verbs.VERBS (map/read/outline/search/edit/
                     splice/write/apply/exec/git) plus the python helpers guide/map/grep/
                     recall/final_answer/emit, and journals every mutation (snapshot at
                     start, tree diff after each cell). `guide()` is headers.py, shipped as
@@ -34,10 +34,10 @@ ENTRY POINTS
     .call(tool, args, check_cache=None)  one typed verb -> the same Cell pipeline
     .stop()    SIGKILL the process group, reap exec/run groups, delete the observation log
   Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
-        mutated, changed, deltas, delta, timeout, reads, tool, failed
+        mutated, changed, deltas, delta, timeout, reads, tool, failed, rejected
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor
-  Inside the kernel namespace: the typed verbs in verbs.VERBS (read/outline/search/
+  Inside the kernel namespace: the typed verbs in verbs.VERBS (map/read/outline/search/
         edit/splice/write/apply/exec/git), the python helpers guide()/map()/grep()/
         recall()/verbs()/diff()/changes()/undo()/commit()/help(), exec_argv() (the typed
         `exec` tool), run() only when allow_shell, final_answer(), emit()
@@ -84,6 +84,10 @@ INVARIANTS
     passed to the child in KERNEL_HEADERS, exec'd into `_HEADERS`, and called with `_ROOT`.
     Never inline that source again: a shared namespace let its private `_walk` overwrite the
     prelude's, which silently indexed every file instead of the source tree.
+  - A typed verb that returns `{"ok": false}` is a structured rejection
+    (`Cell.rejected`), distinct from an exception/timeout (`Cell.failed`). The loop counts
+    both as errors so a bad argument shape is visible in the run metrics, not hidden behind
+    an `ok: true` shell result.
   - Direct process spawning is gated by the same classifier. `sys.addaudithook` in
     RUN_PRELUDE sees `subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn` and
     `os.spawn`; a spawn containing a mutating verb raises `_SpawnBlocked`, which the driver
@@ -158,7 +162,7 @@ from .verbs import VERBS
 # --- protocol: one typed request/response pair over the `@@K@@` line ----------------------
 # Bump PROTOCOL when either half's shape changes. The child embeds the same number through
 # the __PROTOCOL__ placeholder; the parent compares it on the first message of every cell.
-PROTOCOL = 3
+PROTOCOL = 4
 
 # --- child side 1/3: DRIVER, the cell loop (stdin JSON in, `@@K@@` line out) -------------
 DRIVER = r'''
@@ -284,6 +288,7 @@ for line in sys.stdin:
     final = None
     timed_out = False
     failed = False
+    rejected = False
     if "_CELL_CHANGED" in ns:
         ns["_CELL_CHANGED"] = []
     saved_stdin = sys.stdin
@@ -309,11 +314,13 @@ for line in sys.stdin:
                 else:
                     value = fn(**call_args)
                 if isinstance(value, dict):
+                    if value.get("ok") is False:
+                        rejected = True
                     if value.get("stdout"):
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "edits") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "edits", "map") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -746,8 +753,11 @@ def map(path=".", max_files=400):
             continue
         entries.append({"path": _os.path.relpath(full, _ROOT),
                         "lines": len(body.splitlines()), "bytes": len(body)})
+    total = len(entries)
+    entries = entries[:int(max_files)]
+    text = "\n".join("%6d  %s" % (entry["lines"], entry["path"]) for entry in entries)
     return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-            "files": entries[:int(max_files)], "total_files": len(entries)}
+            "files": entries, "total_files": total, "text": text}
 
 
 def _outline_doc(node):
@@ -756,6 +766,36 @@ def _outline_doc(node):
     except Exception:
         return ""
     return text.strip().splitlines()[0].strip()[:120] if text.strip() else ""
+
+
+def _outline_html(lines):
+    # HTML landmarks inside a plain page or a JS/TS template literal. A reader can navigate
+    # a component by sections, ids and headings before reading it; the JS AST cannot see a
+    # template string's markup.
+    entries = []
+    for number, line in enumerate(lines, 1):
+        for match in _re.finditer(
+                r"<\s*(section|header|footer|main|nav|article|aside|h[1-6])\b([^>]*)>",
+                line, _re.IGNORECASE):
+            tag = match.group(1).lower()
+            attrs = match.group(2) or ""
+            ident = _re.search(r"\bid\s*=\s*[\"']([^\"']+)", attrs, _re.IGNORECASE)
+            classes = _re.search(r"\bclass(?:Name)?\s*=\s*[\"']([^\"']+)", attrs, _re.IGNORECASE)
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                tail = line[match.end():]
+                title = _re.sub(r"<[^>]*>", "", tail).split("</", 1)[0].strip()
+                title = _re.sub(r"\s+", " ", title)[:120]
+                name = ("h%s: %s" % (tag[1], title)) if title else tag
+                kind = "heading"
+            else:
+                name = tag
+                if ident:
+                    name += "#" + ident.group(1)
+                if classes:
+                    name += "." + classes.group(1).strip().replace(" ", ".")[:80]
+                kind = tag
+            entries.append({"line": number, "kind": kind, "name": name[:160]})
+    return entries
 
 
 def outline(path, max_entries=200):
@@ -828,6 +868,28 @@ def outline(path, max_entries=200):
             match = _re.match(r"^\s*(?:test|it|describe)\(\s*['\"](.+?)['\"]", line)
             if match:
                 entries.append({"line": number, "kind": "test", "name": match.group(1)[:120]})
+        entries.extend(_outline_html(lines))
+    elif ext in (".html", ".htm", ".vue", ".svelte"):
+        entries.extend(_outline_html(lines))
+    elif ext in (".css", ".scss", ".less"):
+        # Section comments and at-rules are the useful map of a stylesheet; a full selector
+        # list is too long to be an outline. Fall back to top-level selectors when there are
+        # no comments.
+        selectors = []
+        for number, line in enumerate(lines, 1):
+            text = line.strip()
+            if text.startswith("/*"):
+                body = text[2:].strip()
+                body = body[:-2].strip() if body.endswith("*/") else body
+                if body and not body.startswith("=") and not body.startswith("-"):
+                    entries.append({"line": number, "kind": "section", "name": body[:140]})
+            elif _re.match(r"@(media|supports|layer|container|keyframes)\b", text):
+                entries.append({"line": number, "kind": "at-rule", "name": text.split("{", 1)[0].strip()[:140]})
+            elif (line and not line[0].isspace() and text.endswith("{")
+                  and not text.startswith(("/*", "*", "@", "}", "{"))):
+                selectors.append({"line": number, "kind": "rule", "name": text[:-1].strip()[:140]})
+        if not entries:
+            entries.extend(selectors)
     else:
         for number, line in enumerate(lines, 1):
             match = _re.match(r"^\s*(?:def|class|function|export)\s+([A-Za-z_$][\w$.]*)", line)
@@ -949,7 +1011,9 @@ def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0
         try:
             matcher = _re.compile(pattern, flags)
         except _re.error as exc:
-            return {"ok": True, "kind": "bad_regex", "pattern": pattern, "message": str(exc)}
+            return {"ok": False, "kind": "bad_args", "pattern": pattern,
+                    "error": {"code": "bad_regex", "message": str(exc),
+                              "use": "search(pattern, regex=False) for a literal substring"}}
     needle = pattern.lower() if ignore_case else pattern
     includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
     explicit_file = _os.path.isfile(target)
@@ -989,8 +1053,10 @@ def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0
     return _grep_result(hits, occurrences, False)
 
 
-def search(pattern, path=".", max_results=50, regex=False, include=None, context=0, ignore_case=False):
-    # The typed `search` tool is the public name; grep() stays the python helper.
+def search(pattern, path=".", max_results=50, regex=True, include=None, context=0, ignore_case=False):
+    # The typed `search` tool is the public name; grep() stays the python helper. Search is
+    # regex by default, matching the grep mental model: an alternation like `a|b` is one
+    # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
                 include=include, context=context, ignore_case=ignore_case)
 
@@ -1638,7 +1704,11 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
                 "code": "both_shell_and_argv",
                 "message": "pass shell=<string> or argv/commands, not both",
                 "use": "exec(shell='git status && git diff --stat')"}})
-        return _run_shell(str(shell), timeout=timeout, cwd=cwd)
+        if not isinstance(shell, str) or not shell.strip():
+            return _Result({"ok": False, "kind": "bad_args", "error": {
+                "code": "bad_shell", "message": "shell must be a non-empty string",
+                "use": "exec(shell='git status && git diff --stat')"}})
+        return _run_shell(shell, timeout=timeout, cwd=cwd)
     if commands is not None:
         if argv is not None:
             return _Result({"ok": False, "kind": "bad_args", "error": {
@@ -1649,6 +1719,18 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
             return _Result({"ok": False, "kind": "bad_args", "error": {
                 "code": "bad_commands", "message": "commands must be a non-empty list of argv lists",
                 "use": "exec(commands=[['git','status'], ['git','diff']])"}})
+        for index, item in enumerate(commands):
+            if isinstance(item, str):
+                return _Result({"ok": False, "kind": "bad_args", "index": index, "error": {
+                    "code": "bad_commands",
+                    "message": "each command must be an argv list, not a shell string",
+                    "use": "exec(commands=[['git','status'], ['git','diff']]) or exec(shell='git status && git diff')"}})
+            if (not isinstance(item, (list, tuple)) or not item
+                    or any(isinstance(part, (list, tuple, dict, set)) for part in item)):
+                return _Result({"ok": False, "kind": "bad_args", "index": index, "error": {
+                    "code": "bad_commands",
+                    "message": "each command must be a non-empty argv list of scalars",
+                    "use": "exec(commands=[['git','status'], ['git','diff']])"}})
         items = []
         for item in commands:
             result = exec_argv(item, timeout=timeout, cwd=cwd, env=env, stdin=stdin)
@@ -1668,10 +1750,11 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
         return _Result({"ok": False, "kind": "wrong_call", "argv": argv, "error": {
             "code": "shell_string",
             "message": "exec() runs a program by argv; it does not parse a shell string",
-            "use": "exec(argv=['git','status']) -- or python run(<shell command>) when you truly need shell syntax"}})
-    if not isinstance(argv, (list, tuple)) or not argv:
+            "use": "exec(argv=['git','status']) -- or exec(shell=<command>) when you truly need shell syntax"}})
+    if (not isinstance(argv, (list, tuple)) or not argv
+            or any(isinstance(item, (list, tuple, dict, set)) for item in argv)):
         return _Result({"ok": False, "kind": "bad_args", "error": {
-            "code": "bad_argv", "message": "argv must be a non-empty list of strings",
+            "code": "bad_argv", "message": "argv must be a non-empty list of scalars",
             "use": "exec(argv=['python3','bench/smoke.py'])"}})
     argv = [str(item) for item in argv]
     command = " ".join(argv)
@@ -1919,6 +2002,7 @@ class CellReply:
     reads: dict = field(default_factory=dict)
     tool: str | None = None
     failed: bool = False
+    rejected: bool = False
     protocol: int | None = None
 
     @classmethod
@@ -1939,6 +2023,7 @@ class CellReply:
             reads=dict(data.get("reads") or {}),
             tool=data.get("tool"),
             failed=bool(data.get("failed")),
+            rejected=bool(data.get("rejected")),
             protocol=data.get("protocol"),
         )
 
@@ -1980,6 +2065,7 @@ class Cell:
     reads: dict = field(default_factory=dict)
     tool: str | None = None
     failed: bool = False
+    rejected: bool = False
 
     @classmethod
     def failure(cls, message: str, *, restarted: bool = True, timeout: bool = False,
@@ -2010,6 +2096,7 @@ class Cell:
             reads=dict(reply.reads),
             tool=reply.tool,
             failed=reply.failed,
+            rejected=reply.rejected,
         )
 
 

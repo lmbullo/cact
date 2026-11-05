@@ -3,12 +3,12 @@ touched.
 
 WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
-  It imports every module, drives the kernel prelude end to end (read/search/outline/write/
-  edit/edit_many/splice/apply/commit/changes/diff/undo, batched read and exec, exec/run
-  allowing reads and refusing mutation, a bad typed call answered as `bad_args`) and
-  checks the pure helpers (reply parsing, state digests, read coverage, the spawn gate,
-  check plans), plus the header index (`bench/agent/headers.py`) and the contract CLI
-  (`bench/map.py`).
+  It imports every module, drives the kernel prelude end to end (map/read/search/outline/write/
+  edit/splice/apply/commit/changes/diff/undo, batched read and exec, exec/run allowing reads
+  and refusing mutation, a bad typed call answered as `bad_args`, the HTML outline and the
+  regex search default) and checks the pure helpers (reply parsing, state digests, read
+  coverage, the spawn gate, check plans), plus the header index (`bench/agent/headers.py`)
+  and the contract CLI (`bench/map.py`).
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
 
@@ -57,6 +57,7 @@ import bench.agent.headers as headers
 import bench.agent.trace as trace
 import bench.map as map_cli
 import bench.edge as edge
+import bench.harness as harness
 import bench.runs as runs
 import bench.tasks as tasks
 import bench.ws as ws
@@ -157,6 +158,7 @@ def main() -> int:
     check("tasks: mutation suite", len(tasks.MUTATION_TASKS) == 3, str(len(tasks.MUTATION_TASKS)))
     check("tasks: by_id", tasks.by_id("T1_count").id == "T1_count")
     check("edge: edge suite", len(edge.EDGE_TASKS) == 10, str(len(edge.EDGE_TASKS)))
+    check("harness: loop suite", len(harness.HARNESS_TASKS) == 7, str(len(harness.HARNESS_TASKS)))
     check("edge: by_id", edge.by_id("E1_tests").id == "E1_tests")
     check("edge: ground truth computed", edge.TOTAL_CENTS > 0 and edge.RECORDS > 0)
 
@@ -496,6 +498,10 @@ def main() -> int:
         check("kernel: read()['content'] is the delivered text", "alpha" in cell.stdout, (cell.stdout + cell.stderr)[:200])
 
         kernel.run("write('call_a.txt', 'one\\ntwo\\n'); write('call_b.txt', 'red\\nblue\\n')")
+        cell = kernel.call("map", {"path": "."})
+        check("kernel: call(map) lists files without a shell",
+              cell.tool == "map" and "call_a.txt" in cell.stdout,
+              (cell.stdout + cell.stderr)[:240])
         cell = kernel.call("read", {"path": ["call_a.txt", "call_b.txt"]})
         check("kernel: call(read) runs a typed verb through the same pipeline",
               cell.tool == "read" and "call_a.txt" in cell.stdout
@@ -554,6 +560,21 @@ def main() -> int:
         cell = kernel.call("outline", {"path": "outline.md", "max_entries": 1})
         check("kernel: call(outline) respects max_entries",
               "Title" in cell.stdout and "Section" not in cell.stdout, cell.stdout[:160])
+        (root / "outline.html").write_text(
+            '<header id="top">\n  <h1>Title</h1>\n</header>\n'
+            '<section class="card" id="hero">\n  <h2>Question</h2>\n</section>\n',
+            encoding="utf-8")
+        cell = kernel.call("outline", {"path": "outline.html"})
+        check("kernel: call(outline) maps HTML sections and headings",
+              "section#hero" in cell.stdout and "heading h2: Question" in cell.stdout
+              and "header#top" in cell.stdout, (cell.stdout + cell.stderr)[:240])
+        (root / "outline.js").write_text(
+            'const view = `\n<section id="main">\n  <h2>Inside JS</h2>\n</section>\n`\n',
+            encoding="utf-8")
+        cell = kernel.call("outline", {"path": "outline.js"})
+        check("kernel: call(outline) sees HTML landmarks in a JS template",
+              "section#main" in cell.stdout and "heading h2: Inside JS" in cell.stdout,
+              (cell.stdout + cell.stderr)[:240])
         cell = kernel.run("print(help()['text'])")
         check("kernel: help() documents the typed tools",
               "exec(" in cell.stdout and "edit(" in cell.stdout,
