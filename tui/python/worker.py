@@ -17,7 +17,7 @@ ENTRY POINTS
   history_brief / record_history   history.jsonl read (prompt prefix) and appended
 
 MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
-  cell.start {cell, code} | turn {turn, data} | log {text} | error {text}
+  cell.start {cell, tool, code|args} | turn {turn, data} | log {text} | error {text}
   final {status, final, stop, steps, calls, llmCalls, errors, usage, wallMs}
 
 INVARIANTS
