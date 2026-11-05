@@ -416,7 +416,7 @@ def main() -> int:
             {"path": "batch_b.txt", "old": "missing", "new": "x"},
         ]})
         check("kernel: call(edit) is atomic on a bad old string",
-              "not_found" in (cell.result or "")
+              "not_found" in (cell.result or "") and cell.rejected and not cell.failed
               and (root / "batch_a.txt").read_text().startswith("one"),
               (cell.result or "")[:240])
 

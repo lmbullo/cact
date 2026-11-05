@@ -423,7 +423,7 @@ for line in sys.stdin:
           "runs": emitted_runs, "reads": dict(ns.get("_READS_CELL") or {}),
           "obs_index": len(_obs_log) - 1, "mutated": _mutated,
           "changed": _changed, "deltas": _deltas, "delta": _delta, "timeout": timed_out,
-          "failed": failed,
+          "failed": failed, "rejected": rejected,
           "answer": None if answer is None else (answer if isinstance(answer, str) else repr(answer))})
 '''.replace("__PROTOCOL__", str(PROTOCOL))
 
