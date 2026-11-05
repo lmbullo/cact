@@ -6,14 +6,17 @@ WHAT IT IS
        DRIVER       loop: one JSON line per request on stdin -> either exec() a Python cell
                     or dispatch one typed verb call in the namespace that survives between
                     requests -> one `@@K@@` JSON line back on stdout.
-       PRELUDE      injects the typed verbs from verbs.VERBS (map/read/outline/search/edit/
-                    splice/write/apply/exec/git) plus the python helpers guide/map/grep/
-                    recall/final_answer/emit, and journals every mutation (snapshot at
-                    start, tree diff after each cell). `guide()` is headers.py, shipped as
-                    source and exec'd into a private `_HEADERS` namespace (see HEADERS_SOURCE).
+       PRELUDE      injects the workspace verbs from verbs.VERBS that need no process
+                    (map/read/search/outline/edit/splice/write/apply) plus the python
+                    helpers guide()/grep()/recall()/verbs()/diff()/changes()/undo()/
+                    commit()/help()/final_answer()/emit(), and journals every mutation
+                    (snapshot at start, tree diff after each cell). `guide()` is headers.py,
+                    shipped as source and exec'd into a private `_HEADERS` namespace (see
+                    HEADERS_SOURCE).
        RUN_PRELUDE  injects exec_argv() (the one typed process tool: argv/commands/shell)
                     and git_tool(); run() is the python-only escape hatch and is removed
-                    from the namespace unless allow_shell is on.
+                    from the namespace unless allow_shell is on. Both process-only names
+                    are absent when allow_run is off.
   2. `Kernel` (this process): spawns the child, supervises the per-cell deadline, restarts it
      when it dies, hangs or desynchronises, and returns a `Cell`.
 
@@ -37,10 +40,10 @@ ENTRY POINTS
         mutated, changed, deltas, delta, timeout, reads, tool, failed, rejected
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor
-  Inside the kernel namespace: the typed verbs in verbs.VERBS (map/read/outline/search/
-        edit/splice/write/apply/exec/git), the python helpers guide()/map()/grep()/
-        recall()/verbs()/diff()/changes()/undo()/commit()/help(), exec_argv() (the typed
-        `exec` tool), run() only when allow_shell, final_answer(), emit()
+  Inside the kernel namespace: PRELUDE's typed verbs (map/read/search/outline/edit/
+        splice/write/apply) and helpers guide()/grep()/recall()/verbs()/diff()/changes()/
+        undo()/commit()/help(); RUN_PRELUDE adds exec_argv() (the typed `exec` tool) and
+        git_tool(), and run() only when allow_shell. final_answer()/emit() are always there.
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /
   `Cell.deltas` / `Cell.delta` (state cards) and `Cell.final` / `Cell.answer` (finish
   protocol).

@@ -22,7 +22,9 @@ MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
 
 INVARIANTS
   - Rules = STATE_RULES (or TOOL_RULES when MODE != "state") + AUTONOMOUS, plus RUN_NOTE
-    when run() is enabled. Production is always unattended: no human answers questions.
+    when the process tools (`exec`/`git`/`run()`) are enabled. Production is always
+    unattended: no human answers questions; typed modes build the kernel with
+    `allow_shell=False`, so only repl has `run()`.
   - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/checks.py.
     One `checks.Verifier` owns the plan, so the goal re-runs it on every finish attempt and
     `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
@@ -37,8 +39,8 @@ INVARIANTS
     rather than burning a kernel.
   - A fire-and-forget task may be asked to commit. The worker supplies a default git identity
     through GIT_AUTHOR_*/GIT_COMMITTER_* (CODE_TUI_GIT_NAME / CODE_TUI_GIT_EMAIL override),
-    and Kernel.start forwards those four variables to run() children. It never writes the
-    user's git config.
+    and Kernel.start forwards those four variables to exec()/run() children. It never writes
+    the user's git config.
   - history_brief is prepended to the prompt (state mode only) so the next task in the same
     workspace knows what the previous ones changed; record_history is appended after a
     completed run even when the task failed, because a failed attempt still moved files.

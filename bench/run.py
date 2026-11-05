@@ -26,19 +26,20 @@ WHAT IT IS NOT
 INVARIANTS
   - Two import blocks (see `if __package__ in (None, "")`), both must keep working. Anything
     new that needs the repo root must be imported in both.
-  - Mutation/edge tasks and the mutating hard tasks (H1/H2/H4) set mutates=True: the kernel
-    gets the file helpers, a writable root, and `--allow-run` decides whether the child is
-    sandboxed under bwrap.
+  - Mutation/edge tasks, `harness.L4_edit_batch` and the mutating hard tasks (H1/H2/H4) set
+    mutates=True: the kernel gets the file helpers, a writable root, and `--allow-run`
+    decides whether the child is sandboxed under bwrap.
   - `Trace(trace_path)` is opened with mode "w" per task per mode; `summary.<mode>.json` is
     rewritten on every run. Never hand-edit either.
   - Exit code is 0 only on a full pass: use it as the CI signal when a key is available.
-  - Grading happens in tasks.py / edge.py `grade_*`; this file only calls it. Do not grade
-    here.
+  - Grading happens in tasks.py / edge.py / harness.py / hard.py `grade_*`; this file only
+    calls it. Do not grade here.
 
 WHERE TO CHANGE
   New suite .......................... the `pool` dict + the matching module's TASKS list
   New flag / budget wiring .......... the argparse block in main()
-  What a run records ................. the `rows.append({...})` dict and summary write
+  What a run records ................. the `rows.append({...})` dict, the per-turn call mix
+                                      and the summary write
   Which loop a mode builds ........... the `if args.mode in ("tool", "state")` / `bare` branch
   The per-task goal and cheap health ... the `Verifier` built from `task.check`
   The hard suite and its held-out oracle ... bench/hard.py

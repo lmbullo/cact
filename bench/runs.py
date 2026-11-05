@@ -2,8 +2,9 @@
 
 WHAT IT IS
   Post-hoc analysis for one task in a TUI state directory
-  (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts which kernel verbs
-  the model used, which files it wrote, steps, tokens, stop reason.
+  (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts the typed call mix
+  (`tool_mix`), structured rejections, which kernel verbs the model used, which files it
+  wrote, steps, tokens, stop reason.
 
 ENTRY POINTS
   python3 bench/runs.py <state-dir> <task-id>

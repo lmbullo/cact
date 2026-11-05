@@ -35,9 +35,9 @@ INVARIANTS
     module yields an empty header, never an exception.
   - `SKIP_DIRS` is the contract surface: `node_modules`, `__pycache__`, `bench/fixtures`,
     `bench/edge_fixtures`, `bench/harness_fixtures`, `bench/hard_fixtures`, `bench/hard_hidden`,
-    `bench/ws`,
-    `bench/traces`, `bench/.tmp`, `bench/.cache`, plus any dot-directory. Task workspaces and
-    recorded evidence are inputs and outputs, not code an agent maintains.
+    `bench/ws`, `bench/traces`, `bench/.tmp`, `bench/.cache`, `dist`, `build`, plus any
+    dot-directory. Task workspaces and recorded evidence are inputs and outputs, not code an
+    agent maintains.
   - `guide(query=...)` scores a term three times in path+title and once everywhere else,
     sorts by score then path, and caps at `limit`. Deterministic: same tree, same order.
   - Rendering truncates each section at `chars` and always keeps the path line, so a card

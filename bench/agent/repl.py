@@ -72,7 +72,7 @@ REPL_RULES = """PYTHON REPL CONTRACT
 RUN_NOTE = """
 
 RUNNING PROGRAMS
-In tools modes, exec(argv, timeout=60, cwd=None, env=None, stdin=None) is the one process tool: argv or commands=[[...],[...]] for programs, shell=<string> for explicit shell syntax. Use cwd=... instead of `cd`; env/stdin are explicit. Do not pass bash -lc in argv; use shell. Use search()/read() for files.
+In tools modes, exec(argv, timeout=60, cwd=None, env=None, stdin=None) is the one process tool: argv or commands=[[...],[...]] for programs, shell=<string> for explicit shell syntax. Use cwd=... instead of `cd`; env/stdin are explicit. A shell interpreter with -c/-lc in argv is refused (shell_via_exec): pass shell=<string> instead. Use search()/read() for files.
 
 In a python-only run (repl/bare), run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list) from the project root and returns kind, exit_code, stdout, stderr. Reads, searches, tests, builds and read-only git work as written: `cat file`, `sed -n '1,40p' file`, `rg TODO`, `python -m pytest -q`, `git diff`, `python3 -c '...'`.
 
@@ -82,7 +82,7 @@ Mutation inside the workspace goes through the journal, not a process. Use write
 RUN_NOTE_MUT = """
 
 RUNNING PROGRAMS
-In tools modes, exec(argv, timeout=60, cwd=None, env=None, stdin=None) is the one process tool: argv or commands=[[...],[...]] for programs, shell=<string> for explicit shell syntax. cwd replaces `cd`; do not pass bash -lc in argv.
+In tools modes, exec(argv, timeout=60, cwd=None, env=None, stdin=None) is the one process tool: argv or commands=[[...],[...]] for programs, shell=<string> for explicit shell syntax. cwd replaces `cd`; a bash -lc argv is refused (shell_via_exec), so pass shell=<string> instead.
 
 In a python-only run (repl/bare), run(command or [commands], timeout=60, cwd=None) executes one bash command (or a list) from the project root and returns kind, exit_code, stdout, stderr.
 
