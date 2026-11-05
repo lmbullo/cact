@@ -494,21 +494,38 @@ def main() -> int:
               "shape shape" in cell.stdout, (cell.stdout + cell.stderr)[:200])
         cell = kernel.run("print(read('a.txt', raw=True)[:3])")
         check("kernel: read(raw=True) can be sliced", "alp" in cell.stdout, (cell.stdout + cell.stderr)[:200])
-        cell = kernel.run("print(read('a.txt')['content'][:20])")
+        cell = kernel.run("print(read('a.txt', repeat=True)['content'][:20])")
         check("kernel: read()['content'] is the delivered text", "alpha" in cell.stdout, (cell.stdout + cell.stderr)[:200])
 
         kernel.run("write('call_a.txt', 'one\\ntwo\\n'); write('call_b.txt', 'red\\nblue\\n')")
-        cell = kernel.call("map", {"path": "."})
-        check("kernel: call(map) lists files without a shell",
-              cell.tool == "map" and "call_a.txt" in cell.stdout,
+        cell = kernel.call("map", {"path": ".", "include": "*.txt"})
+        check("kernel: call(map) lists files without a shell and filters include",
+              cell.tool == "map" and "call_a.txt" in cell.stdout
+              and "outline.md" not in cell.stdout,
               (cell.stdout + cell.stderr)[:240])
         cell = kernel.call("read", {"path": ["call_a.txt", "call_b.txt"]})
         check("kernel: call(read) runs a typed verb through the same pipeline",
               cell.tool == "read" and "call_a.txt" in cell.stdout
               and cell.reads.get("call_a.txt", {}).get("total") == 2, (cell.stdout + cell.stderr)[:200])
         cell = kernel.call("read", {"path": "call_a.txt", "start": 1, "end": 1})
-        check("kernel: call(read) accepts start/end line ranges",
-              "one" in cell.stdout and "two" not in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        check("kernel: call(read) points at a range already delivered",
+              "already delivered" in cell.stdout and (cell.result or "").find("already_read") >= 0,
+              (cell.stdout + cell.stderr)[:220])
+        cell = kernel.call("read", {"path": "call_a.txt", "start": 1, "end": 1, "repeat": True})
+        check("kernel: call(read) repeat=True re-delivers the range",
+              "one" in cell.stdout and "two" not in cell.stdout,
+              (cell.stdout + cell.stderr)[:200])
+        kernel.run(r"write('dedup.txt', 'alpha\n')")
+        kernel.call("read", {"path": "dedup.txt"})
+        cell = kernel.call("read", {"path": "dedup.txt"})
+        check("kernel: a repeated read is a pointer",
+              "already delivered" in cell.stdout and not cell.reads,
+              (cell.stdout + cell.stderr)[:220])
+        kernel.call("edit", {"path": "dedup.txt", "old": "alpha", "new": "beta"})
+        cell = kernel.call("read", {"path": "dedup.txt"})
+        check("kernel: a commit invalidates the read pointer",
+              "beta" in cell.stdout and "already delivered" not in cell.stdout,
+              (cell.stdout + cell.stderr)[:220])
         cell = kernel.call("search", {"pattern": "red", "path": ["call_a.txt", "call_b.txt"]})
         check("kernel: call(search) searches a path list",
               "call_b.txt:1" in cell.stdout, (cell.stdout + cell.stderr)[:200])

@@ -159,12 +159,15 @@ bench/run.py                        tui/bin/code
   `Cell.rejected`, not `Cell.failed`: it renders `exit: "error"` and counts in the run's
   errors, so a wrong argument shape is visible instead of hiding behind `ok: true`.
 - **Search is regex by default:** `search` uses the grep mental model, so `legacy|deprecated`
-  is one call; pass `regex=false` for a literal substring. `map` lists files with line counts,
-  so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
+  is one call; pass `regex=false` for a literal substring. `map(path, include='*.md')` lists
+  files with line counts and a glob filter, so a repo walk does not need shell `ls`/`find`;
+  `outline` also maps HTML sections
   and headings inside a JS template literal, and CSS section comments, so the common
   component file is navigable without shell `grep`/`sed`.
 - **A read is a ledger, not a firehose:** `read(limit=0)` returns the whole file only while
-  it fits 400 lines / 9 KB; past that the result carries `next.offset`. `Cell.reads` records
+  it fits 400 lines / 9 KB; past that the result carries `next.offset`. A range already
+  delivered in the session returns a pointer to the earlier `_OBS` output; `repeat=True`
+  re-delivers it. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
   `[read] path ranges/total`. Coverage is pure data: the loop opens no file and inverse-parses
   no card — an undigested card counts exactly the ranges `read()` recorded, a digested one only

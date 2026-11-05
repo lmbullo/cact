@@ -100,7 +100,10 @@ INVARIANTS
     400 lines / 9 KB; beyond that the result carries `next.offset`. A list argument reads
     several files in one cell (same offset/limit, `text` concatenated with `# path` headers),
     so batching is the tool's shape rather than a rule. Every delivered range is returned as
-    `Cell.reads = {path: {ranges, total}}`, so the loop can see holes.
+    `Cell.reads = {path: {ranges, total}}`, so the loop can see holes. A contained range
+    already delivered in this session, with the same file digest, returns `already_read`
+    plus the `_OBS[n]` pointer; `read(..., repeat=True)` re-delivers the text. `_commit`
+    drops the file's session entry.
   - `check_cache` is sent with each cell (`{command: {text, ok}}`); `run()`/`exec_argv()`
     answer a matching command with `kind: "check_cached"` instead of spawning it twice.
   - run/exec enabled => the child is a plain `python3 -u -c DRIVER`. Disabled => the child
@@ -453,6 +456,10 @@ def guide(query=None, path=None, limit=6):
 
 _ROOT = _os.getcwd()
 _READS_CELL = {}
+# Session-level delivery ledger. A repeated read of a range that was already shown, while
+# the file is unchanged, returns a pointer instead of the same text again. `repeat=True`
+# opts back into a full delivery, so this is a context optimisation, not a cap.
+_READS_SESSION = {}
 _READ_MAX_CHARS = 9000
 _READ_MAX_LINES = 400
 _MUT = False
@@ -571,6 +578,7 @@ def _commit(target, rel, body, source):
     _os.makedirs(_os.path.dirname(target) or _ROOT, exist_ok=True)
     with _open(target, "w", encoding="utf-8") as fh:
         fh.write(body)
+    _READS_SESSION.pop(rel, None)
     _MUT = True
     _JSEQ += 1
     diff_text = "".join(_difflib.unified_diff(
@@ -741,21 +749,26 @@ def _walk(root):
             yield _os.path.join(dirpath, name)
 
 
-def map(path=".", max_files=400):
+def map(path=".", max_files=400, include=None):
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
     if not _os.path.exists(target):
         return {"ok": True, "kind": "miss", "path": rel}
     base = target if _os.path.isdir(target) else (_os.path.dirname(target) or _ROOT)
+    includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
     entries = []
     for full in _walk(base):
+        rel = _os.path.relpath(full, _ROOT)
+        if includes and not any(_fnmatch.fnmatch(rel, pat) or
+                                _fnmatch.fnmatch(_os.path.basename(rel), pat)
+                                for pat in includes):
+            continue
         try:
             body = _read_text(full)
         except OSError:
             continue
-        entries.append({"path": _os.path.relpath(full, _ROOT),
-                        "lines": len(body.splitlines()), "bytes": len(body)})
+        entries.append({"path": rel, "lines": len(body.splitlines()), "bytes": len(body)})
     total = len(entries)
     entries = entries[:int(max_files)]
     text = "\n".join("%6d  %s" % (entry["lines"], entry["path"]) for entry in entries)
@@ -912,7 +925,7 @@ def outline(path, max_entries=200):
                     "total_lines": len(lines), "text": text})
 
 
-def read(path, offset=1, limit=0, raw=False, start=None, end=None):
+def read(path, offset=1, limit=0, raw=False, start=None, end=None, repeat=False):
     # `start`/`end` are the natural line-range names; `offset`/`limit` stay for compatibility.
     if start is not None:
         offset = start
@@ -923,7 +936,8 @@ def read(path, offset=1, limit=0, raw=False, start=None, end=None):
     # with a `# path` header, so print(read([a, b])['text']) gives the model everything at once.
     if isinstance(path, (list, tuple, set)):
         paths = sorted(path) if isinstance(path, set) else list(path)
-        results = [read(item, offset=offset, limit=limit, raw=raw) for item in paths]
+        results = [read(item, offset=offset, limit=limit, raw=raw, start=start, end=end,
+                        repeat=repeat) for item in paths]
         chunks = []
         for item in results:
             rel = str(item.get("path") or "")
@@ -946,7 +960,8 @@ def read(path, offset=1, limit=0, raw=False, start=None, end=None):
         return {"ok": True, "kind": "miss", "path": rel, "did_you_mean": near}
     if _os.path.isdir(target):
         return {"ok": True, "kind": "dir", "path": rel, "entries": sorted(_os.listdir(target))}
-    lines = _read_text(target).splitlines()
+    body = _read_text(target)
+    lines = body.splitlines()
     total = len(lines)
     start = max(1, min(int(offset), total or 1))
     want = int(limit)
@@ -964,9 +979,27 @@ def read(path, offset=1, limit=0, raw=False, start=None, end=None):
               "shown": [start, stop],
               "next": {"offset": stop + 1} if stop < total else None,
               "truncated": stop < total}
+    digest = _digest(body)
+    prior = _READS_SESSION.get(rel)
+    hit = None
+    if (not raw and not repeat and prior and prior.get("digest") == digest):
+        hit = next((item for item in prior.get("ranges") or []
+                    if item["start"] <= start and stop <= item["stop"]), None)
+    if hit is not None:
+        handle = "_OBS[%d]['stdout']" % int(hit["obs"])
+        note = ("already delivered in this session; use read(%r, start=%d, end=%d, repeat=True) "
+                "to receive it again, or print(%s)" % (rel, start, stop, handle))
+        result.update({"already_read": True, "handle": handle, "text": "# " + note})
+        return _Result(result)
     entry = _READS_CELL.setdefault(rel, {"ranges": [], "total": total})
     entry["ranges"].append([start, stop])
     entry["total"] = total
+    if prior is None or prior.get("digest") != digest:
+        prior = {"ranges": [], "total": total, "digest": digest}
+    prior["ranges"].append({"start": start, "stop": stop,
+                            "obs": len(_OBS) if "_OBS" in globals() else 0})
+    prior["total"] = total
+    _READS_SESSION[rel] = prior
     chunk = "\n".join(lines[start - 1:stop])
     if raw:
         result["text"] = chunk

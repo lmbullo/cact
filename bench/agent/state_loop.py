@@ -89,7 +89,7 @@ Every tool result is a state card, not a terminal transcript:
   [read]   the file ranges this cell delivered; anything past them is not in your context
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; page the rest with read(path, offset=next). Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; page the rest with read(path, offset=next). A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)

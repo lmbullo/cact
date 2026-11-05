@@ -2,7 +2,7 @@
 
 WHAT IT IS
   Seven small workspace tasks aimed at the architecture that the recent TUI runs exercised:
-  map an HTML-in-JS file by its outline, search with a real regex, run a batch of argv
+  map or read an HTML-in-JS file, search with a real regex, run a batch of argv
   commands, apply one atomic edit batch, use the explicit shell escape hatch, read several
   files in one call, and read the project's own checksum instead of inventing one. Every
   task grades the final answer *and* the tool-call record, so a correct answer found by the
@@ -259,7 +259,7 @@ def _section_pairs(answer: str) -> dict[str, int]:
 def grade_outline(answer: str, run) -> tuple[bool, str]:
     got = _section_pairs(answer)
     missing = {ident: line for ident, line in SECTION_LINES.items() if got.get(ident) != line}
-    problems = process(run, require=("outline",), max_calls=10, no_exec_readers=True)
+    problems = process(run, max_calls=10, no_exec_readers=True)
     ok = not missing and not problems
     detail = []
     if missing:
@@ -374,7 +374,7 @@ HARNESS_TASKS: list[HarnessTask] = [
         "Analyze src/main.js. It is a JS file with an HTML template. Report every "
         "<section> id and its 1-based line number in file order, as `id: line`. Do not modify files.",
         grade_outline,
-        "read/analyze: outline a large HTML-in-JS file",
+        "read/analyze: map or read an HTML-in-JS file, without shell readers",
     ),
     HarnessTask(
         "L2_search",

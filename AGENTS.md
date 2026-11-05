@@ -107,6 +107,11 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    surgical change emits only the changed lines); **`apply(<unified diff>)`** writes several
    files in one cell. All of them go through `_commit`, which is what makes the journal
    honest. `commit()` remains a python helper.
+3a. **A repeated read is a pointer, not a re-delivery.** `read` tracks delivered ranges and
+   the file digest; asking for a contained range again returns `already_read` with the
+   `_OBS[n]` handle. `read(..., repeat=True)` re-delivers it, so the model can always get the
+   text back. `_commit` invalidates the file's entry; an external write is caught by the
+   digest. This is context hygiene, not a read cap.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired. The hard suite's oracle lives
    outside the workspace (`bench/hard_hidden/`), so the agent cannot read or edit it.

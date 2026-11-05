@@ -44,20 +44,22 @@ NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 VERBS: dict[str, dict] = {
     "map": {
         "function": "map",
-        "summary": "List the files under a directory with line counts, without shell ls/find. Use it to orient in a repo, then outline/read/search a file.",
+        "summary": "List the files under a directory with line counts, without shell ls/find; include filters by glob. Use it to orient in a repo, then outline/read/search a file.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File or directory; default the workspace root."},
                 "max_files": {"type": "integer", "minimum": 1},
+                "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                            "description": "Glob(s) a relative path must match, e.g. '*.md'."},
             },
             "additionalProperties": False,
         },
     },
     "read": {
         "function": "read",
-        "summary": "Read one file or several files. Returns kind/total_lines/shown/next/truncated and the numbered text; a list of paths is one call.",
+        "summary": "Read one file or several files. Returns kind/total_lines/shown/next/truncated and the numbered text; a list of paths is one call. A range already shown this session returns a short pointer; pass repeat=true to re-deliver it.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -69,6 +71,8 @@ VERBS: dict[str, dict] = {
                 "start": {"type": "integer", "minimum": 1, "description": "Alias for offset; the natural line-range name."},
                 "end": {"type": "integer", "minimum": 0, "description": "Last line to include (with start)."},
                 "raw": {"type": "boolean", "description": "Return unnumbered text."},
+                "repeat": {"type": "boolean",
+                           "description": "Re-deliver a range already shown in this session; default false returns a pointer."},
             },
             "required": ["path"],
             "additionalProperties": False,
