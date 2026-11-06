@@ -104,7 +104,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search files for a regex (default) or a literal. stdout is path:line:text with exact hit text and merged context; the result adds shown/total/offset/next/truncated, keeps no duplicate hit table, and becomes locators above max_chars (text_elided=true). include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
+        "summary": "Search files for a regex (default) or a literal. stdout is path:line:text with exact hit text and merged context; the result adds shown/total/offset/next/truncated, keeps no duplicate hit table, and becomes locators when max_chars is exceeded (text_elided=true; max_chars is a threshold, not a cap). include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -122,7 +122,7 @@ VERBS: dict[str, dict] = {
                 "offset": {"type": "integer", "minimum": 0,
                            "description": "Skip this many matching lines; next.offset pages the result."},
                 "max_chars": {"type": "integer", "minimum": 0,
-                              "description": "Text budget; default 12000 returns locators for broad results; 0 returns full text."},
+                              "description": "Locator threshold, not a cap: above it broad results are text_elided locators; 0 disables locator mode and returns full text."},
             },
             "required": ["pattern"],
             "additionalProperties": False,

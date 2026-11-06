@@ -79,7 +79,7 @@ def header(path):
             text = fh.read(READ_LIMIT)
     except OSError:
         return "", 0
-    lines = text.count("\n") + 1 if text else 0
+    lines = len(text.splitlines()) if text else 0
     if str(path).endswith(".py"):
         body = re.sub(r"\A#![^\n]*\n", "", text)          # shebang line is not a docstring
         body = re.sub(r"^[ \t]*[rRuU]?", "", body, count=1)
@@ -176,7 +176,7 @@ def render(rows, chars=900):
     return "\n\n".join(blocks)
 
 
-def guide(root=None, query=None, path=None, limit=3, chars=2400):
+def guide(root=None, query=None, path=None, limit=3, chars=20000):
     """Answer "which module owns this?" over the headers.
 
     No query, no path -> one line per source file (the map). `path` -> that module's header.
@@ -189,7 +189,7 @@ def guide(root=None, query=None, path=None, limit=3, chars=2400):
         if not hits:
             return {"ok": True, "kind": "guide", "path": want, "modules": [],
                     "shown": 0, "total": 0, "next": None,
-                    "text": "no module at %s; map() lists the files, grep() searches them" % want}
+                    "text": "no module at %s; map() lists the files, search() finds text" % want}
         return {"ok": True, "kind": "guide", "modules": hits, "shown": len(hits),
                 "total": len(hits), "next": None, "text": render(hits, chars)}
     if query:
@@ -208,7 +208,7 @@ def guide(root=None, query=None, path=None, limit=3, chars=2400):
         if not hits:
             return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
                     "shown": 0, "total": 0, "next": None,
-                    "text": "no documented module matches %r; try map() or grep()" % str(query)}
+                    "text": "no documented module matches %r; try map() or search()" % str(query)}
         return {"ok": True, "kind": "guide", "query": str(query), "modules": hits,
                 "shown": len(hits), "total": len(hits), "next": None,
                 "text": render(hits, chars)}

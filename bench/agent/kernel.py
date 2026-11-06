@@ -459,7 +459,7 @@ _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
 
 
-def guide(query=None, path=None, limit=3, chars=2400):
+def guide(query=None, path=None, limit=3, chars=20000):
     fn = _HEADERS.get("guide")
     if fn is None:
         return {"ok": False, "error": {"code": "no_index",
@@ -934,7 +934,7 @@ def map(path=".", max_files=120, include=None, offset=0):
     return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
             "files": page, "count": total, "total_files": total, "dirs_matched": dirs,
             "shown": [start + 1, end] if page else [],
-            "next": {"offset": end} if end < total else None,
+            "next": {"offset": end, "unit": "file"} if end < total else None,
             "has_more": end < total, "text": text}
 
 
@@ -1101,7 +1101,7 @@ def outline(path, max_entries=200):
     return _Result({"ok": True, "kind": "outline", "path": rel, "entries": entries,
                     "total_lines": len(lines), "total_entries": total_entries,
                     "truncated": truncated,
-                    "next": {"offset": len(entries)} if truncated else None,
+                    "next": {"offset": len(entries), "unit": "entry"} if truncated else None,
                     "text": text})
 
 
@@ -1209,7 +1209,7 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
     truncated = has_more and not explicit and int(limit) <= 0
     result = {"ok": True, "kind": "file", "path": rel, "total_lines": total,
               "shown": [start, stop],
-              "next": {"offset": stop + 1} if has_more else None,
+              "next": {"offset": stop + 1, "unit": "line"} if has_more else None,
               "truncated": truncated, "has_more": has_more}
     digest = _digest(body)
     prior = _READS_SESSION.get(rel)
@@ -1269,7 +1269,7 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
     common = {"ok": True, "kind": "matches", "matches": hits,
               "truncated": truncated, "shown": len(hits), "total": total,
               "offset": int(offset),
-              "next": {"offset": int(offset) + len(hits)} if int(offset) + len(hits) < total else None}
+              "next": {"offset": int(offset) + len(hits), "unit": "hit"} if int(offset) + len(hits) < total else None}
     if max_chars and len(full) > int(max_chars):
         # A broad context search can exceed the card budget and lose its middle. Deliver
         # locators instead of a silently digested blob. Hit lines stay exact; only context
@@ -1278,7 +1278,7 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
             "%s:%s: %s" % (hit["path"], hit["line"], hit.get("text") or "")
             for hit in hits)
         common.update({"text_elided": True, "text_chars": len(full),
-                       "note": "broad result: locators only; pass max_chars=0 for full text"})
+                       "note": "broad result: max_chars is a locator threshold, not a cap; max_chars=0 disables locator mode"})
         common["text"] = locators
         return _Result(common)
     common["text"] = full
@@ -2244,7 +2244,7 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=120
         return _Result({"ok": ok, "kind": "git_diff" if action == "diff" else "git_show",
                         "action": action, "paths": paths, "text": text,
                         "total_chars": total, "next_offset": nxt,
-                        "next": {"offset": nxt} if nxt is not None else None,
+                        "next": {"offset": nxt, "unit": "char"} if nxt is not None else None,
                         "has_more": nxt is not None,
                         "exit_code": code, "stderr": err})
     if action == "status":
