@@ -339,13 +339,11 @@ for line in sys.stdin:
                                    if k not in ("stdout", "stderr", "text", "raw", "files", "hunk")}
                         if value.get("kind") == "matches":
                             # The stdout text is the delivery; the result only carries the
-                            # locators, so a hit's text is not sent twice in one card.
-                            if value.get("locator_mode"):
-                                summary.pop("matches", None)
-                            else:
-                                summary["matches"] = [
-                                    {k: v for k, v in hit.items() if k in ("path", "line")}
-                                    for hit in value.get("matches") or []]
+                            # locators, so a hit's text is not sent twice in one card. Keep
+                            # the locator list stable in both full and locator mode.
+                            summary["matches"] = [
+                                {k: v for k, v in hit.items() if k in ("path", "line")}
+                                for hit in value.get("matches") or []]
                         if value.get("kind") in ("outline", "outlines", "maps"):
                             summary.pop("entries", None)
                             summary.pop("files", None)
@@ -1085,8 +1083,39 @@ def _coerce_paths(path):
     return path
 
 
-def read(path, offset=1, limit=0, raw=False, start=None, end=None, repeat=False):
+def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=False,
+         ranges=None):
     path = _coerce_paths(path)
+    # A batched ranged read: ranges=[{path, start, end}, ...] is one call for several
+    # windows, unlike path=[...] which applies the same window to each file.
+    if ranges is not None:
+        if not isinstance(ranges, (list, tuple)) or not ranges:
+            return {"ok": False, "kind": "bad_args", "error": {
+                "code": "bad_ranges", "message": "ranges must be a non-empty list",
+                "use": "read(ranges=[{path, start, end}, ...])"}}
+        results = []
+        for item in ranges:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                results.append({"ok": False, "kind": "bad_args",
+                                "error": {"code": "bad_range", "message": "each range needs path"}})
+                continue
+            results.append(read(item["path"], start=item.get("start"),
+                                end=item.get("end"), raw=raw, repeat=repeat))
+        results = [_Result(item) if isinstance(item, dict) else item for item in results]
+        chunks = []
+        for item in results:
+            rel = str(item.get("path") or "")
+            if item.get("kind") == "file":
+                chunks.append("# " + rel + "\n" + (item.get("text") or ""))
+            else:
+                chunks.append("# " + rel + "\n" + str(dict(item)))
+        return _Result({"ok": all(bool(item.get("ok")) for item in results),
+                        "kind": "files", "files": results, "count": len(results),
+                        "text": "\n\n".join(chunks)})
+    if path is None:
+        return {"ok": False, "kind": "bad_args", "error": {
+            "code": "missing_path", "message": "read needs path or ranges",
+            "use": "read(path, start=..., end=...) or read(ranges=[...])"}}
     # `start`/`end` are the natural line-range names; `offset`/`limit` stay for compatibility.
     explicit = end is not None
     if start is not None:
@@ -1274,15 +1303,15 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
             body = _read_text(full)
         except OSError:
             continue
-        if matcher:
-            occurrences += len(matcher.findall(body))
-        else:
-            occurrences += (body.lower() if ignore_case else body).count(needle)
         lines = body.splitlines()
         for number, line in enumerate(lines, 1):
             hay = line.lower() if ignore_case else line
             if not (matcher.search(line) if matcher else needle in hay):
                 continue
+            if matcher:
+                occurrences += len(matcher.findall(line))
+            else:
+                occurrences += (line.lower() if ignore_case else line).count(needle)
             hit = {"path": full_rel, "line": number, "text": line.strip()}
             if context:
                 width = int(context)

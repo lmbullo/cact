@@ -89,7 +89,7 @@ Every tool result is a state card, not a terminal transcript:
   [read]   the file ranges this cell delivered; anything past them is not in your context
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(next N)` on that line is the first uncovered line, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
@@ -227,7 +227,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
     come from `Cell.reads` (exact, recorded by the kernel) and from the text rendered right here,
     so `[read] path a-b/total (next N)` and the `reads:` fold line cannot drift from the card.
     """
-    parts = [f"[state] turn={steps} elapsed={cell.duration_ms}ms prompt_tokens={prompt_tokens}"]
+    parts = [f"[state] step={steps} elapsed={cell.duration_ms}ms prompt_tokens={prompt_tokens}"]
     if getattr(cell, "tool", None):
         parts.append(f"[tool] {cell.tool}")
     if cell.changed:

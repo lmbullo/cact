@@ -537,6 +537,14 @@ def main() -> int:
         check("kernel: recall is a typed session search",
               cell.result is not None and "call_a" in cell.stdout,
               (cell.stdout + (cell.result or ""))[:240])
+        cell = kernel.call("read", {"ranges": [
+            {"path": "call_a.txt", "start": 1, "end": 1},
+            {"path": "call_b.txt", "start": 2, "end": 2},
+        ]})
+        check("kernel: read batches different ranges",
+              "call_a.txt" in cell.stdout and "call_b.txt" in cell.stdout
+              and "one" in cell.stdout and "blue" in cell.stdout,
+              (cell.stdout + cell.stderr)[:240])
         cell = kernel.call("read", {"path": ["call_a.txt", "call_b.txt"]})
         check("kernel: call(read) runs a typed verb through the same pipeline",
               cell.tool == "read" and "call_a.txt" in cell.stdout

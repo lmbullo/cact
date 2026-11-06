@@ -172,9 +172,12 @@ bench/run.py                        tui/bin/code
   range it returns the whole file only while it fits 400 lines / 20 KB, else `next.offset`
   and `has_more`.
   `truncated` means the default page limit cut the requested output; an explicit
-  `start`/`end` that stops before EOF is complete and only has `has_more`. A range already
-  delivered in the session returns a pointer to the earlier `_OBS` output; `repeat=True`
-  re-delivers it. `Cell.reads` records
+  `start`/`end` that stops before EOF is complete and only has `has_more`.
+  `read(path=[...])` applies one window to several files;
+  `read(ranges=[{path,start,end},...])` batches different windows. `result.next.offset` is the
+  page cursor, while a state card's `[read] ... (next N)` is the first line not yet covered.
+  A range already delivered in the session returns a pointer to the earlier `_OBS` output;
+  `repeat=True` re-delivers it. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
   `[read] path ranges/total`. Coverage is pure data: the loop opens no file and inverse-parses
   no card — an undigested card counts exactly the ranges `read()` recorded, a digested one only
