@@ -996,13 +996,13 @@ def _outline_html(lines):
     return entries
 
 
-def outline(path, max_entries=200):
+def outline(path, max_entries=200, keys=False):
     # The structural view: headings and definitions with line numbers, so a long file can
     # be navigated before (or instead of) reading it whole. This is not a shell equivalent;
     # it is the map read() and search() do not provide.
     path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
-        results = [outline(item, max_entries=max_entries) for item in path]
+        results = [outline(item, max_entries=max_entries, keys=keys) for item in path]
         chunks = []
         for item in results:
             rel = str(item.get("path") or "")
@@ -1067,31 +1067,33 @@ def outline(path, max_entries=200):
                          if isinstance(target, _ast.Name)]
                 if names:
                     label = ", ".join(names)
-                    keys = []
+                    key_names = []
                     if isinstance(node.value, _ast.Dict):
-                        keys = [key.value for key in node.value.keys
-                                if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
+                        key_names = [key.value for key in node.value.keys
+                                     if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
                     elif isinstance(node.value, (_ast.Tuple, _ast.List)):
-                        keys = [item.value for item in node.value.elts
-                                if isinstance(item, _ast.Constant) and isinstance(item.value, str)]
-                    if keys:
-                        shown = ", ".join(keys[:12]) + (" ..." if len(keys) > 12 else "")
+                        key_names = [item.value for item in node.value.elts
+                                     if isinstance(item, _ast.Constant) and isinstance(item.value, str)]
+                    if key_names:
+                        shown = ", ".join(key_names[:12]) + (" ..." if len(key_names) > 12 else "")
                         label += " (%s, %d keys): %s" % (
                             "dict" if isinstance(node.value, _ast.Dict) else "sequence",
-                            len(keys), shown)
+                            len(key_names), shown)
                     entries.append({"line": node.lineno, "kind": "assign", "name": label})
-                    entries.extend(_key_entries(node.value))
+                    if keys:
+                        entries.extend(_key_entries(node.value))
             elif isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
                 name = node.target.id
-                keys = []
+                key_names = []
                 if isinstance(node.value, _ast.Dict):
-                    keys = [key.value for key in node.value.keys
-                            if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
-                if keys:
-                    shown = ", ".join(keys[:12]) + (" ..." if len(keys) > 12 else "")
-                    name += " (dict, %d keys): %s" % (len(keys), shown)
+                    key_names = [key.value for key in node.value.keys
+                                 if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
+                if key_names:
+                    shown = ", ".join(key_names[:12]) + (" ..." if len(key_names) > 12 else "")
+                    name += " (dict, %d keys): %s" % (len(key_names), shown)
                 entries.append({"line": node.lineno, "kind": "assign", "name": name})
-                entries.extend(_key_entries(node.value))
+                if keys:
+                    entries.extend(_key_entries(node.value))
     elif ext in (".md", ".markdown"):
         for number, line in enumerate(lines, 1):
             match = _re.match(r"^(#{1,6})\s+(.*\S)\s*$", line)
@@ -1182,6 +1184,21 @@ def outline(path, max_entries=200):
                     "text": text})
 
 
+def _section_bounds(path, section):
+    # Resolve a section name through outline() to (first_line, last_line).
+    try:
+        result = outline(path, max_entries=2000, keys=False)
+    except Exception:
+        return None
+    want = str(section).strip().lower()
+    entries = result.get("entries") or []
+    exact = [item for item in entries if str(item.get("name") or "").strip().lower() == want]
+    partial = [item for item in entries if want in str(item.get("name") or "").lower()]
+    for item in exact or partial:
+        return int(item["line"]), int(item.get("end") or item["line"])
+    return None
+
+
 def _coerce_paths(path):
     # A model sometimes serializes a path list as '["a", "b"]' instead of passing an array.
     # Accept that shape rather than silently searching for a file with the brackets in its
@@ -1197,8 +1214,24 @@ def _coerce_paths(path):
 
 
 def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=False,
-         ranges=None):
+         ranges=None, section=None):
     path = _coerce_paths(path)
+    if section:
+        if not isinstance(path, str):
+            return {"ok": False, "kind": "bad_args", "error": {
+                "code": "section_needs_path",
+                "message": "section= applies to one file path",
+                "use": "read(path, section='Heading')"}}
+        target, rel = _resolve(path)
+        if target is None or not _os.path.isfile(target):
+            return {"ok": True, "kind": "miss", "path": rel}
+        bounds = _section_bounds(target, section)
+        if bounds is None:
+            return {"ok": False, "kind": "bad_args", "error": {
+                "code": "section_not_found",
+                "message": "no outline entry matches %r" % section,
+                "use": "outline(%r) to see section names" % path}}
+        start, end = bounds
     # A batched ranged read: ranges=[{path, start, end}, ...] is one call for several
     # windows, unlike path=[...] which applies the same window to each file.
     if ranges is not None:
@@ -1220,8 +1253,9 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
             rel = str(item.get("path") or "")
             if item.get("kind") == "file":
                 page = item.get("next")
-                status = ("next=%s" % (page.get("offset") if isinstance(page, dict) else page)
-                          if page is not None else "complete")
+                status = ("continues at %s" % (
+                    page.get("offset") if isinstance(page, dict) else page)
+                    if page is not None else "complete")
                 chunks.append("# %s (%s)\n%s" % (rel, status, item.get("text") or ""))
             else:
                 chunks.append("# " + rel + "\n" + str(dict(item)))
@@ -1390,7 +1424,8 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
 
 
 def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-         ignore_case=False, max_chars=12000, offset=0, count=False, within=None):
+         ignore_case=False, max_chars=12000, offset=0, count=False, within=None,
+         section=None):
     # Search: one path or a list, an optional include glob, and optional context. The typed
     # `search` and the python `grep` share this one implementation and the same regex default.
     path = _coerce_paths(path)
@@ -1434,6 +1469,20 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                               "use": "search(pattern, regex=False) for a literal substring"}}
     needle = pattern.lower() if ignore_case else pattern
     includes = _include_patterns(include)
+    if section and isinstance(path, str):
+        target, rel = _resolve(path)
+        if target is None or not _os.path.isfile(target):
+            return {"ok": False, "kind": "bad_args", "error": {
+                "code": "section_needs_file",
+                "message": "section= applies to one existing file",
+                "use": "search(pattern, path='file', section='Heading')"}}
+        bounds = _section_bounds(target, section)
+        if bounds is None:
+            return {"ok": False, "kind": "bad_args", "error": {
+                "code": "section_not_found",
+                "message": "no outline entry matches %r" % section,
+                "use": "outline(%r) to see section names" % path}}
+        within = list(bounds)
     window = None
     if within is not None:
         try:
@@ -1514,13 +1563,15 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
 
 
 def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-           ignore_case=False, max_chars=12000, offset=0, count=False, within=None):
+           ignore_case=False, max_chars=12000, offset=0, count=False, within=None,
+           section=None):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is
     # regex by default, matching the grep mental model: an alternation like `a|b` is one
     # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
                 include=include, context=context, ignore_case=ignore_case,
-                max_chars=max_chars, offset=offset, count=count, within=within)
+                max_chars=max_chars, offset=offset, count=count, within=within,
+                section=section)
 
 
 def recall(pattern, limit=10, context=100):

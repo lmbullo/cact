@@ -167,8 +167,9 @@ bench/run.py                        tui/bin/code
 - **Search: regex by default.** `search` uses the grep mental model, so `legacy|deprecated`
   is one call; pass `regex=false` for a literal substring. Match text is exact, adjacent
   context is merged so each line appears once, and `path:line:text` (hit) vs `path:line-text`
-  (context) is the separator. A paged result carries `[hits] path count: lines` so the next
-  move is a `read`, not offset arithmetic.
+  (context) is the separator. `within=[start,end]` or `section="Heading"` narrows the search;
+  a paged result carries `[hits]` and a `[more]` sentinel so the next move is a `read`, not
+  offset arithmetic.
 - **Map: files, not headers.** `map(path, include='*.md')` lists files with line counts;
   a literal include is an exact relative path and a glob matches the full path or basename
   (`*.md` any depth, `bench/*.md` one level). Ignored/generated trees are skipped, unmatched
@@ -183,7 +184,8 @@ bench/run.py                        tui/bin/code
   `truncated` means the default page limit cut the requested output; an explicit
   `start`/`end` that stops before EOF is complete and only has `has_more`. `read(path=[...])`
   applies one window to several files; `read(ranges=[{path,start,end},...])` batches
-  different windows. A range already delivered this session returns a pointer to the earlier
+  different windows; `read(path, section="Heading")` resolves through `outline` and reads that
+  subtree. A range already delivered this session returns a pointer to the earlier
   `_OBS` output; `repeat=True` re-delivers it. `Cell.reads` records `{path: {ranges, total}}`;
   the card prints `[read] path ranges/total (unread: holes)`, and `[page]` carries
   `shown/total/next/unit/has_more/complete`; `next` is a replayable argument object. Coverage is guidance, not a finish gate: reads through

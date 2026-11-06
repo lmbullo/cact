@@ -255,11 +255,15 @@ def process(run, *, require=(), max_calls: int | None = None,
                    for call in calls_):
             problems.append("did not use exec(shell=...)")
     if require_read_list:
-        if not any(call.get("name") == "read"
-                   and isinstance((call.get("args") or {}).get("path"), list)
-                   and len((call.get("args") or {}).get("path")) >= 2
-                   for call in calls_):
-            problems.append("did not read two files in one read(path=[...]) call")
+        batched = any(
+            call.get("name") == "read" and (
+                (isinstance((call.get("args") or {}).get("path"), list)
+                 and len((call.get("args") or {}).get("path")) >= 2)
+                or (isinstance((call.get("args") or {}).get("ranges"), list)
+                    and len((call.get("args") or {}).get("ranges")) >= 2))
+            for call in calls_)
+        if not batched:
+            problems.append("did not batch two files in one read call (path=[...] or ranges=[...])")
     if require_edit_batch:
         if not any(call.get("name") == "edit"
                    and len((call.get("args") or {}).get("edits") or []) >= 2
@@ -470,7 +474,7 @@ HARNESS_TASKS: list[HarnessTask] = [
         "Read docs/notes.md and src/search.js together in one read call. Report the first "
         "Markdown heading in notes and the exported function that returns legacyName.",
         grade_read_batch,
-        "read: one call for several files",
+        "read: one call for several files/windows",
     ),
     HarnessTask(
         "L7_local_code",

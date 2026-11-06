@@ -92,6 +92,8 @@ VERBS: dict[str, dict] = {
                 "raw": {"type": "boolean", "description": "Return unnumbered text."},
                 "repeat": {"type": "boolean",
                            "description": "Re-deliver a range already shown in this session; default false returns a pointer."},
+                "section": {"type": "string",
+                            "description": "Resolve a heading/symbol through outline() and read that range; use outline(path) to see names."},
                 "ranges": {"type": "array",
                            "items": {"type": "object",
                                      "properties": {"path": {"type": "string"},
@@ -119,7 +121,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count; within=[start,end] restricts a range. include filters directory walks; a file path is searched as given.",
+        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count; within=[start,end] or section='Heading' restricts a range. include filters directory walks; a file path is searched as given.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -139,6 +141,8 @@ VERBS: dict[str, dict] = {
                            "description": "Skip this many matching lines; next.offset pages the result."},
                 "count": {"type": "boolean", "default": False,
                           "description": "Only count matching lines per file; returns path:count rows, no hit text."},
+                "section": {"type": "string",
+                            "description": "Restrict to an outline section by name (Markdown heading or code symbol)."},
                 "within": {"type": "array", "items": {"type": "integer", "minimum": 1},
                            "minItems": 2, "maxItems": 2,
                            "description": "Restrict line matching to [start, end] (1-based); useful with an outline range."},
@@ -166,7 +170,7 @@ VERBS: dict[str, dict] = {
     },
     "outline": {
         "function": "outline",
-        "summary": "Return a file's structure with line ranges (Markdown headings, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS templates, CSS section comments). A Markdown heading ends at the next same-or-shallower heading, so its range covers its subtree. path may be a list.",
+        "summary": "Return a file's structure with line ranges (Markdown headings, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS templates, CSS section comments). A Markdown heading ends at the next same-or-shallower heading, so its range covers its subtree; keys=true expands multiline dict keys. path may be a list.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -174,6 +178,8 @@ VERBS: dict[str, dict] = {
                 "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
                          "description": "A file or a list of files; map() lists a directory."},
                 "max_entries": {"type": "integer", "minimum": 1},
+                "keys": {"type": "boolean", "default": False,
+                         "description": "Expand top-level dict keys as entries (default false: one assignment row)."},
             },
             "required": ["path"],
             "additionalProperties": False,
