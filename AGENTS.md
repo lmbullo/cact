@@ -76,9 +76,10 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 
 ## Rules that must not break
 
-1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
-   holds the answer (`STAGED`); the next reply with no tool call accepts `v` after the goal
-   check (when there is one). An accepted finish ends the turn: the remaining calls in the
+1. **A finish is staged, then accepted.** `final_answer(v)` always holds the answer
+   (`STAGED`); the next reply with no tool call accepts it after the goal check (when there
+   is one). For a silent stage that reply's content wins over `v`, so a short final value
+   cannot erase the handoff written next. An accepted finish ends the turn: the remaining calls in the
    same message do not run, but each still gets a paired (skipped) tool result. With a goal
    check, no answer is accepted until the check passes. `run.py` grades `result.final`; a
    prose reply with no tool call is the summary.

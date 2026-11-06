@@ -34,13 +34,14 @@ ENTRY POINTS
     `_drift_count` (per-run state, per-turn nudges, trace drift).
 
 INVARIANTS
-  - The staged answer (`FinishState.staged`) is set by `final_answer` in a cell that also
-    printed (STAGED): the output is shown and the answer is held. The next reply with no
-    tool call accepts it (after the goal check, when there is one), so output is never lost
-    and no extra empty cell is required. A non-final cell in a later turn clears it (a
-    later call in the same turn does not, so it is never silently dropped), and so does a
-    no-tool reply whose goal check rejects the finish.
-  - An accepted `final_answer` is terminal for the turn: the remaining tool calls in the
+  - The staged answer (`FinishState.staged`) is set by `final_answer` in any cell (STAGED).
+    A printing cell shows the output and holds the answer; a silent cell holds it too, so a
+    model can call `final_answer("short")` and still write the real handoff in the next
+    message. The next reply with no tool call accepts it (after the goal check, when there
+    is one); for a silent stage that reply's content wins over the short tool value. A
+    non-final cell in a later turn clears it (a later call in the same turn does not), and
+    so does a no-tool reply whose goal check rejects the finish.
+  - A silent `final_answer` is terminal intent for its turn: the remaining tool calls in the
     same assistant message are NOT executed, but each still gets its paired `role: "tool"`
     message (marked skipped), so the next request is valid.
   - `_answer_calls` appends exactly one `role: "tool"` message per `tool_calls` entry, even
@@ -147,25 +148,31 @@ Earlier cells keep their full output in _OBS. The typed recall tool searches it 
 class FinishState:
     """The staged-then-accepted answer of one run.
 
-    `staged` is set by `final_answer` in a cell that also printed: the answer is held while
-    the model reads what the cell printed. The next reply with no tool call accepts it
-    (`accept`), which sets `terminal`. A non-final cell in a *later* turn clears it (that is
-    the model saying "keep working"); a later call in the same turn does not, so a staged
-    answer is never silently dropped by the rest of its own turn. A no-tool reply whose goal
-    check rejects the finish clears it too.
+    `staged` is set by `final_answer`. If the cell also printed, the answer is held while
+    the model reads the output. If the cell was silent, it is still held: the next assistant
+    message is the handoff, so a model that calls `final_answer("short")` and then writes the
+    real report cannot lose the report. The next reply with no tool call accepts it
+    (`accept`), which sets `terminal`; a silent stage prefers that reply's content over the
+    tool's short value. A non-final cell in a *later* turn clears it; a later call in the same
+    turn does not. A no-tool reply whose goal check rejects the finish clears it too.
     """
 
     staged: str | None = None
     terminal: str | None = None
     staged_turn: int | None = None
+    silent: bool = False
+    content: str | None = None
 
     @property
     def accepted(self) -> bool:
         return self.terminal is not None
 
-    def stage(self, answer: Any, turn: int | None = None) -> None:
+    def stage(self, answer: Any, turn: int | None = None, *, silent: bool = False,
+              content: str | None = None) -> None:
         self.staged = answer
         self.staged_turn = turn
+        self.silent = silent
+        self.content = content
 
     def clear(self, turn: int | None = None) -> None:
         """Drop the staged answer, unless `turn` staged it earlier in this same turn."""
@@ -173,10 +180,14 @@ class FinishState:
             return
         self.staged = None
         self.staged_turn = None
+        self.silent = False
+        self.content = None
 
     def accept(self, answer: str) -> None:
         self.staged = None
         self.staged_turn = None
+        self.silent = False
+        self.content = None
         self.terminal = answer
 
 
@@ -356,7 +367,14 @@ class ToolLoop:
         if finish_reason == "length":
             messages.append({"role": "user", "content": "[runtime] Your reply was cut off before it finished. Continue from where it stopped."})
             return TurnOutcome(stop=TRUNCATED)
-        candidate = finish.staged if finish.staged is not None else content.strip()
+        text = content.strip()
+        if finish.staged is not None:
+            if finish.silent:
+                candidate = text or finish.content or finish.staged
+            else:
+                candidate = finish.staged
+        else:
+            candidate = text
         met, check = self._goal_state()
         if self._gated and not met:
             notice = self._reject(check, "You finished without a passing check")
@@ -372,6 +390,8 @@ class ToolLoop:
                       step: int) -> TurnOutcome:
         """Dispatch every tool call, pairing exactly one `role: "tool"` message with each."""
         records: list[CallRecord] = []
+        if finish.staged is not None and finish.silent and not finish.content:
+            finish.content = (rec.get("content") or "").strip() or None
         for index, call in enumerate(tool_calls):
             fn = call.get("function") or {}
             name = fn.get("name") or ""
@@ -379,7 +399,7 @@ class ToolLoop:
             record = CallRecord(index=index, name=name, call_id=call_id)
             records.append(record)
             try:
-                if finish.accepted:
+                if finish.accepted or finish.silent:
                     content = self._skip_call(record)
                 else:
                     content = self._dispatch(fn, name, record, finish_reason, finish,
@@ -400,10 +420,10 @@ class ToolLoop:
         return TurnOutcome(stop=next((r.stop for r in reversed(records) if r.stop), None))
 
     def _skip_call(self, record: CallRecord) -> str:
-        """A call after an accepted `final_answer`: not executed, but still answered."""
+        """A call after an accepted/staged `final_answer`: not executed, but still answered."""
         record.skipped = True
-        record.notice = ("[observation] skipped: final_answer in this turn was already "
-                         "accepted, so this call did not run.")
+        record.notice = ("[observation] skipped: final_answer in this turn is terminal "
+                         "intent, so this call did not run; the next no-tool reply is the handoff.")
         return record.notice
 
     def _dispatch(self, fn: dict, name: str, record: CallRecord, finish_reason,
@@ -477,23 +497,14 @@ class ToolLoop:
         record.obs = obs
 
         if cell.final is not None:
-            if cell.stdout.strip() or cell.stderr.strip():
-                finish.stage(cell.final, turn=step)
-                notice = (obs + f"\n[finish] answer staged: {str(cell.final)[:400]!r}. "
-                          "The cell also produced the output above; check it. Your next reply "
-                          "with no tool call accepts this answer, or call final_answer(...) "
-                          "again to change it.")
-                record.notice = notice[-2000:]
-                record.stop = STAGED
-                return notice
-            met, check = self._goal_state()
-            if not met:
-                notice = self._reject(check, "final_answer rejected")
-                record.notice = notice[:2000]
-                record.stop = GOAL_UNMET
-                return notice
-            finish.accept(cell.final)
-            return obs
+            finish.stage(cell.final, turn=step, silent=not (cell.stdout.strip() or cell.stderr.strip()))
+            notice = (obs + f"\n[finish] answer staged: {str(cell.final)[:400]!r}. "
+                      "The next reply with no tool call is the handoff (its content wins for "
+                      "a silent cell); write the real report there, or call final_answer(...) "
+                      "again to change it.")
+            record.notice = notice[-2000:]
+            record.stop = STAGED
+            return notice
 
         finish.clear(turn=step)
         if self.goal_stops and self._gated and cell.mutated and self._goal_state()[0]:

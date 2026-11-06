@@ -255,7 +255,7 @@ constants (`tool_loop.STOPS`). Stop reasons are a fixed vocabulary:
 | `VERIFIED` | the goal check passed | `done` |
 | `STEP_LIMIT` / `WALL_LIMIT` | budget exhausted (a non-empty summary still counts) | `partial` |
 | `GOAL_UNMET` | model tried to finish while the check failed | continues |
-| `STAGED` | `final_answer` in a cell that also printed; accepted on the next no-tool reply | continues |
+| `STAGED` | `final_answer` (printing or silent); accepted on the next no-tool reply | continues |
 | `UNREVIEWED` | ReplLoop only: `final_answer` in a printing cell is rejected | continues |
 | `PROTOCOL` | ReplLoop only: reply had neither a python block nor an ANSWER line | continues |
 | `TRUNCATED` / `BAD_ARGS` | cut-off or unparsable call; nothing ran | continues |
@@ -329,14 +329,15 @@ imports `bench.agent` from this repo, so the checkout path matters.
 
 ## Contracts an agent must not break
 
-1. **A finish is staged, then accepted.** `final_answer(v)` in a cell that also printed
-   holds the answer (`STAGED`): the output is shown, and the next reply with no tool call
-   accepts `v` after the goal check (when there is one). A staged answer is never dropped by
-   the rest of its own turn; a non-final cell in a later turn clears it. An explicit
-   `final_answer` in a silent cell finishes immediately, and an accepted finish ends that
-   turn: the remaining tool calls in the same assistant message do not run (each still gets
-   a paired tool result, marked skipped, so the next request stays valid). When a goal check
-   exists, no answer is accepted until the check passes. `run.py` grades `result.final`; a
+1. **A finish is staged, then accepted.** `final_answer(v)` always stages (`STAGED`): a
+   printing cell shows its output; a silent cell still waits for the next no-tool reply, so
+   a short `final_answer("done")` cannot erase the report the model writes next. That reply
+   accepts the finish after the goal check (when there is one); for a silent stage its
+   content wins over `v`. A staged answer is never dropped by the rest of its own turn; a
+   non-final cell in a later turn clears it. A silent `final_answer` is terminal intent for
+   its turn: the remaining tool calls do not run (each still gets a paired tool result,
+   marked skipped, so the next request stays valid). When a goal check exists, no answer is
+   accepted until the check passes. `run.py` grades `result.final`; a
    prose reply with no tool call is the summary.
 2. **`exec` is the one process tool; only mutation is gated.** `exec(argv)` runs a program
    from the workspace root; `cwd=` replaces `cd`, `commands=[[...]]` runs several,

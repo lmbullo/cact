@@ -914,14 +914,24 @@ def main() -> int:
 
     late = "print('must not run')"
     result, client, kernel = _run_loop(
-        [_reply(calls=[_call("c1", "final_answer('now')"), _call("c2", late)])],
+        [_reply(calls=[_call("c1", "final_answer('now')"), _call("c2", late)]),
+         _reply(content="the real handoff", finish="stop")],
         {"final_answer('now')": _cell(final="now")})
-    check("turn: an accepted final_answer stops the later calls in that turn",
-          late not in kernel.codes and result.final == "now" and result.stop == tool_loop.DONE,
-          str(kernel.codes))
+    check("turn: a silent final_answer stages and keeps later calls from running",
+          late not in kernel.codes and result.final == "the real handoff"
+          and result.stop == tool_loop.DONE, str(kernel.codes))
+    late_result = result
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", "final_answer('short')")]),
+         _reply(content="the full report", finish="stop")],
+        {"final_answer('short')": _cell(final="short")})
+    check("turn: the next reply is the handoff, not the tool's short value",
+          result.final == "the full report" and result.stop == tool_loop.DONE,
+          f"{result.stop} {result.final!r}")
     check("turn: a skipped call survives in the turn record",
-          len(result.turns[0]["calls"]) == 2 and result.turns[0]["calls"][1].get("skipped") is True,
-          str(result.turns[0]["calls"])[:300])
+          len(late_result.turns[0]["calls"]) == 2
+          and late_result.turns[0]["calls"][1].get("skipped") is True,
+          str(late_result.turns[0]["calls"])[:300])
 
     probe = tool_loop.ToolLoop(FakeClient([]), FakeKernel({}), loop.Budget())
     accepted = tool_loop.FinishState()
