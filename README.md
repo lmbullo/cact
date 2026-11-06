@@ -110,8 +110,8 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the workspace verbs — map/read/search/outline/edit/splice/
-          │           write/apply — plus the python helpers guide/grep/recall/
+          ├─ PRELUDE: the workspace verbs — map/read/search/recall/outline/edit/
+          │           splice/write/apply — plus the python helpers guide/grep/
           │           diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
@@ -160,13 +160,19 @@ bench/run.py                        tui/bin/code
   `Cell.rejected`, not `Cell.failed`: it renders `exit: "error"` and counts in the run's
   errors, so a wrong argument shape is visible instead of hiding behind `ok: true`.
 - **Search is regex by default:** `search` uses the grep mental model, so `legacy|deprecated`
-  is one call; pass `regex=false` for a literal substring. `map(path, include='*.md')` lists
-  files with line counts and a glob filter, so a repo walk does not need shell `ls`/`find`;
-  `outline` also maps HTML sections
+  is one call; pass `regex=false` for a literal substring. Match and context lines are exact
+  (not clipped), adjacent context is merged so each line appears once, and the result carries
+  locators while stdout carries the text. `map(path, include='*.md')` lists files with line
+  counts and a path-glob filter (`*` does not cross `/`, `**` does), skipping
+  `.gitignore`/generated trees, and pages with `shown`/`next`/`has_more`, so a repo walk does
+  not need shell `ls`/`find`; `outline` also maps HTML sections
   and headings inside a JS template literal, and CSS section comments, so the common
   component file is navigable without shell `grep`/`sed`.
-- **A read is a ledger, not a firehose:** `read(limit=0)` returns the whole file only while
-  it fits 400 lines / 9 KB; past that the result carries `next.offset`. A range already
+- **A read is a ledger, not a firehose:** `read(start/end)` is the canonical range; with no
+  range it returns the whole file only while it fits 400 lines / 20 KB, else `next.offset`
+  and `has_more`.
+  `truncated` means the default page limit cut the requested output; an explicit
+  `start`/`end` that stops before EOF is complete and only has `has_more`. A range already
   delivered in the session returns a pointer to the earlier `_OBS` output; `repeat=True`
   re-delivers it. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as

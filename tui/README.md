@@ -332,10 +332,11 @@ with `-c`/`-lc` inside argv is refused as `shell_via_exec`; use `exec(shell=<str
 an explicit shell string. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel provides
-`read()` (one path or a list; a range already shown returns an `already_read` pointer unless
-`repeat=True`), `search()` (`grep()` is the python alias), `outline()` (headings/defs with
-line numbers), `guide()`, `map()` (`include` filters by glob), `write()`, `edit()`, `splice()`,
-`apply()` and `recall()` for earlier cell output; `exec()` and `git()` arrive with the
+`read()` (one path or a list; `has_more`/`truncated` are distinct, and a range already shown
+returns an `already_read` pointer unless `repeat=True`), `search()` (`grep()` is the python
+alias; exact lines with merged context), `outline()` (headings/defs with line numbers),
+`guide()`, `map()` (`include` filters by glob; ignored trees are skipped), `write()`, `edit()`, `splice()`,
+`apply()`; typed `recall()` searches earlier cell output; `exec()` and `git()` arrive with the
 process prelude, so they are absent when `CODE_TUI_ALLOW_RUN=0`. Mutations are journalled
 together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
 launched through `exec`/`run()` can still write files: the journal is a typed-helper contract,

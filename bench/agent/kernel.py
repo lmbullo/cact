@@ -96,9 +96,10 @@ INVARIANTS
     `os.spawn`; a spawn containing a mutating verb raises `_SpawnBlocked`, which the driver
     turns into a `wrong_call` result with the helper hint. Allowed spawns are appended to
     `Cell.runs`. Inside run()/exec_argv() the gate classifies but does not double-log.
-  - `read()` is a ledger, not a firehose: `limit=0` returns the whole file only while it fits
-    400 lines / 9 KB; beyond that the result carries `next.offset`. A list argument reads
-    several files in one cell (same offset/limit, `text` concatenated with `# path` headers),
+  - `read()` is a ledger, not a firehose: with no range it returns the whole file only while
+    it fits 400 lines / 20 KB; beyond that the result carries `next.offset` and `has_more`.
+    A list argument reads several files in one cell (same start/end, `text` concatenated with
+    `# path` headers),
     so batching is the tool's shape rather than a rule. Every delivered range is returned as
     `Cell.reads = {path: {ranges, total}}`, so the loop can see holes. A contained range
     already delivered in this session, with the same file digest, returns `already_read`
@@ -326,7 +327,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "edits", "map") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -336,6 +337,20 @@ for line in sys.stdin:
                     else:
                         summary = {k: v for k, v in value.items()
                                    if k not in ("stdout", "stderr", "text", "raw", "files", "hunk")}
+                        if value.get("kind") == "matches":
+                            # The stdout text is the delivery; the result only carries the
+                            # locators, so a hit's text is not sent twice in one card.
+                            if value.get("locator_mode"):
+                                summary.pop("matches", None)
+                            else:
+                                summary["matches"] = [
+                                    {k: v for k, v in hit.items() if k in ("path", "line")}
+                                    for hit in value.get("matches") or []]
+                        if value.get("kind") in ("outline", "outlines", "maps"):
+                            summary.pop("entries", None)
+                            summary.pop("files", None)
+                        if value.get("kind") == "recall":
+                            summary.pop("items", None)
                     result_repr = json.dumps(summary, default=repr)
                 elif isinstance(value, str):
                     out.write(value)
@@ -460,7 +475,7 @@ _READS_CELL = {}
 # the file is unchanged, returns a pointer instead of the same text again. `repeat=True`
 # opts back into a full delivery, so this is a context optimisation, not a cap.
 _READS_SESSION = {}
-_READ_MAX_CHARS = 9000
+_READ_MAX_CHARS = 20000
 _READ_MAX_LINES = 400
 _MUT = False
 _JOURNAL = []
@@ -472,6 +487,69 @@ _SKIP_DIRS = {
     "node_modules", ".git", "__pycache__", ".venv", "venv", "env",
     "dist", "build", ".next", ".nuxt", "target", "vendor", ".cache",
 }
+_IGNORE = None
+
+
+def _ignore_patterns():
+    # The root .gitignore patterns; map/search/_snapshot skip generated trees. This is
+    # intentionally small: directory prefixes, basename globs and path globs. A `!` negation
+    # line is ignored rather than pretending to implement full gitignore.
+    global _IGNORE
+    if _IGNORE is not None:
+        return _IGNORE
+    _IGNORE = []
+    try:
+        with _open(_os.path.join(_ROOT, ".gitignore"), encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or line.startswith("!"):
+                    continue
+                _IGNORE.append(line.lstrip("/").rstrip("/"))
+    except OSError:
+        pass
+    return _IGNORE
+
+
+def _ignored(rel, is_dir=False):
+    rel = str(rel).replace("\\", "/").lstrip("./")
+    if not rel or rel == ".":
+        return False
+    base = rel.rsplit("/", 1)[-1]
+    for pattern in _ignore_patterns():
+        if "/" not in pattern:
+            if _fnmatch.fnmatch(base, pattern):
+                return True
+        elif _fnmatch.fnmatch(rel, pattern) or rel == pattern or rel.startswith(pattern + "/"):
+            return True
+    return False
+
+
+def _glob_match(path, pattern):
+    # Include globs use shell path semantics: `*`/`?` do not cross `/`, `**` does. This
+    # keeps `bench/*.md` to direct children while `**/*.md` walks the tree.
+    path = str(path).replace("\\", "/").lstrip("./")
+    pattern = str(pattern).replace("\\", "/").lstrip("./")
+    if pattern.startswith("**/"):
+        if _glob_match(path, pattern[3:]):
+            return True
+    out = []
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "*":
+            if i + 1 < len(pattern) and pattern[i + 1] == "*":
+                out.append(".*")
+                i += 2
+            else:
+                out.append("[^/]*")
+                i += 1
+        elif ch == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(_re.escape(ch))
+            i += 1
+    return _re.fullmatch("".join(out), path) is not None
 _HINT = {
     "cat": "read(path)", "head": "read(path, offset=1, limit=N)",
     "tail": "read(path, offset=total-N)", "less": "read(path)",
@@ -568,7 +646,7 @@ def _digest(text):
 
 
 def _commit(target, rel, body, source):
-    global _MUT, _JSEQ
+    global _MUT, _JSEQ, _IGNORE
     before = None
     try:
         if _os.path.isfile(target):
@@ -579,6 +657,8 @@ def _commit(target, rel, body, source):
     with _open(target, "w", encoding="utf-8") as fh:
         fh.write(body)
     _READS_SESSION.pop(rel, None)
+    if rel == ".gitignore":
+        _IGNORE = None
     _MUT = True
     _JSEQ += 1
     diff_text = "".join(_difflib.unified_diff(
@@ -681,6 +761,11 @@ def _delta():
     return deltas
 
 
+def session_diff(path=None, max_chars=8000):
+    # Explicit name for the session journal; `git diff` is the working-tree tool.
+    return diff(path=path, max_chars=max_chars)
+
+
 def changes():
     now = _tree_state()
     files = {}
@@ -744,25 +829,64 @@ def undo(path=None, n=1):
 
 def _walk(root):
     for dirpath, dirnames, filenames in _os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not d.startswith("."))
+        rel_dir = _os.path.relpath(dirpath, _ROOT)
+        keep = []
+        for name in dirnames:
+            if name in _SKIP_DIRS or name.startswith("."):
+                continue
+            rel = name if rel_dir == "." else rel_dir + "/" + name
+            if _ignored(rel, True):
+                continue
+            keep.append(name)
+        dirnames[:] = sorted(keep)
         for name in sorted(filenames):
-            yield _os.path.join(dirpath, name)
+            full = _os.path.join(dirpath, name)
+            rel = _os.path.relpath(full, _ROOT)
+            if _ignored(rel, False):
+                continue
+            yield full
 
 
-def map(path=".", max_files=400, include=None):
+def map(path=".", max_files=120, include=None, offset=0):
+    path = _coerce_paths(path)
+    if isinstance(path, (list, tuple, set)):
+        results = [map(item, max_files=max_files, include=include, offset=offset)
+                   for item in (sorted(path) if isinstance(path, set) else path)]
+        chunks = []
+        for item in results:
+            chunks.append("# " + str(item.get("root") or "") + "\n" + str(item.get("text") or ""))
+        return {"ok": all(bool(item.get("ok")) for item in results), "kind": "maps",
+                "files": results, "count": len(results), "text": "\n\n".join(chunks)}
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
     if not _os.path.exists(target):
         return {"ok": True, "kind": "miss", "path": rel}
-    base = target if _os.path.isdir(target) else (_os.path.dirname(target) or _ROOT)
     includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
+
+    def wanted(name):
+        return not includes or any(_glob_match(name, pat) or
+                                   _glob_match(_os.path.basename(name), pat)
+                                   for pat in includes)
+
+    if _os.path.isfile(target):
+        try:
+            body = _read_text(target)
+        except OSError as exc:
+            return {"ok": False, "kind": "read_error", "path": rel,
+                    "error": {"code": "read_failed", "message": str(exc)}}
+        entry = {"path": rel, "lines": len(body.splitlines()), "bytes": len(body)}
+        rows = [entry] if wanted(rel) else []
+        text = "\n".join("%6d  %s" % (item["lines"], item["path"]) for item in rows)
+        return {"ok": True, "kind": "map", "root": rel, "files": rows,
+                "total_files": len(rows), "shown": [1, len(rows)] if rows else [],
+                "next": None, "has_more": False, "text": text}
+
+    base = target
     entries = []
     for full in _walk(base):
         rel = _os.path.relpath(full, _ROOT)
-        if includes and not any(_fnmatch.fnmatch(rel, pat) or
-                                _fnmatch.fnmatch(_os.path.basename(rel), pat)
-                                for pat in includes):
+        if not wanted(rel):
             continue
         try:
             body = _read_text(full)
@@ -770,10 +894,15 @@ def map(path=".", max_files=400, include=None):
             continue
         entries.append({"path": rel, "lines": len(body.splitlines()), "bytes": len(body)})
     total = len(entries)
-    entries = entries[:int(max_files)]
-    text = "\n".join("%6d  %s" % (entry["lines"], entry["path"]) for entry in entries)
+    start = max(0, int(offset or 0))
+    page = entries[start:start + max(1, int(max_files or 1))]
+    end = start + len(page)
+    text = "\n".join("%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
     return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-            "files": entries, "total_files": total, "text": text}
+            "files": page, "total_files": total,
+            "shown": [start + 1, end] if page else [],
+            "next": {"offset": end} if end < total else None,
+            "has_more": end < total, "text": text}
 
 
 def _outline_doc(node):
@@ -818,6 +947,15 @@ def outline(path, max_entries=200):
     # The structural view: headings and definitions with line numbers, so a long file can
     # be navigated before (or instead of) reading it whole. This is not a shell equivalent;
     # it is the map read() and search() do not provide.
+    path = _coerce_paths(path)
+    if isinstance(path, (list, tuple, set)):
+        results = [outline(item, max_entries=max_entries) for item in path]
+        chunks = []
+        for item in results:
+            rel = str(item.get("path") or "")
+            chunks.append("# " + rel + "\n" + str(item.get("text") or ""))
+        return {"ok": all(bool(item.get("ok")) for item in results), "kind": "outlines",
+                "files": results, "count": len(results), "text": "\n\n".join(chunks)}
     target, rel = _resolve(path)
     if target is None:
         return _Result({"ok": False, "kind": "wrong_call", "path": rel,
@@ -925,8 +1063,24 @@ def outline(path, max_entries=200):
                     "total_lines": len(lines), "text": text})
 
 
+def _coerce_paths(path):
+    # A model sometimes serializes a path list as '["a", "b"]' instead of passing an array.
+    # Accept that shape rather than silently searching for a file with the brackets in its
+    # name; a literal path that looks like a list is vanishingly unlikely.
+    if isinstance(path, str) and path.strip().startswith("[") and path.strip().endswith("]"):
+        try:
+            value = _ast.literal_eval(path)
+        except (ValueError, SyntaxError):
+            return path
+        if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+            return list(value)
+    return path
+
+
 def read(path, offset=1, limit=0, raw=False, start=None, end=None, repeat=False):
+    path = _coerce_paths(path)
     # `start`/`end` are the natural line-range names; `offset`/`limit` stay for compatibility.
+    explicit = end is not None
     if start is not None:
         offset = start
     if end is not None:
@@ -975,10 +1129,15 @@ def read(path, offset=1, limit=0, raw=False, start=None, end=None, repeat=False)
                 break
     else:
         stop = min(total, start + max(1, want) - 1)
+    has_more = stop < total
+    # `truncated` means this call had to cut output the caller asked to see (the default
+    # page limits). An explicit start/end that lands before EOF is complete, even though
+    # the file has more: that is `has_more`, not a truncation.
+    truncated = has_more and not explicit and int(limit) <= 0
     result = {"ok": True, "kind": "file", "path": rel, "total_lines": total,
               "shown": [start, stop],
-              "next": {"offset": stop + 1} if stop < total else None,
-              "truncated": stop < total}
+              "next": {"offset": stop + 1} if has_more else None,
+              "truncated": truncated, "has_more": has_more}
     digest = _digest(body)
     prior = _READS_SESSION.get(rel)
     hit = None
@@ -1009,33 +1168,63 @@ def read(path, offset=1, limit=0, raw=False, start=None, end=None, repeat=False)
     return _Result(result)
 
 
-def _grep_result(hits, occurrences, truncated):
-    lines = []
+def _grep_result(hits, occurrences, truncated, max_chars=12000):
+    # Render each file once. Adjacent/overlapping hits share their context lines, so the
+    # model sees every line once; a line that is both a hit and another hit's context keeps
+    # the `:` marker. The structured `matches` stays complete for python callers.
+    grouped = {}
+    order = []
     for hit in hits:
+        path = hit.get("path")
+        if path not in grouped:
+            grouped[path] = {}
+            order.append(path)
+        rows = grouped[path]
         for item in hit.get("before") or []:
-            lines.append("%s:%s- %s" % (hit["path"], item["line"], item["text"]))
-        lines.append("%s:%s: %s" % (hit["path"], hit["line"], hit["text"]))
+            rows.setdefault(int(item["line"]), [item["text"], False])
+        rows[int(hit["line"])] = [hit["text"], True]
         for item in hit.get("after") or []:
-            lines.append("%s:%s- %s" % (hit["path"], item["line"], item["text"]))
-    text = "\n".join(lines)
+            rows.setdefault(int(item["line"]), [item["text"], False])
+    lines = []
+    for path in order:
+        for number in sorted(grouped[path]):
+            text, is_hit = grouped[path][number]
+            lines.append("%s:%s%s %s" % (path, number, ":" if is_hit else "-", text))
+    full = "\n".join(lines)
+    if max_chars and len(full) > int(max_chars):
+        # A broad context search can exceed the card budget and lose its middle. Deliver
+        # locators instead of a silently digested blob; the caller can re-run with a path or
+        # max_chars=0 for the full text.
+        locators = "\n".join(
+            "%s:%s: %s" % (hit["path"], hit["line"], (hit.get("text") or "")[:120])
+            for hit in hits)
+        return _Result({"ok": True, "kind": "matches", "matches": hits,
+                        "occurrences": occurrences, "truncated": truncated,
+                        "locator_mode": True, "hits": len(hits), "text_chars": len(full),
+                        "note": "broad result: locators only; pass max_chars=0 for full text",
+                        "text": locators})
     return _Result({"ok": True, "kind": "matches", "matches": hits,
-                    "occurrences": occurrences, "truncated": truncated, "text": text})
+                    "occurrences": occurrences, "truncated": truncated,
+                    "text": full})
 
 
-def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0, ignore_case=False):
+def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0,
+         ignore_case=False, max_chars=12000):
     # Typed `search`: one path or a list, an optional include glob, and optional context.
     # The python helper of the same name keeps the old call shape.
+    path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
         hits, occurred, truncated = [], 0, False
         for item in (sorted(path) if isinstance(path, set) else path):
             result = grep(pattern, item, max_results=max_results, regex=regex,
-                          include=include, context=context, ignore_case=ignore_case)
+                          include=include, context=context, ignore_case=ignore_case,
+                          max_chars=max_chars)
             hits.extend(result.get("matches") or [])
             occurred += int(result.get("occurrences") or 0)
             truncated = truncated or bool(result.get("truncated"))
             if len(hits) >= int(max_results):
-                return _grep_result(hits[:int(max_results)], None, True)
-        return _grep_result(hits, occurred, truncated)
+                return _grep_result(hits[:int(max_results)], None, True, max_chars)
+        return _grep_result(hits, occurred, truncated, max_chars)
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
@@ -1059,8 +1248,8 @@ def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0
     for full in files:
         full_rel = _os.path.relpath(full, _ROOT)
         if includes and not explicit_file:
-            if not any(_fnmatch.fnmatch(full_rel, pat) or
-                       _fnmatch.fnmatch(_os.path.basename(full_rel), pat)
+            if not any(_glob_match(full_rel, pat) or
+                       _glob_match(_os.path.basename(full_rel), pat)
                        for pat in includes):
                 continue
         try:
@@ -1076,25 +1265,27 @@ def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0
             hay = line.lower() if ignore_case else line
             if not (matcher.search(line) if matcher else needle in hay):
                 continue
-            hit = {"path": full_rel, "line": number, "text": line.strip()[:200]}
+            hit = {"path": full_rel, "line": number, "text": line.strip()}
             if context:
                 width = int(context)
-                hit["before"] = [{"line": n, "text": lines[n - 1].strip()[:200]}
+                hit["before"] = [{"line": n, "text": lines[n - 1].strip()}
                                  for n in range(max(1, number - width), number)]
-                hit["after"] = [{"line": n, "text": lines[n - 1].strip()[:200]}
+                hit["after"] = [{"line": n, "text": lines[n - 1].strip()}
                                 for n in range(number + 1, min(len(lines), number + width) + 1)]
             hits.append(hit)
             if len(hits) >= int(max_results):
-                return _grep_result(hits, None, True)
-    return _grep_result(hits, occurrences, False)
+                return _grep_result(hits, None, True, max_chars)
+    return _grep_result(hits, occurrences, False, max_chars)
 
 
-def search(pattern, path=".", max_results=50, regex=True, include=None, context=0, ignore_case=False):
+def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
+           ignore_case=False, max_chars=12000):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is
     # regex by default, matching the grep mental model: an alternation like `a|b` is one
     # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
-                include=include, context=context, ignore_case=ignore_case)
+                include=include, context=context, ignore_case=ignore_case,
+                max_chars=max_chars)
 
 
 def recall(pattern, limit=10, context=100):
@@ -1117,6 +1308,16 @@ def recall(pattern, limit=10, context=100):
                 if len(out) >= int(limit):
                     return out
     return out
+
+
+def recall_tool(pattern, limit=10, context=100):
+    # Typed session search: the same _OBS snippets as recall(), with a text rendering so the
+    # model does not need a python cell to recover a digested card.
+    items = recall(pattern, limit=limit, context=context)
+    text = "\n".join("%s:%s: %s" % (item["handle"], item["field"], item["text"])
+                     for item in items)
+    return {"ok": True, "kind": "recall", "items": items,
+            "count": len(items), "text": text}
 
 
 def verbs(topic=None):
@@ -1947,6 +2148,8 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=120
         return _Result({"ok": ok, "kind": "git_diff" if action == "diff" else "git_show",
                         "action": action, "paths": paths, "text": text,
                         "total_chars": total, "next_offset": nxt,
+                        "next": {"offset": nxt} if nxt is not None else None,
+                        "has_more": nxt is not None,
                         "exit_code": code, "stderr": err})
     if action == "status":
         changed = []

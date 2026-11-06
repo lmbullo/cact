@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (map, read, search, outline, edit, splice, write, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (map, read, search, recall, outline, edit, splice, write, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
@@ -111,7 +111,14 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    the file digest; asking for a contained range again returns `already_read` with the
    `_OBS[n]` handle. `read(..., repeat=True)` re-delivers it, so the model can always get the
    text back. `_commit` invalidates the file's entry; an external write is caught by the
-   digest. This is context hygiene, not a read cap.
+   digest. This is context hygiene, not a read cap. `has_more` means the file continues after
+   `shown`; `truncated` means the default page limits cut the requested output—an explicit
+   `start`/`end` before EOF is complete and only has `has_more`.
+3b. **Map and search skip generated trees.** `map`/`search` use `_walk`, which applies the
+   root `.gitignore` patterns plus `_SKIP_DIRS`; `bench/ws`, `.tmp`, `.cache` and
+   `node_modules` do not pollute a repo map. `search` returns exact line text (no 200-char
+   clip), merges overlapping context so each line appears once, and keeps hit text in stdout
+   while the result carries locators. Changing `.gitignore` resets the pattern cache.
 4. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
    `test_calc2.py` scores zero; the source must be repaired. The hard suite's oracle lives
    outside the workspace (`bench/hard_hidden/`), so the agent cannot read or edit it.

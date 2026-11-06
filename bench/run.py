@@ -94,7 +94,7 @@ def _map_text(root: Path) -> str:
 
 LIB_NOTE = (
     "\nPRELOADED HELPERS (plain functions, each returns a dict with ok/kind and a note when action is needed): "
-    "map(), read(path, offset=1, limit=2000), grep(pattern, path='.', max_results=50), "
+    "map(), read(path, start=1, end=2000), grep(pattern, path='.', max_results=50), "
     "write(path, content), edit(path, old, new, all=False). write always replaces.\n"
 )
 

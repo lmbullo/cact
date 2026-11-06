@@ -44,32 +44,34 @@ NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 VERBS: dict[str, dict] = {
     "map": {
         "function": "map",
-        "summary": "List the files under a directory with line counts, without shell ls/find; include filters by glob. Use it to orient in a repo, then outline/read/search a file.",
+        "summary": "List the files under a directory with line counts, without shell ls/find; path takes one path or a list, include filters by shell-style glob (``*`` does not cross ``/``, ``**`` does), ignored trees are skipped, and shown/next/has_more page a large list. A file path returns that one row.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File or directory; default the workspace root."},
-                "max_files": {"type": "integer", "minimum": 1},
+                "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                         "description": "File, directory, or a list of either; default the workspace root."},
+                "max_files": {"type": "integer", "minimum": 1,
+                              "description": "Page size (default 120)."},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "0-based index into the matched file list."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                            "description": "Glob(s) a relative path must match, e.g. '*.md'."},
+                            "description": "Glob(s) a relative path must match, e.g. '*.md'; * does not cross /, ** does."},
             },
             "additionalProperties": False,
         },
     },
     "read": {
         "function": "read",
-        "summary": "Read one file or several files. Returns kind/total_lines/shown/next/truncated and the numbered text; a list of paths is one call. A range already shown this session returns a short pointer; pass repeat=true to re-deliver it.",
+        "summary": "Read one file or several files. Returns kind/total_lines/shown/next/has_more/truncated and the numbered text; a list of paths is one call. start/end are the canonical line range; has_more means the file continues after shown, while truncated only means the default page limit cut the requested output. A range already shown this session returns a short pointer; pass repeat=true to re-deliver it.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
                 "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
                          "description": "File path, or a list of paths to read in one call."},
-                "offset": {"type": "integer", "minimum": 1, "description": "First 1-based line (default 1)."},
-                "limit": {"type": "integer", "minimum": 0, "description": "Maximum lines; 0 means the reader's page size."},
-                "start": {"type": "integer", "minimum": 1, "description": "Alias for offset; the natural line-range name."},
-                "end": {"type": "integer", "minimum": 0, "description": "Last line to include (with start)."},
+                "start": {"type": "integer", "minimum": 1, "description": "First 1-based line (default 1)."},
+                "end": {"type": "integer", "minimum": 0, "description": "Last line to include; omit for the reader's page."},
                 "raw": {"type": "boolean", "description": "Return unnumbered text."},
                 "repeat": {"type": "boolean",
                            "description": "Re-deliver a range already shown in this session; default false returns a pointer."},
@@ -80,7 +82,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search files for a regex (default) or a literal. Returns path:line:text and optional context; include filters paths (e.g. '*.py'), and path takes one path or a list.",
+        "summary": "Search files for a regex (default) or a literal. Returns path:line:text with exact line text (never clipped) and merged optional context; include filters paths (e.g. '*.py'), and path takes one path or a list.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -95,6 +97,23 @@ VERBS: dict[str, dict] = {
                             "description": "Lines before and after each hit; 0 returns the matching line only."},
                 "ignore_case": {"type": "boolean"},
                 "max_results": {"type": "integer", "minimum": 1},
+                "max_chars": {"type": "integer", "minimum": 0,
+                              "description": "Text budget; default 12000 returns locators for broad context results; 0 returns full text."},
+            },
+            "required": ["pattern"],
+            "additionalProperties": False,
+        },
+    },
+    "recall": {
+        "function": "recall_tool",
+        "summary": "Search this session's earlier cell output (including digested/folded turns) and return snippets plus the _OBS handle; this is the session counterpart of search.",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1},
+                "context": {"type": "integer", "minimum": 0},
             },
             "required": ["pattern"],
             "additionalProperties": False,
@@ -102,12 +121,13 @@ VERBS: dict[str, dict] = {
     },
     "outline": {
         "function": "outline",
-        "summary": "Return a file's structure with line numbers (Markdown headings; Python classes/functions/methods; TS/JS defs and tests; HTML sections/headings inside JS template literals; CSS section comments). Use it before reading a long file, then read only the ranges you need.",
+        "summary": "Return a file's structure with line numbers (Markdown headings; Python classes/functions/methods; TS/JS defs and tests; HTML sections/headings inside JS template literals; CSS section comments). path may be a list. Use it before reading a long file, then read only the ranges you need.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "A file; map() lists a directory."},
+                "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                         "description": "A file or a list of files; map() lists a directory."},
                 "max_entries": {"type": "integer", "minimum": 1},
             },
             "required": ["path"],
@@ -226,7 +246,7 @@ VERBS: dict[str, dict] = {
     },
     "git": {
         "function": "git_tool",
-        "summary": "Typed git: status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars; commit takes message and optional paths. Use it instead of git through exec.",
+        "summary": "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars and return next.offset plus has_more, the same paging shape as read; commit takes message and optional paths. Use it instead of git through exec; session_diff() is the journal view, not git.",
         "mutates": False,
         "requires_run": True,
         "schema": {

@@ -221,6 +221,10 @@ def main() -> int:
     # --- plans and coverage --------------------------------------------------------------
     root = Path(tempfile.mkdtemp(prefix="cact-smoke-"))
     (root / "a.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+    (root / ".gitignore").write_text("ignored/\n*.generated\n", encoding="utf-8")
+    (root / "ignored").mkdir()
+    (root / "ignored" / "secret.txt").write_text("secret\n", encoding="utf-8")
+    (root / "skip.generated").write_text("generated\n", encoding="utf-8")
     specs = checks.CheckSpec.parse([
         {"name": "bench", "cmd": "true", "cheap": True, "scope": ["bench"]},
         {"name": "tui", "cmd": "true", "cheap": True, "scope": ["tui"]},
@@ -359,6 +363,16 @@ def main() -> int:
     try:
         cell = kernel.run("print(read('a.txt')['total_lines'])")
         check("kernel: read", "2" in cell.stdout, cell.stdout[:120])
+        kernel.run(r"write('range.txt', 'aa\nbb\ncc\n')")
+        cell = kernel.call("read", {"path": "range.txt", "start": 1, "end": 1})
+        check("kernel: an explicit complete range has_more but is not truncated",
+              '"has_more": true' in (cell.result or "") and '"truncated": false' in (cell.result or ""),
+              (cell.result or "")[:240])
+        kernel.run(r"write('longread.txt', '\n'.join('line %d %s' % (n, 'x' * 60) for n in range(600)))")
+        cell = kernel.call("read", {"path": "longread.txt"})
+        check("kernel: the default page limit is truncated",
+              '"has_more": true' in (cell.result or "") and '"truncated": true' in (cell.result or ""),
+              (cell.result or "")[:240])
 
         cell = kernel.run("write('b.txt', 'one\\ntwo\\n')")
         check("kernel: write is journalled", cell.changed == ["b.txt"], str(cell.changed))
@@ -502,8 +516,27 @@ def main() -> int:
         cell = kernel.call("map", {"path": ".", "include": "*.txt"})
         check("kernel: call(map) lists files without a shell and filters include",
               cell.tool == "map" and "call_a.txt" in cell.stdout
-              and "outline.md" not in cell.stdout,
+              and "outline.md" not in cell.stdout
+              and "secret.txt" not in cell.stdout
+              and "skip.generated" not in cell.stdout,
               (cell.stdout + cell.stderr)[:240])
+        cell = kernel.call("map", {"path": "call_a.txt"})
+        check("kernel: map of a file returns that row, not the root",
+              '"total_files": 1' in (cell.result or "") and "call_a.txt" in cell.stdout
+              and "call_b.txt" not in cell.stdout,
+              (cell.stdout + cell.result or "")[:240])
+        cell = kernel.call("map", {"path": ".", "include": "*.txt", "max_files": 1})
+        check("kernel: map pages its file list",
+              '"has_more": true' in (cell.result or "") and '"next"' in (cell.result or ""),
+              (cell.result or "")[:240])
+        cell = kernel.call("outline", {"path": ["call_a.txt", "call_b.txt"]})
+        check("kernel: outline accepts a path list",
+              cell.result is not None and '"kind": "outlines"' in (cell.result or "")
+              and "call_a.txt" in cell.stdout, (cell.result or "")[:240])
+        cell = kernel.call("recall", {"pattern": "call_a", "limit": 2})
+        check("kernel: recall is a typed session search",
+              cell.result is not None and "call_a" in cell.stdout,
+              (cell.stdout + (cell.result or ""))[:240])
         cell = kernel.call("read", {"path": ["call_a.txt", "call_b.txt"]})
         check("kernel: call(read) runs a typed verb through the same pipeline",
               cell.tool == "read" and "call_a.txt" in cell.stdout
@@ -530,6 +563,27 @@ def main() -> int:
         cell = kernel.call("search", {"pattern": "red", "path": ["call_a.txt", "call_b.txt"]})
         check("kernel: call(search) searches a path list",
               "call_b.txt:1" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        cell = kernel.call("search", {"pattern": "alpha", "path": "['a.txt']"})
+        check("kernel: search accepts a serialized path list",
+              "a.txt:1" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+        kernel.run(r"write('longline.txt', 'prefix ' + 'x' * 400 + ' END\n')")
+        cell = kernel.call("search", {"pattern": "END", "path": "longline.txt"})
+        check("kernel: search delivers exact line text, not a 200-char clip",
+              "END" in cell.stdout and "x" * 400 in cell.stdout
+              and "END" not in (cell.result or ""),
+              (cell.stdout + cell.stderr)[:240])
+        kernel.run(r"write('merge.txt', 'aa\nbb\ncc\n')")
+        cell = kernel.call("search", {"pattern": "a|b", "path": "merge.txt", "context": 2})
+        check("kernel: search merges overlapping context lines",
+              cell.stdout.count("cc") == 1 and cell.stdout.count("aa") == 1,
+              (cell.stdout + cell.stderr)[:240])
+        kernel.run(r"write('many.txt', '\n'.join('row %d value' % n for n in range(30)))")
+        cell = kernel.call("search", {"pattern": "row", "path": "many.txt",
+                                      "context": 1, "max_chars": 100})
+        check("kernel: broad search falls back to locators",
+              '"locator_mode": true' in (cell.result or "")
+              and "row" in cell.stdout and "text_chars" in (cell.result or ""),
+              (cell.result or "")[:240])
         cell = kernel.call("search", {"pattern": "RED", "path": ".", "include": "*.txt",
                                       "context": 1, "ignore_case": True})
         check("kernel: call(search) filters include and adds context",
