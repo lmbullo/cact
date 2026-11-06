@@ -1,113 +1,117 @@
-# cact
+# cact — technical reference for coding agents
 
-An LLM coding agent, plus the benchmark that measures it and a terminal UI that runs it
-against real projects.
+You are the reader. This repository is maintained by agents, not humans: every document is an
+interface specification, and every claim in it should be checkable from the tree. The short
+contract is `AGENTS.md`; this file is the full reference. For source contracts, prefer the
+machine index:
 
-Two halves, two languages, one agent:
+```bash
+python3 bench/map.py                    # module -> what it is
+python3 bench/map.py --query <topic>    # which module owns it
+python3 bench/map.py --module <path>    # one header, whole
+python3 bench/map.py --check            # gate: a module header is incomplete -> exit 1
+```
 
-| Path | Language | What it is |
+Inside a kernel cell the same data is `guide(query)` / `guide(path)`. `map`, `read`, `outline`
+and `search` cover docs and files; `guide` covers source headers only.
+
+---
+
+## 1. What runs where
+
+| Path | Language | Role |
 |---|---|---|
-| `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the benchmark suites, the recorded traces |
-| `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed, fire-and-forget TUI that runs the same agent on your working tree |
+| `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the graded suites, fixtures, recorded traces |
+| `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed, fire-and-forget TUI that runs the same agent on a working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. It reads, greps,
-edits and runs programs through that kernel; every mutation is journalled so it can
-`diff()` and `undo()`. `bench/` scores that loop against graded tasks; `tui/` puts a
-task board in front of it.
+Two entry points matter:
+
+- `python3 bench/run.py` — the benchmark. Copies fixtures, builds a `Kernel` + loop, grades.
+- `tui/bin/code` — the product. Launches a per-workspace server; `tui/python/worker.py` builds
+  the same loop through `bench/agent/config.py`.
 
 There is no root `package.json`, no `pyproject.toml`, no CI. The only install step is
-`bun install` inside `tui/`.
+`bun install` in `tui/`.
 
-Coding agents: for source contracts call the typed `guide(query)` (or `python3 bench/map.py`
-outside a cell); for Markdown/docs use `map`/`read`/`search` — the index covers the header of
-every source module (what it is, entry points, invariants,
-where to change it). `guide` is the in-kernel verb; `bench/map.py --query <topic>` is the CLI
-equivalent and `--check` fails when a header is incomplete. The typed `map` tool lists files;
-it is not the header index. `AGENTS.md` is the short version of this file plus the rules that
-must not break.
-
----
-
-## Read these first
-
-| File | Why |
-|---|---|
-| `bench/agent/kernel.py` | The driver + `PRELUDE` that implement the action space, plus `Kernel.run(code)` and `Kernel.call(tool, args)` over one Cell pipeline |
-| `bench/agent/verbs.py` | The typed verb registry (schema + summary + mutates + function); `tools.py` builds the provider specs from it and the child gets it as `KERNEL_VERBS` for dispatch and `help()` |
-| `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
-| `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → typed observation or state card, with context compaction |
-| `bench/agent/envelope.py` | The one typed-result shape (`ok/op/kind/data/page/handle/notes/error`); page is the paging contract |
-| `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
-| `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
-| `tui/python/worker.py` | The seam between the TUI and `bench`: builds the loop, streams `@@TUI@@` JSON lines to the server |
-
----
-
-## Layout
+## 2. Repository map
 
 ```
 cact/
+├── AGENTS.md                 short contract for agents (read before editing)
+├── README.md                 this file: full reference
 ├── bench/
-│   ├── run.py               benchmark CLI (also `python3 -m bench.run`)
-│   ├── tasks.py             READ suite T1-T5 (answer in text) + MUTATION suite M1-M3 (grade the workspace)
-│   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
-│   ├── harness.py           HARNESS suite L1-L8: grades the answer and the tool path
-│   ├── sandbox.py           SANDBOX S1: one mutable docs -> edit -> test -> git probe
-│   ├── hard.py              HARD suite H1-H4 with a held-out oracle; `bench/HARD.md` has the numbers
-│   ├── hard_runner.py       runs a held-out test directory against a workspace (the hard oracle)
-│   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
-│   ├── live.py              run ONE task through tui/python/worker.py and journal it
-│   ├── smoke.py             offline contract check: imports, kernel prelude, helpers, checks
-│   ├── map.py               contract CLI: the header index per module (`--query`, `--module`, `--json`, `--check`)
-│   ├── runs.py              summarise a task journal (steps, typed `tool_mix`, rejected
-│   │                        calls, files touched); `--recent` spans every workspace
-│   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
-│   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
-│   ├── harness_fixtures/    the HARNESS workspace: HTML-in-JS, regex hits, a local checksum, current docs, two edit targets
-│   ├── sandbox_fixtures/    the changeable feature workspace; sandbox_hidden/ owns its oracle
-│   ├── hard_fixtures/       the H1-H4 workspaces; the H3 CSV is generated and gitignored
-│   ├── hard_hidden/         the held-out test tree for H1/H2/H4, outside every workspace
-│   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, hard/, sweep/
-│   ├── ws/                  generated: frozen TUI workspaces (tui-base, tui-broken) + runs/ journals
-│   ├── .tmp/, .cache/       generated, gitignored (per-run workspaces, LLM response cache)
+│   ├── run.py                benchmark CLI (script and `-m bench.run` modes)
+│   ├── tasks.py              READ T1-T5 (text answers) + MUTATION M1-M3 (grade the tree)
+│   ├── edge.py               EDGE E1-E10; generates edge_fixtures/ on import when missing
+│   ├── harness.py            HARNESS L1-L8: grades the answer and the tool path
+│   ├── sandbox.py            SANDBOX S1: docs -> inspect -> atomic edit -> tests -> git commit
+│   ├── hard.py               HARD H1-H4 with a held-out oracle; numbers in bench/HARD.md
+│   ├── hard_runner.py        runs a held-out test dir against a workspace
+│   ├── ws.py                 freeze/clone/diff a workspace via sha256 manifests
+│   ├── live.py               run ONE task through tui/python/worker.py and journal it
+│   ├── smoke.py              offline contract runner, one call per group below
+│   ├── smoke_support.py      its harness: check(), fakes, temp workspace, kernel_for()
+│   ├── smoke_checks/         suites, helpers, index, plans, protocol, files, verbs, gates, turns, repl
+│   ├── map.py                header-index CLI (`--query`, `--module`, `--json`, `--check`)
+│   ├── runs.py               summarise a task journal; `--recent` spans workspaces
+│   ├── fixtures/             small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
+│   ├── edge_fixtures/        broken tests, 20k-line log, invalid utf-8, shadowed import
+│   ├── harness_fixtures/     HTML-in-JS, regex hits, local checksum, current docs, edit targets
+│   ├── sandbox_fixtures/     changeable feature workspace; sandbox_hidden/ owns its oracle
+│   ├── hard_fixtures/        H1-H4 workspaces; the H3 CSV is generated and gitignored
+│   ├── hard_hidden/          held-out tests for H1/H2/H4, outside every workspace
+│   ├── traces/               append-only evidence: <task>.<mode>.jsonl, summary.<mode>.json
+│   ├── ws/                   generated: frozen TUI workspaces + runs/ journals
+│   ├── .tmp/, .cache/        generated, gitignored
 │   └── agent/
-│       ├── kernel.py        subprocess driver (DRIVER, PRELUDE, RUN_PRELUDE) + Kernel + Cell
-│       ├── verbs.py         typed verb registry: schema, summary, mutates, function
-│       ├── tools.py         TYPE_TOOLS generated from verbs.VERBS for the provider
-│       ├── llm.py           DeepSeek chat client, retries, on-disk response cache
-│       ├── loop.py          shared types only: Budget, RunResult, usage accounting
-│       ├── repl.py          ReplLoop = ToolLoop + fenced python blocks; observations, RUN_NOTE
-│       ├── tool_loop.py     ToolLoop (typed verbs + the `python` escape hatch), goal checks, stop reasons
-│       ├── state_loop.py    StateLoop = ToolLoop + typed observations/state cards, coverage, compaction
-│       ├── envelope.py      normalized typed observation: data/page/handle/notes/error
-│       ├── reply.py         parse model text into an Action (markup repair, fences, ANSWER:)
-│       ├── check.py         run_check(): runs tsc/pytest/bun test, extracts failures into a Check
-│       ├── checks.py        the check plan and Verifier (goal + cheap health subset)
-│       ├── trace.py         Trace JSONL writer + render() for humans
-│       ├── headers.py       header index (index/guide/problems); shipped to kernel cells
-│       └── config.py        production defaults + build() factory (CODE_TUI_MODE)
+│       ├── kernel/           the action space + the child process, one file per lifecycle:
+│       │   ├── protocol.py   PROTOCOL, MARKER, CellRequest/CellReply/ExtendNotice, Cell
+│       │   ├── driver.py     DRIVER: the child loop (stdin JSON -> @@K@@ line out)
+│       │   ├── prelude.py    HEADERS_SOURCE + the assembled PRELUDE
+│       │   ├── prelude_setup.py    namespace, read ledgers, path matching
+│       │   ├── prelude_journal.py  _commit, write-through open(), snapshot/diff/undo
+│       │   ├── prelude_index.py    _walk, map(), outline()
+│       │   ├── prelude_read.py     read(), grep()/search(), recall()
+│       │   ├── prelude_verbs.py    write/delete/mkdir/edit/splice/apply/commit
+│       │   ├── run_prelude.py      RUN_PRELUDE: exec/git/run + mutation and spawn gates
+│       │   └── process.py    Kernel: spawn, supervise, restart, reap; Cell.from_reply
+│       ├── verbs.py          typed verb registry: schema, summary, mutates, function
+│       ├── tools.py          TYPE_TOOLS generated from verbs.VERBS
+│       ├── llm.py            DeepSeek client, retries, on-disk response cache
+│       ├── loop.py           shared types only: Budget, RunResult, usage accounting
+│       ├── repl.py           ReplLoop = ToolLoop + fenced python blocks
+│       ├── tool_loop.py      ToolLoop: typed verbs + `python`, goal checks, stop reasons
+│       ├── state_loop.py     StateLoop = ToolLoop + typed observations/state cards, compaction
+│       ├── envelope.py       normalized typed observation: data/page/handle/notes/error
+│       ├── reply.py          parse model text into an Action (markup repair, fences, ANSWER:)
+│       ├── check.py          run_check(): runs tsc/pytest/bun test, extracts failures
+│       ├── checks.py         the check plan and Verifier (goal + cheap health subset)
+│       ├── trace.py          Trace JSONL writer + render()
+│       ├── headers.py        header index (index/guide/problems); shipped to kernel cells
+│       └── config.py         production defaults + build() factory (CODE_TUI_MODE)
 └── tui/
-    ├── bin/code, bin/code-stop     shell entry points
-    ├── src/launcher.ts             per-workspace server discovery/start, then mounts the client
-    ├── src/server.ts               queue, concurrency, cancellation, HTTP + WebSocket, journals
-    ├── src/client.tsx              the board, the live log, the single prompt box
-    ├── src/detect-checks.ts        the verification plan for a workspace (env + package.json)
-    ├── src/list-model.ts           pure ordering/rows/scroll model
-    ├── src/types.ts                Task, TaskEvent, ServerInfo, CheckSpec, Snapshot, WorkerMessage
-    ├── src/stop.ts                 SIGTERM this workspace's server
-    ├── python/worker.py            one task = one worker process = one agent loop
-    ├── tests/*.test.ts(x)          rendering/detection tests (a fake Bun server where needed)
-    └── README.md                   exhaustive TUI reference: keys, env vars, HTTP API, states
+    ├── bin/code, bin/code-stop   shell entry points
+    ├── src/launcher.ts           workspace hash, server discovery/reuse, detached spawn
+    ├── src/server.ts             queue, concurrency, cancellation, HTTP + WS, journals
+    ├── src/client.tsx            App: state, keys, layout; mounts the app
+    ├── src/theme.ts              palette, status words, one-line helpers (pure)
+    ├── src/board-view.tsx        Rule, SectionHeader, TaskRow
+    ├── src/log-view.tsx          EventView, LogView (one event, one row)
+    ├── src/detect-checks.ts      verification plan for a workspace (env + package.json)
+    ├── src/list-model.ts         pure ordering/rows/scroll model
+    ├── src/types.ts              Task, TaskEvent, ServerInfo, CheckSpec, Snapshot, WorkerMessage
+    ├── src/stop.ts               SIGTERM this workspace's server
+    ├── python/worker.py          one task = one worker = one agent loop
+    ├── tests/*.test.ts(x)        rendering/detection tests (fake Bun server where needed)
+    └── README.md                 TUI wire contract: state root, API, events, env
 ```
 
----
-
-## How a run flows
+## 3. Runtime architecture
 
 ```
 bench/run.py                        tui/bin/code
    │                                    │
-   │ copies fixtures → bench/.tmp/<id>/ │ launcher.ts → detached server.ts (per workspace)
+   │ copies fixtures -> bench/.tmp/<id>/│ launcher.ts -> detached server.ts (per workspace)
    │ builds Kernel + Loop               │            │ spawns python/worker.py per task
    └──────────────┬─────────────────────┘            │
                   ▼                                  ▼
@@ -116,195 +120,183 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the workspace verbs — guide/map/read/session_diff/search/recall/outline/
-          │           edit/splice/write/delete/mkdir/apply — plus the python helpers guide/grep/
-          │           diff/changes/undo/commit/help, final_answer/emit
+          ├─ PRELUDE: guide/map/read/session_diff/search/recall/outline/
+          │           edit/splice/write/delete/mkdir/apply + python helpers
+          │           guide/grep/diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
                   ▼
               the workspace
 ```
 
-- **Model client:** `bench/agent/llm.py` posts to `https://api.deepseek.com/chat/completions`
-  (`DEEPSEEK_BASE_URL` overrides). Responses are cached under `bench/.cache/llm/` by
-  request hash; `--no-cache` disables it.
-- **Kernel cell or typed call:** `Kernel.run(code)` and `Kernel.call(tool, args)` write one
-  `CellRequest` JSON line (`PROTOCOL` plus `kind`/`code` or `kind`/`tool`/`args`, `timeout`,
-  `check_cache`), read one `@@K@@` `CellReply` line back, and return a `Cell` (`stdout`,
-  `stderr`, `result`, `final`, `duration_ms`, `restarted`, `answer`, `runs`, `obs_index`,
-  `mutated`, `changed`, `deltas`, `delta`, `timeout`, `reads`, `tool`, `failed`,
-  `rejected`, `envelope`). The typed call and the Python cell share the journal/coverage
-  pipeline, but a typed result is normalized into an observation envelope and delivered
-  verbatim; only python/exec output is digested. The typed
-  process tool is `exec` — `argv`, `commands=[[...]]` or the explicit `shell=<string>`; the
-  typed `git` tool covers status/diff/show/log/files/add/commit/push/remote/branch without a
-  pager.
-  `run(command)` is the shell escape hatch inside a Python cell, and exists only in repl/bare.
-  `deltas` is the per-file unified diff; `delta` is only their joined text for the card. A
-  reply whose `protocol` does not match `PROTOCOL` is never read through the current shape:
-  the child is restarted and the cell returns an error. A dead or hung kernel is killed and
-  restarted **with an empty namespace**; the loop tells the model rather than hiding it.
-- **Orphan reaping:** `exec`/`run()` start each program in its own session, so killing the kernel
-  group cannot reach it. The child journals the group leader (pid + `/proc` start id) and
-  `Kernel.stop()`/`_restart()` kills those groups, so a timed-out cell or a crashed kernel
-  does not leak a test server, browser or build process.
-- **The contract index:** `bench/agent/headers.py` parses the WHAT IT IS / ENTRY POINTS /
-  INVARIANTS / WHERE TO CHANGE header of every source module into rows. `bench/map.py` prints
-  them; `kernel.py` ships the file's *source* to the child in `KERNEL_HEADERS`, execs it into
-  a private `_HEADERS` namespace and exposes one verb, `guide(query|path)`, so an agent can ask
-  which module owns a topic from inside a cell. It only answers where the repo documents
-  itself; on a task workspace with no headers it returns a miss and says so.
-- **Tool results are dicts that also answer attributes:** `exec(...)` and `run()` return
-  `result['stdout']` (or `result.stdout`), and `read(raw=True)[:n]` / `read(...)['content']`
-  work, so a natural model mistake does not cost a cell. The canonical keys are still the
-  contract.
-- **A bad typed call is an answer, not a traceback:** before dispatch the driver binds the
-  arguments to the verb function's live signature. An unknown keyword or a missing argument
-  returns `{ok: false, kind: "bad_args", error: {code: "bad_arguments", message, use}}`
-  (the signature failure's `use` points at `help(tool)`), and a malformed
-  `argv`/`commands`/`env` returns the same envelope with its own `code`, so the model gets a
-  repair instruction and the turn keeps its paired tool message. A structured `ok: false` is
-  `Cell.rejected`, not `Cell.failed`: it renders `exit: "error"` and counts in the run's
-  errors, so a wrong argument shape is visible instead of hiding behind `ok: true`.
-- **Search: regex by default.** `search` uses the grep mental model, so `legacy|deprecated`
-  is one call; pass `regex=false` for a literal substring. Match text is exact, adjacent
-  context is merged so each line appears once, and `path:line:text` (hit) vs `path:line-text`
-  (context) is the separator. `within=[start,end]` or `section="Heading"` narrows the search;
-  a paged result carries `[hits]` and a `[more]` sentinel so the next move is a `read`, not
-  offset arithmetic. A single-file search with more than 20 hits aggregates by outline
-  section (name, range, hit count); pass `sections=false` for the raw hit table.
-- **Map: files, not headers.** `map(path, include='*.md')` lists files with line counts;
-  a literal include is an exact relative path and a glob matches the full path or basename
-  (`*.md` any depth, `bench/*.md` one level). Ignored/generated trees are skipped, unmatched
-  include patterns are named, and `shown`/`next`/`has_more` page the list. Use `guide` for
-  source contracts, not `map`.
-- **Outline: structure with subtree ranges.** `outline` maps Markdown headings, Python
-  classes/functions/methods, TS/JS definitions, HTML sections/headings inside JS templates,
-  and CSS section comments. A Markdown heading's range ends at the next same-or-shallower
-  heading, so a parent includes its children. Read the range, not the heading line.
-- **Read: a ledger, not a firehose.** `read(start/end)` is the canonical range; with no range
-  it returns the whole file only while it fits 550 lines / 60 KB, else `next`/`has_more`.
-  `truncated` means the default page limit cut the requested output; an explicit
-  `start`/`end` that stops before EOF is complete and only has `has_more`. `read(path=[...])`
-  applies one window to several files; `read(ranges=[{path,start,end},...])` batches
-  different windows; `read(path, section="Heading")` resolves through `outline` and reads that
-  subtree. A range already delivered this session returns a pointer to the earlier
-  `_OBS` output; `repeat=True` re-delivers it. `Cell.reads` records `{path: {ranges, total}}`;
-  the card prints `[read] path ranges/total (unread: holes)`, and `[page]` carries
-  `shown/total/next/unit/has_more/complete`; `next` is a replayable argument object. Coverage is guidance, not a finish gate: reads through
-  python `open()` (or `run()` in repl/bare) are equally valid and are not tracked.
-- **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
-  list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —
-  including turns the `[session state]` fold removed — and returns snippets plus the
-  `_OBS[n]` handle to page the full text. `search`/`grep()` is for the tree; `recall()` is
-  for the session, and a crash does not erase it.
-- **Sandbox:** `exec`/`git`/`run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER`
-  child. Disabled ⇒ the child runs under `bwrap` with a read-only `/` (plus a writable
-  bind of the workspace only when `writable=True`).
-- **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
-  what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
-  `edit()`, `splice()`, `delete()`, `mkdir()` and `apply()` all funnel through the same `_commit`, so a multi-file
+- **Model client.** `bench/agent/llm.py` posts to `https://api.deepseek.com/chat/completions`
+  (`DEEPSEEK_BASE_URL` overrides). Responses cache under `bench/.cache/llm/` by request hash;
+  `--no-cache` disables it.
+- **One cell pipeline.** `Kernel.run(code)` and `Kernel.call(tool, args)` write one
+  `CellRequest` JSON line (`PROTOCOL` + `kind`/`code` or `kind`/`tool`/`args`, `timeout`,
+  `check_cache`), read one `@@K@@` `CellReply` line, and return a `Cell` (`stdout`, `stderr`,
+  `result`, `final`, `duration_ms`, `restarted`, `answer`, `runs`, `obs_index`, `mutated`,
+  `changed`, `deltas`, `delta`, `timeout`, `reads`, `tool`, `failed`, `rejected`, `envelope`).
+  A typed result is normalized into an envelope and delivered verbatim; only python/exec output
+  is digested. A reply whose `protocol` does not match `PROTOCOL` is never read through the
+  current shape: the child restarts and the cell returns an error. A dead or hung kernel is
+  killed and restarted **with an empty namespace**; the loop says so instead of hiding it.
+- **Orphan reaping.** `exec`/`run()` start each program in its own session, so killing the
+  kernel group cannot reach it. The child journals the group leader (pid + `/proc` start id) and
+  `Kernel.stop()`/`_restart()` kill those groups. A timed-out cell or a crashed kernel must not
+  leak a test server, browser or build process.
+- **Contract index.** `bench/agent/headers.py` parses the four-section header of every source
+  module into rows. `bench/map.py` prints them; `kernel/prelude.py` ships the file's *source* to
+  the child in `KERNEL_HEADERS`, execs it into a private `_HEADERS` namespace and exposes one
+  verb, `guide(query|path)`. It only answers where the repo documents itself; on a task
+  workspace with no headers it returns a miss and says so.
+- **Results are dicts that also answer attributes.** `exec(...)` and `run()` return
+  `result['stdout']` (or `result.stdout`); `read(raw=True)[:n]` and `read(...)['content']` work,
+  so a natural model mistake does not cost a cell. The canonical keys are the contract.
+- **Bad typed call = answer, not traceback.** Before dispatch the driver binds arguments to the
+  verb function's live signature. An unknown keyword or missing argument returns
+  `{ok: false, kind: "bad_args", error: {code: "bad_arguments", message, use}}` (the signature
+  failure's `use` points at `help(tool)`); a malformed `argv`/`commands`/`env` returns the same
+  envelope with its own `code`. A structured `ok: false` is `Cell.rejected`, not `Cell.failed`:
+  it renders `exit: "error"` and counts in run errors.
+- **Journalling.** The prelude snapshots the tree at start; every cell diffs it. That is what
+  `changes()`, `diff()`, `undo()` and `[state] changed:` read. `write()`, `edit()`, `splice()`,
+  `delete()`, `mkdir()` and `apply()` all funnel through the same `_commit`, so a multi-file
   `apply()` is one diff and one `undo()`.
-- **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`
-  and the `Verifier` that owns it: the cheap subset, the `scope` filter, the 20s throttle,
-  the check cache and the `Check` rendering. Results are cached until the next mutating
-  cell: a matching `run()`/`exec` is answered from `check_cache` (`kind: "check_cached"`)
-  instead of spawning the same command twice. The whole plan is the goal (`final_answer` is
-  rejected until it passes); the `cheap` subset re-runs after a mutating cell (at most once
-  every 20s) and appears as the `[check]` line of the next state card. A spec may carry a
-  `scope` list of path prefixes that filters the cheap health run only, so a docs-only edit
-  does not typecheck the TUI on every cell; the goal still runs the whole plan. `exec` takes
-  an argv and a cwd, so tests, builds and read-only git need no shell; `exec(shell=...)` is
-  the explicit shell string, and `run()` is the python-only equivalent (repl/bare). Only
-  programs/verbs that mutate the workspace are refused (see the contract below).
-  Mutating scratch space (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed:
-  the journal covers the tree, not scratch.
-- **TUI:** `server.ts` owns task JSON + append-only event journals under
-  `$CODE_TUI_STATE_ROOT` (else `$XDG_STATE_HOME/code-tui`, else
-  `~/.local/state/code-tui`)/workspaces/<sha256-of-cwd, 16 hex>/; `client.tsx` holds no
-  persistent state of its own and reconnects every second. A `turn` message updates
-  `Task.progress` (turn number plus prompt tokens), so a board row moves before the final
-  answer arrives; a turn that rejected or staged a finish carries a `notice`, rendered as
-  one `↺` row in the run log.
+- **Sandbox switch.** `exec`/`git`/`run()` enabled ⇒ the kernel is a plain
+  `python3 -u -c DRIVER` child. Disabled (`CODE_TUI_ALLOW_RUN=0`) ⇒ the child runs under
+  `bwrap` with a read-only `/` plus a writable bind of the workspace only.
 
----
+## 4. Tool surface
 
-## The loops
+Generated from `bench/agent/verbs.py`; the same registry feeds the provider schema and
+`help()`.
 
-Selected by `--mode` in `run.py`, by `CODE_TUI_MODE` in production (default `state`). There
-are three loops; `--mode bare` is the hard suite's control, not a fourth implementation.
+| Tool | Contract | Do not use for |
+|---|---|---|
+| `guide` | ranked module owners from source headers; `path` prints one header | docs/files — use `map`/`search` |
+| `map` | files + line counts; `include` is literal or glob; ignored trees skipped | source contracts — use `guide` |
+| `read` | canonical `start`/`end`; `path=[...]` one window; `ranges=[...]` many; `section=` resolves through outline; repeated range is a pointer unless `repeat=True` | a whole huge file in one call |
+| `session_diff` | unified diff of everything this session journalled | repository history — use `git` |
+| `search` | regex by default, exact lines, merged context, `include`/`within`/`section`, hit map + `[more]` | session history — use `recall` |
+| `recall` | search earlier cell output (`_OBS`), survives restart | the tree |
+| `outline` | Markdown headings, py/ts/js defs, HTML sections; subtree ranges | file contents |
+| `edit` | atomic batch `[{path, old, new}]`; all old strings must match | creating a file — use `write` |
+| `splice` | replace 1-based inclusive lines | whole-file rewrites |
+| `write` | create or replace; refuses to drop a tail without `force` | surgical edits |
+| `delete` / `mkdir` | the journalled shell mutations | anything else |
+| `apply` | unified diff, several files, one journal entry | ordinary replacements — use `edit` |
+| `exec` | one process: `argv`, `commands=[[...]]`, `shell=<string>`, `cwd`, `env`, `stdin` | mutating tracked files; `bash -lc` in argv |
+| `git` | status/diff/show/log/files/add/commit/push/remote/branch; no pager | working-tree mutation not in that list |
+| `python` | persistent kernel cell; computation, `run()` in repl/bare | file mutation that the journal must see |
+
+Paging contract: `[page]` carries `shown/total/next/unit/has_more/complete`; `next` is a
+replayable argument object. `has_more` means the file continues; `truncated` only means the
+default page limit cut the requested output. `complete` means this request was served.
+
+## 5. The loops
+
+Selected by `--mode` in `run.py`, by `CODE_TUI_MODE` in production (default `state`).
 
 | mode | Loop | Action space | Rules constant |
 |---|---|---|---|
-| `repl` | `ReplLoop` | one fenced python block per reply, run as a kernel cell | `repl.REPL_RULES` / `BARE_RULES` |
-| `tool` | `ToolLoop` | typed verbs generated from `verbs.VERBS`, plus `python` | `tool_loop.TOOL_RULES` |
-| `state` | `StateLoop` | same as `tool`, observations rendered as state cards | `state_loop.STATE_RULES` |
-| `bare` | `ToolLoop` with `goal=None` and no file helpers (benchmark control) | one function: `python` | `run.py::BARE_TOOL_RULES` |
+| `repl` | `ReplLoop` | one fenced python block per reply | `repl.REPL_RULES` / `BARE_RULES` |
+| `tool` | `ToolLoop` | typed verbs + `python` | `tool_loop.TOOL_RULES` |
+| `state` | `StateLoop` | same, observations rendered as state cards | `state_loop.STATE_RULES` |
+| `bare` | `ToolLoop` with `goal=None` and no file helpers (control) | one function: `python` | `run.py::BARE_TOOL_RULES` |
 
-All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult`, and
-the `Client`. `loop.py` holds only those shared types: the former JSON tool-calling
-`AgentLoop` is gone, and `tools.py` now builds the provider specs from `verbs.VERBS`.
+All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult` and the
+`Client`. `ToolLoop.run` is the turn machine; `StateLoop` adds cards and compaction; `ReplLoop`
+overrides `_reply`, `_observe`, `_before_turn` and the stop/history switches, so budget stops,
+usage accounting, goal gating and trace writing are one implementation. A turn record's `calls`
+holds one `CallRecord` per tool call (code, observation, runs, reads, notice, stop).
 
-`ToolLoop.run` is the turn machine. `StateLoop` extends it with state cards; `ReplLoop`
-extends it with fenced-block reply parsing and overrides `_reply`, `_observe` (the transcript),
-`_before_turn` (the wrap-up nudge) and the `stop`/`history` switches, so budget stops, usage
-accounting, goal gating and trace writing are the same code. `FinishState` holds the staged
-and the accepted answer, `TurnOutcome` is what one turn decided, and a turn record's `calls`
-list holds one `CallRecord` per tool call (code, observation, runs, reads, notice, stop), so a turn that
-emits several calls keeps all of them in `turns` and in the trace. The stop names are module
-constants (`tool_loop.STOPS`). Stop reasons are a fixed vocabulary:
+Stop vocabulary (`tool_loop.STOPS`):
 
 | stop | meaning | TUI status |
 |---|---|---|
 | `DONE` | model produced a final answer | `done` |
 | `VERIFIED` | the goal check passed | `done` |
-| `STEP_LIMIT` / `WALL_LIMIT` | budget exhausted (a non-empty summary still counts) | `partial` |
-| `GOAL_UNMET` | model tried to finish while the check failed | continues |
-| `STAGED` | `final_answer` (printing or silent); accepted on the next no-tool reply | continues |
-| `UNREVIEWED` | ReplLoop only: `final_answer` in a printing cell is rejected | continues |
-| `PROTOCOL` | ReplLoop only: reply had neither a python block nor an ANSWER line | continues |
+| `STEP_LIMIT` / `WALL_LIMIT` | budget exhausted; a non-empty summary still counts | `partial` |
+| `GOAL_UNMET` | finish attempted while the check failed | continues |
+| `STAGED` | `final_answer` staged; accepted on the next no-tool reply | continues |
+| `UNREVIEWED` | ReplLoop only: `final_answer` in a printing cell rejected | continues |
+| `PROTOCOL` | ReplLoop only: no python block and no ANSWER line | continues |
 | `TRUNCATED` / `BAD_ARGS` | cut-off or unparsable call; nothing ran | continues |
-| `LLM_FAILED` | the primary model call raised `LLMError`; the run stops with whatever answer exists | `failed` |
+| `LLM_FAILED` | primary model call raised `LLMError` | `failed` |
 
-`check.py::run_check` wraps tsc / bun test / pytest output into a `Check` with parsed
-failure lines, and distinguishes `unrunnable` (broken check) from `failed` (real failure).
+`check.py::run_check` wraps tsc / bun test / pytest output into a `Check` with parsed failure
+lines and distinguishes `unrunnable` (broken check) from `failed` (real failure).
 
----
+## 6. Check plan
 
-## Commands
+`bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}` and the `Verifier`
+that owns it: the cheap subset, the `scope` filter, the 20s throttle, the check cache and `Check`
+rendering. Results cache until the next mutating cell: a matching `run()`/`exec` is answered
+from `check_cache` (`kind: "check_cached"`) instead of spawning the same command twice.
+
+- **Cheap entries are health checks.** They re-run after a mutating cell in their `scope` (at
+  most every 20s) and print as the `[check]` line of the next state card. They never end a run.
+- **The whole plan is the goal.** `final_answer` is rejected (`GOAL_UNMET`) until every entry
+  passes; then the task lands `done` with `verified: <names> passed`.
+
+Production passes `goal_stops=False`: a failing check only rejects the finish. The TUI detects
+the plan per task: `CODE_TUI_CHECKS` (JSON) wins, else `CODE_TUI_CHECK`, else
+`python3 bench/smoke.py` plus `typecheck`/`test` (or `build`) from the root and
+`tui/package.json`. The runner follows the lockfile (`bun.lock`/`bun.lockb` → bun,
+`package-lock.json` → npm). An empty `CODE_TUI_CHECK` opts out.
+
+## 7. Suites and grading
+
+| Suite | Tasks | Grades |
+|---|---|---|
+| `read` (default) | T1-T5 | the text answer |
+| `mutation` | M1-M3 | the workspace after the run |
+| `edge` | E1-E10 | repaired source; test files are hashed, editing them scores zero |
+| `harness` | L1-L8 | answer **and** call record: HTML via map/read/outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum, docs grounding |
+| `sandbox` | S1_feature | docs → inspect → atomic edit → tests → typed git commit; oracle in `sandbox_hidden/` |
+| `hard` | H1-H4 | held-out tests or exact answer; `--mode bare` is the control |
+
+Ground truth is computed at import time in each suite module from its fixture. Editing a
+fixture silently redefines the expected answer. Test-file hashes are the anti-cheat; the hard
+oracle is outside the workspace.
+
+## 8. Commands
 
 ### Benchmark
 
 ```bash
-python3 bench/map.py                   # the contract index: module -> what it is
-python3 bench/map.py --query checks    # which module owns "checks", with entry points
-python3 bench/map.py --module bench/agent/check.py   # one module's header whole
-python3 bench/map.py --json --query checks           # the same rows as JSON
-python3 bench/map.py --check           # gate: every module header has its four sections
+python3 bench/map.py
+python3 bench/map.py --query checks
+python3 bench/map.py --module bench/agent/check.py
+python3 bench/map.py --json --query checks
+python3 bench/map.py --check
 
 export DEEPSEEK_API_KEY=...            # or --key
 python3 bench/run.py                                   # read suite, state mode, fixtures/
-python3 bench/run.py --suite all --mode state          # read + mutation, production loop
+python3 bench/run.py --suite all --mode state          # read + mutation
 python3 bench/run.py --suite edge --tasks E1_tests,E6_repair --mode state --traces
-python3 bench/run.py --suite harness --mode state      # tool-path evals L1-L8
-python3 bench/run.py --suite sandbox --tasks S1_feature --mode state --traces  # one mutable probe
-python3 bench/run.py --suite hard --mode state         # envelope vs `--mode bare`; see bench/HARD.md
+python3 bench/run.py --suite harness --mode state      # L1-L8
+python3 bench/run.py --suite sandbox --tasks S1_feature --mode state --traces
+python3 bench/run.py --suite hard --mode state         # envelope vs `--mode bare`
 python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-lib all
 ```
 
 Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and rewrites
-`bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` of each run
-(`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|harness|hard|sandbox`,
+`bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` (`err`/`call`/`get`/`text`
+lines). Knobs: `--suite read|mutation|all|edge|harness|hard|sandbox`,
 `--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--read-chars`,
 `--obs-chars`, `--map off|tool|inline`, `--context map|full`, `--context-chars`,
 `--allow-run off|on`, `--cell-timeout`, `--health on|off`,
-`--repl-rules|--repl-stop|--repl-history|--repl-lib`, `--model`, `--effort low|high|max|none`,
-`--temperature`, `--seed`, `--no-cache`.
+`--repl-rules|--repl-stop|--repl-history|--repl-lib`, `--model`,
+`--effort low|high|max|none`, `--temperature`, `--seed`, `--no-cache`.
+
+Defaults: 200 steps / 3600s per task. The TUI uses 300 / 1800s / 120s per cell.
 
 ### Workspaces and live runs
 
 ```bash
-python3 bench/smoke.py                 # offline contract check: imports, kernel, helpers, checks
+python3 bench/smoke.py                 # offline contract check
 python3 -m bench.ws freeze SRC DST     # clone + write DST.manifest.json
 python3 -m bench.ws diff  DST          # added/modified/deleted vs the manifest
 python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "make typecheck pass" \
@@ -315,131 +307,110 @@ python3 bench/runs.py --recent 10      # newest tasks across every workspace
 
 `live.py` is the honest end-to-end test: it clones `bench/ws/tui-base`, drives
 `tui/python/worker.py`, records `<tag>.events.jsonl`, `<tag>.prompt.txt`,
-`<tag>.summary.json`, then runs the check itself and diffs the tree.
+`<tag>.summary.json`, runs the check and diffs the tree.
 
 ### TUI
 
 ```bash
 cd tui && bun install
 bun run typecheck      # tsc --noEmit
-bun test               # tests/*.test.ts(x): list, log, progress, prompt, views, detection
-
+bun test               # 13 tests, 6 files
 ./bin/code             # inside the target project; starts/reuses its server
 ./bin/code-stop        # SIGTERM the server for this directory
 ```
 
-The agent's Python kernel is `python3` from `PATH` (override with `CODE_TUI_PYTHON`); it
-imports `bench.agent` from this repo, so the checkout path matters.
+The agent's Python kernel is `python3` from `PATH` (`CODE_TUI_PYTHON` overrides); it imports
+`bench.agent` from this repo, so the checkout path matters.
 
----
+## 9. Contracts an agent must not break
 
-## Contracts an agent must not break
+1. **A finish is staged, then accepted.** `final_answer(v)` always stages (`STAGED`): a printing
+   cell shows its output; a silent cell still waits for the next no-tool reply, so a short
+   `final_answer("done")` cannot erase the report the model writes next. That reply accepts the
+   finish after the goal check (when one exists); for a silent stage its content wins over `v`.
+   A staged answer is not dropped by the rest of its own turn; a non-final cell in a later turn
+   clears it. A silent `final_answer` is terminal intent for its turn: remaining calls do not
+   run, but each still gets a paired (skipped) result so the next request stays valid. With a
+   goal, nothing is accepted until it passes. `run.py` grades `result.final`; a prose reply with
+   no tool call is the summary.
+2. **`exec` is the one process tool; only mutation is gated.** `exec(argv)` runs from the
+   workspace root; `cwd=` replaces `cd`, `commands=[[...]]` runs several, `env`/`stdin` are
+   explicit, `shell=<string>` is the escape hatch. `bash -lc` in argv is `shell_via_exec`,
+   pointing at `shell`. `run()` is python-only. Wrong keywords are `bad_args`/`bad_arguments`,
+   never a traceback. Mutating tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
+   `git checkout/reset/apply/...`, `>`; a quoted `>` is an argument) is `kind: "wrong_call"`
+   with a `use` hint, because it would make `diff()`/`undo()` lie. `git add/commit/push/fetch/
+   init/clone` are allowed. Mutations whose targets are under a scratch root (`/tmp`,
+   `/var/tmp`, `/dev/shm`, `$TMPDIR`) are allowed; the journal only promises the tree. Direct
+   spawning goes through the same classifier, so `Popen(["rm", ...])` is refused like `rm`;
+   allowed spawns are in `Cell.runs`. A program can still write files: the journal is a
+   typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and `RUN_NOTE`
+   honest.
+3. **`write()` always replaces** (no silent tail drop without `force=True`). The typed
+   `edit(edits=[...])` validates the whole batch before writing (the python `edit(path, old,
+   new)` helper remains). `delete(path)` and `mkdir(path)` are the journalled shell mutations.
+   `splice(path, start, end, text)` replaces a 1-based inclusive line range.
+   `apply(<unified diff>)` writes several files in one cell. All go through `_commit`;
+   `commit()` is a python helper.
+4. **Graders hash the test files.** Fixing `test_core.py` or `test_calc2.py` scores zero — fix
+   the source. The hard oracle is in `bench/hard_hidden/`, never in the workspace.
+5. **Ground truth is computed at import time** from fixtures. Editing a fixture silently
+   redefines expected answers. `H3_bigcsv`'s CSV is generated and gitignored.
+6. **`bench/traces/` is append-only.** Add runs; never rewrite recorded journals. `sweep/`
+   files are batch summaries. `bench/ws/` is regenerated measurement output.
+7. **Every module explains itself.** Four sections; `headers.py` parses; `map.py --check` and
+   smoke fail on a gap. `headers.py` ships to the child: stdlib-only, `__file__`-free,
+   read-only, and only `guide()` is exported. Fixtures and `hard_hidden/` are graded input, not
+   indexed code.
+8. **Generated directories are not source:** `bench/.tmp/`, `bench/.cache/`, `bench/ws/`,
+   `tui/node_modules/`, the TUI state root. `edge_fixtures/`, `harness_fixtures/`,
+   `sandbox_fixtures/`, `sandbox_hidden/` are committed but rebuilt by `build()` when missing —
+   add a task and its fixture in the same module.
 
-1. **A finish is staged, then accepted.** `final_answer(v)` always stages (`STAGED`): a
-   printing cell shows its output; a silent cell still waits for the next no-tool reply, so
-   a short `final_answer("done")` cannot erase the report the model writes next. That reply
-   accepts the finish after the goal check (when there is one); for a silent stage its
-   content wins over `v`. A staged answer is never dropped by the rest of its own turn; a
-   non-final cell in a later turn clears it. A silent `final_answer` is terminal intent for
-   its turn: the remaining tool calls do not run (each still gets a paired tool result,
-   marked skipped, so the next request stays valid). When a goal check exists, no answer is
-   accepted until the check passes. `run.py` grades `result.final`; a
-   prose reply with no tool call is the summary.
-2. **`exec` is the one process tool; only mutation is gated.** `exec(argv)` runs a program
-   from the workspace root; `cwd=` replaces `cd`, `commands=[[...]]` runs several,
-   `env`/`stdin` are explicit, and `shell=<string>` is the explicit shell escape hatch.
-   `bash -lc` inside argv is refused as `shell_via_exec` and points at `shell`. `run()` is
-   available only in python-only modes (repl/bare). A call whose keywords do not match the
-   verb's signature is answered with `bad_args`/`bad_arguments`, never a traceback. Programs/verbs that
-   change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
-   `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument, not a
-   redirect) are refused with `kind: "wrong_call"` and a `use` hint, because they would
-   bypass the journal and make `diff()`/`undo()` lie. `git add`, `commit`, `push`, `fetch`,
-   `init` and `clone` are allowed: they do not overwrite working-tree content. `exec` and
-   `run()` share the gate. Use the typed `git` tool for status/diff/show/log/files/add/
-   commit/push/remote/branch: it has no pager and pages large diffs with
-   `offset`/`max_chars`. Mutations
-   whose targets are absolute paths under a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`,
-   `$TMPDIR`) are allowed; the journal only promises the tree. Direct process spawning
-   (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) goes through
-   the same classifier, so `Popen(["rm", ...])` is refused exactly like `rm`; allowed spawns
-   are listed in `Cell.runs`. A program can still write files; the journal is a
-   typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and the RUN_NOTE
-   text honest.
-3. **`write()` always replaces** (it refuses to silently drop a tail without
-   `force=True`); the typed **`edit(edits=[...])`** validates the whole batch before writing
-   (the python `edit(path, old, new)` helper remains); **`delete(path)`** and **`mkdir(path)`**
-   are the journalled ways to remove a file or create a directory; `splice(path, start, end, text)` replaces a 1-based inclusive
-   line range; `apply(<unified diff>)` writes several files in one cell. All of them go
-   through the same journalled `_commit`; `commit()` is a python helper.
-4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or
-   `test_calc2.py` scores zero — repair the source.
-5. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `harness.py`
-   from the fixtures. Editing a fixture silently redefines the expected answers. The hard suite's
-   held-out tests live in `bench/hard_hidden/`, never in the workspace; `H3_bigcsv`'s CSV is
-   generated and gitignored.
-6. **`bench/traces/` is append-only evidence.** Add new runs; never rewrite recorded
-   journals. The `sweep/` files are batch summaries. `bench/ws/` (frozen workspaces and
-   `runs/` journals) is gitignored measurement output — regenerate it with `bench/ws.py` and
-   `bench/live.py`.
-7. **Every module explains itself.** A source module opens with WHAT IT IS / ENTRY POINTS /
-   INVARIANTS / WHERE TO CHANGE; `bench/agent/headers.py` parses those into data and
-   `python3 bench/map.py --check` (also in `bench/smoke.py`) fails when one is missing. The
-   kernel ships that file's source to the child and exports only `guide()`, so it must stay
-   stdlib-only, `__file__`-free and read-only. Task fixtures and `bench/hard_hidden/` are not
-   indexed: they are graded input, not code an agent maintains.
-8. **Generated directories are not source:** `bench/.tmp/` (per-run workspaces),
-   `bench/.cache/` (LLM replies), `bench/ws/` (frozen workspaces), `tui/node_modules/`, and
-   the TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` and
-   `bench/harness_fixtures/` are committed but recreated by `build()` whenever missing — if you
-   add a task there, add its fixture in the same module.
-
----
-
-## Where to change what
+## 10. Where to change what
 
 | Change | Touch |
 |---|---|
-| The header index, the map CLI or the `guide()` verb | `bench/agent/headers.py` (parsing, ranking, rendering), `bench/map.py` (flags), `kernel.PRELUDE` (`guide` is a one-line wrapper over `_HEADERS["guide"]`) |
-| What the agent can do (new file/exec/typed verb) | `bench/agent/verbs.py` (schema + summary + function), `kernel.PRELUDE` or `RUN_PRELUDE` (implementation), `bench/smoke.py` (a `Kernel.call` case), and the rules text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`. The tool specs and `help()` are generated from the registry; the prose rules are the one hand-written catalog. |
-| How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
-| A stop reason or the finish protocol | `tool_loop.ToolLoop.run`; a different reply dialect overrides `_reply` (see `repl.ReplLoop`) |
-| A new benchmark task | `tasks.py` (read/mutation), `edge.py` (edge), `harness.py` (tool path) or `sandbox.py` (one mutable probe), then a run to record the trace |
-| Grading semantics | the `grade_*` functions in `tasks.py` / `edge.py` / `harness.py` |
-| Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env vars |
-| Goal check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |
-| The check plan / cheap health check | `checks.py` (`CheckSpec.parse`, `Verifier`, `run_plan` / `run_specs`, `scope`), `tui/src/detect-checks.ts` |
-| Task board, live log, prompt box | `tui/src/client.tsx` + `tui/src/list-model.ts` (pure, tested) |
-| Queueing, cancellation, journal format | `tui/src/server.ts` |
-| What the TUI sends the agent | `tui/python/worker.py` (`AUTONOMOUS`, rules, budgets, status mapping) |
+| Header index, map CLI, `guide()` | `bench/agent/headers.py`, `bench/map.py`, `kernel/prelude.py` (`guide` is a wrapper over `_HEADERS["guide"]`) |
+| A typed action | `bench/agent/verbs.py` (schema + summary + function), `kernel/prelude.py` or `kernel/run_prelude.py`, `bench/smoke_checks/` (`Kernel.call` case), rules text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES` |
+| How observations look | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
+| A stop reason or the finish protocol | `tool_loop.ToolLoop.run`; a new dialect overrides `_reply` |
+| A benchmark task | `tasks.py`, `edge.py`, `harness.py` or `sandbox.py`, then a recorded run |
+| Grading semantics | the `grade_*` functions in the same module |
+| Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env |
+| Check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |
+| Check plan / cheap health | `checks.py` (`CheckSpec.parse`, `Verifier`, `run_plan`/`run_specs`, `scope`), `tui/src/detect-checks.ts` |
+| Board, log, prompt | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts` |
+| Queue, cancellation, journal format | `tui/src/server.ts` |
+| What the TUI sends the agent | `tui/python/worker.py` (AUTONOMOUS, rules, budgets, status mapping) |
 
----
+## 11. Gotchas
 
-## Gotchas
-
-- `bench/run.py` has two import blocks: script mode (`python3 bench/run.py`) inserts the
-  repo root on `sys.path`, package mode (`python3 -m bench.run`) uses relative imports.
-  Keep both working.
-- The default `--suite read` tasks only need text answers; `mutation`/`edge` tasks,
-  `harness.L4_edit_batch`, and `H1`/`H2`/`H4` in the hard suite set `mutates=True` and get
-  the file helpers plus a writable kernel. `H3_bigcsv` is a text answer over a generated CSV.
-- Budget mismatch: `run.py` defaults to 200 steps / 3600 s, the TUI defaults to 300 steps
-  / 1800 s / 120 s per cell (`CODE_TUI_MAX_*`).
+- `bench/run.py` has two import blocks: script mode inserts the repo root on `sys.path`; package
+  mode uses relative imports. Keep both working.
+- `--suite read` tasks only need text answers. `mutation`/`edge`, `harness.L4_edit_batch` and
+  `H1`/`H2`/`H4` set `mutates=True` and get file helpers plus a writable kernel.
+- Budget mismatch: `run.py` 200 steps / 3600s; TUI 300 steps / 1800s / 120s per cell.
 - The TUI server detects the check plan **when a task starts**, so a script an earlier task
-  added to `package.json` is picked up without a restart: `CODE_TUI_CHECKS` (JSON list)
-  wins, else `CODE_TUI_CHECK`, else `python3 bench/smoke.py` plus `typecheck`/`test` (or
-  `build` when neither exists) from the root and `tui/package.json`. The runner follows the
-  lockfile (`bun.lock`/`bun.lockb` -> bun, `package-lock.json` -> npm). Entries may carry a
-  `scope` path prefix list; the cheap ones run after a mutating cell that touched their
-  scope (at most every 20s), and the whole plan gates `final_answer`. An empty
-  `CODE_TUI_CHECK` opts out.
-- `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — do not edit
-  them in place; clone with `bench.ws.clone` first. `bench/ws/` is gitignored: recreate
-  `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and `tui-broken` as
-  that tree with `tests/log.test.tsx` failing.
-- Tests are TS only (`bun test` = 13 passing tests across 6 files). Python has no test
-  framework: `python3 bench/smoke.py` is the offline contract check (kernel prelude, `Cell`
-  fields, tool envelopes, reply parsing), and a real change is then confirmed by running a
-  benchmark task. The React `act(...)` warnings in the test output are expected noise.
-- Commit style in this repo: `area(scope): lowercase summary`, e.g.
+  added to `package.json` is picked up without a restart.
+- `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — clone before
+  editing. `bench/ws/` is gitignored: recreate `tui-base` with
+  `python3 -m bench.ws freeze tui bench/ws/tui-base`.
+- Tests are TS only (`bun test` = 13 tests, 6 files). React `act(...)` warnings are expected
+  noise. Python has no test framework: `bench/smoke.py` is the offline contract check.
+- Commit style: `area(scope): lowercase summary`, e.g.
   `bench(agent/kernel): add grep, write, edit` or `tui(tests): add log and prompt tests`.
+
+## 12. Documents
+
+Docs are interface specifications for agents. Keep them executable and checkable; delete a
+claim you cannot verify.
+
+| Document | Audience | Owns |
+|---|---|---|
+| `AGENTS.md` | an agent about to edit the repo | short contract, invariants, gates, recipes |
+| `README.md` | an agent that needs the full picture | architecture, module map, suites, commands, contracts |
+| `tui/README.md` | an agent maintaining/running the TUI | wire contract: state root, HTTP/WS API, events, statuses, env |
+| `bench/HARD.md` | an agent about to simplify the tool surface | measured evidence and what earned its keep |
+| `bench/agent/*` headers | an agent locating an owner | parsed by `headers.py`; `map.py --check` gates them |
+| fixture `*.md` / `SPEC.md` | the agent **under test** | graded task input. Do not rewrite as documentation: it defines expected answers, and `harness.py`/`sandbox.py` regenerate theirs from `build()` |
