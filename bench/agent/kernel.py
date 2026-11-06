@@ -894,12 +894,18 @@ def map(path=".", max_files=120, include=None, offset=0):
             continue
         entries.append({"path": rel, "lines": len(body.splitlines()), "bytes": len(body)})
     total = len(entries)
+    dirs = {}
+    for entry in entries:
+        parts = entry["path"].split("/")
+        for depth in range(1, len(parts)):
+            key = "/".join(parts[:depth])
+            dirs[key] = dirs.get(key, 0) + 1
     start = max(0, int(offset or 0))
     page = entries[start:start + max(1, int(max_files or 1))]
     end = start + len(page)
     text = "\n".join("%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
     return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-            "files": page, "total_files": total,
+            "files": page, "count": total, "total_files": total, "dirs": dirs,
             "shown": [start + 1, end] if page else [],
             "next": {"offset": end} if end < total else None,
             "has_more": end < total, "text": text}
@@ -1050,7 +1056,9 @@ def outline(path, max_entries=200):
             if match:
                 entries.append({"line": number, "kind": "def", "name": match.group(1)})
             elif _re.match(r"^#{1,6}\s+", line):
-                entries.append({"line": number, "kind": "heading", "name": line.strip()[:160]})
+                # In a non-Markdown file a `#` line is a comment, not a heading; label it
+                # honestly so a .gitignore/shell banner is not confused with structure.
+                entries.append({"line": number, "kind": "comment", "name": line.strip()[:160]})
 
     entries.sort(key=lambda item: item["line"])
     entries = entries[:int(max_entries)]
@@ -1168,7 +1176,7 @@ def read(path, offset=1, limit=0, raw=False, start=None, end=None, repeat=False)
     return _Result(result)
 
 
-def _grep_result(hits, occurrences, truncated, max_chars=12000):
+def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=None):
     # Render each file once. Adjacent/overlapping hits share their context lines, so the
     # model sees every line once; a line that is both a hit and another hit's context keeps
     # the `:` marker. The structured `matches` stays complete for python callers.
@@ -1191,40 +1199,46 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000):
             text, is_hit = grouped[path][number]
             lines.append("%s:%s%s %s" % (path, number, ":" if is_hit else "-", text))
     full = "\n".join(lines)
+    total = len(hits) if total is None else int(total)
+    common = {"ok": True, "kind": "matches", "matches": hits,
+              "occurrences": occurrences, "truncated": truncated,
+              "count": len(hits), "shown": len(hits), "total": total, "offset": int(offset),
+              "next": {"offset": int(offset) + len(hits)} if int(offset) + len(hits) < total else None}
     if max_chars and len(full) > int(max_chars):
         # A broad context search can exceed the card budget and lose its middle. Deliver
-        # locators instead of a silently digested blob; the caller can re-run with a path or
-        # max_chars=0 for the full text.
+        # locators instead of a silently digested blob. Hit lines stay exact; only context
+        # is absent here (the caller can re-run with context=0 or max_chars=0 for it).
         locators = "\n".join(
-            "%s:%s: %s" % (hit["path"], hit["line"], (hit.get("text") or "")[:120])
+            "%s:%s: %s" % (hit["path"], hit["line"], hit.get("text") or "")
             for hit in hits)
-        return _Result({"ok": True, "kind": "matches", "matches": hits,
-                        "occurrences": occurrences, "truncated": truncated,
-                        "locator_mode": True, "hits": len(hits), "text_chars": len(full),
-                        "note": "broad result: locators only; pass max_chars=0 for full text",
-                        "text": locators})
-    return _Result({"ok": True, "kind": "matches", "matches": hits,
-                    "occurrences": occurrences, "truncated": truncated,
-                    "text": full})
+        common.update({"mode": "locators", "locator_mode": True,
+                       "text_chars": len(full),
+                       "note": "broad result: locators only; pass max_chars=0 for full text"})
+        common["text"] = locators
+        return _Result(common)
+    common.update({"mode": "full", "clip": None, "text": full})
+    return _Result(common)
 
 
-def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0,
-         ignore_case=False, max_chars=12000):
-    # Typed `search`: one path or a list, an optional include glob, and optional context.
-    # The python helper of the same name keeps the old call shape.
+def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
+         ignore_case=False, max_chars=12000, offset=0):
+    # Search: one path or a list, an optional include glob, and optional context. The typed
+    # `search` and the python `grep` share this one implementation and the same regex default.
     path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
         hits, occurred, truncated = [], 0, False
         for item in (sorted(path) if isinstance(path, set) else path):
             result = grep(pattern, item, max_results=max_results, regex=regex,
                           include=include, context=context, ignore_case=ignore_case,
-                          max_chars=max_chars)
+                          max_chars=max_chars, offset=0)
             hits.extend(result.get("matches") or [])
             occurred += int(result.get("occurrences") or 0)
             truncated = truncated or bool(result.get("truncated"))
             if len(hits) >= int(max_results):
-                return _grep_result(hits[:int(max_results)], None, True, max_chars)
-        return _grep_result(hits, occurred, truncated, max_chars)
+                return _grep_result(hits[:int(max_results)], occurred, True, max_chars,
+                                    offset=offset, total=int(result.get("total") or len(hits)))
+        return _grep_result(hits, occurred, truncated, max_chars, offset=offset,
+                            total=len(hits))
     target, rel = _resolve(path)
     if target is None:
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
@@ -1242,9 +1256,13 @@ def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0
     needle = pattern.lower() if ignore_case else pattern
     includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
     explicit_file = _os.path.isfile(target)
+    include_ignored = bool(includes and explicit_file)
     files = [target] if explicit_file else list(_walk(target))
     hits = []
     occurrences = 0
+    matched_lines = 0
+    truncated = False
+    skip = max(0, int(offset or 0))
     for full in files:
         full_rel = _os.path.relpath(full, _ROOT)
         if includes and not explicit_file:
@@ -1272,20 +1290,29 @@ def grep(pattern, path=".", max_results=50, regex=False, include=None, context=0
                                  for n in range(max(1, number - width), number)]
                 hit["after"] = [{"line": n, "text": lines[n - 1].strip()}
                                 for n in range(number + 1, min(len(lines), number + width) + 1)]
-            hits.append(hit)
-            if len(hits) >= int(max_results):
-                return _grep_result(hits, None, True, max_chars)
-    return _grep_result(hits, occurrences, False, max_chars)
+            matched_lines += 1
+            if matched_lines <= skip:
+                continue
+            if len(hits) < int(max_results):
+                hits.append(hit)
+            else:
+                truncated = True
+    result = _grep_result(hits, occurrences, truncated, max_chars,
+                          offset=skip, total=matched_lines)
+    if include_ignored:
+        result["include_ignored"] = True
+        result["note"] = "include is only used for directory paths; the explicit file was searched"
+    return result
 
 
 def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-           ignore_case=False, max_chars=12000):
+           ignore_case=False, max_chars=12000, offset=0):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is
     # regex by default, matching the grep mental model: an alternation like `a|b` is one
     # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
                 include=include, context=context, ignore_case=ignore_case,
-                max_chars=max_chars)
+                max_chars=max_chars, offset=offset)
 
 
 def recall(pattern, limit=10, context=100):
@@ -1303,7 +1330,13 @@ def recall(pattern, limit=10, context=100):
             for match in rx.finditer(text):
                 start = max(0, match.start() - int(context))
                 end = min(len(text), match.end() + int(context))
-                out.append({"obs": i, "field": field, "text": text[start:end],
+                while start > 0 and text[start - 1].isalnum():
+                    start -= 1
+                while end < len(text) and text[end].isalnum():
+                    end += 1
+                snippet = text[start:end]
+                out.append({"obs": i, "field": field, "source": "session",
+                            "snippet": snippet, "text": snippet,
                             "handle": "_OBS[%d]['%s']" % (i, field)})
                 if len(out) >= int(limit):
                     return out
@@ -1314,7 +1347,7 @@ def recall_tool(pattern, limit=10, context=100):
     # Typed session search: the same _OBS snippets as recall(), with a text rendering so the
     # model does not need a python cell to recover a digested card.
     items = recall(pattern, limit=limit, context=context)
-    text = "\n".join("%s:%s: %s" % (item["handle"], item["field"], item["text"])
+    text = "\n".join("[%s] %s: %s" % (item["handle"], item["field"], item["text"])
                      for item in items)
     return {"ok": True, "kind": "recall", "items": items,
             "count": len(items), "text": text}

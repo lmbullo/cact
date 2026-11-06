@@ -44,7 +44,7 @@ NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 VERBS: dict[str, dict] = {
     "map": {
         "function": "map",
-        "summary": "List the files under a directory with line counts, without shell ls/find; path takes one path or a list, include filters by shell-style glob (``*`` does not cross ``/``, ``**`` does), ignored trees are skipped, and shown/next/has_more page a large list. A file path returns that one row.",
+        "summary": "List the files under a directory with line counts, without shell ls/find; path takes one path or a list, include matches the full relative path or basename (``*.md`` is any depth; ``bench/*.md`` is one level), ignored trees are skipped, and shown/next/has_more page a large list. A file path returns that one row.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -56,7 +56,7 @@ VERBS: dict[str, dict] = {
                 "offset": {"type": "integer", "minimum": 0,
                            "description": "0-based index into the matched file list."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                            "description": "Glob(s) a relative path must match, e.g. '*.md'; * does not cross /, ** does."},
+                            "description": "Glob(s) matched against the full relative path or basename; '*.md' is any depth, 'bench/*.md' is one level."},
             },
             "additionalProperties": False,
         },
@@ -82,7 +82,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search files for a regex (default) or a literal. Returns path:line:text with exact line text (never clipped) and merged optional context; include filters paths (e.g. '*.py'), and path takes one path or a list.",
+        "summary": "Search files for a regex (default) or a literal. Returns path:line:text with exact hit text and merged context, plus shown/total/next; broad context output becomes locators above max_chars. include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -92,13 +92,15 @@ VERBS: dict[str, dict] = {
                 "regex": {"type": "boolean", "default": True,
                           "description": "Treat pattern as a regular expression (default true). Set false for a literal substring."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                            "description": "Glob(s) a file's relative path must match, e.g. '*.py'."},
+                            "description": "Glob(s) matched against the full relative path or basename, e.g. '*.py' (any depth) or 'bench/*.py' (one level)."},
                 "context": {"type": "integer", "minimum": 0,
                             "description": "Lines before and after each hit; 0 returns the matching line only."},
                 "ignore_case": {"type": "boolean"},
                 "max_results": {"type": "integer", "minimum": 1},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "Skip this many matching lines; next.offset pages the result."},
                 "max_chars": {"type": "integer", "minimum": 0,
-                              "description": "Text budget; default 12000 returns locators for broad context results; 0 returns full text."},
+                              "description": "Text budget; default 12000 returns locators for broad results; 0 returns full text."},
             },
             "required": ["pattern"],
             "additionalProperties": False,

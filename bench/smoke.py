@@ -582,8 +582,9 @@ def main() -> int:
                                       "context": 1, "max_chars": 100})
         check("kernel: broad search falls back to locators",
               '"locator_mode": true' in (cell.result or "")
-              and "row" in cell.stdout and "text_chars" in (cell.result or ""),
-              (cell.result or "")[:240])
+              and "row" in cell.stdout and "text_chars" in (cell.result or "")
+              and '"total": 30' in (cell.result or ""),
+              (cell.result or "")[:260])
         cell = kernel.call("search", {"pattern": "RED", "path": ".", "include": "*.txt",
                                       "context": 1, "ignore_case": True})
         check("kernel: call(search) filters include and adds context",

@@ -163,9 +163,9 @@ bench/run.py                        tui/bin/code
   is one call; pass `regex=false` for a literal substring. Match and context lines are exact
   (not clipped), adjacent context is merged so each line appears once, and the result carries
   locators while stdout carries the text. `map(path, include='*.md')` lists files with line
-  counts and a path-glob filter (`*` does not cross `/`, `**` does), skipping
-  `.gitignore`/generated trees, and pages with `shown`/`next`/`has_more`, so a repo walk does
-  not need shell `ls`/`find`; `outline` also maps HTML sections
+  counts and an include filter matched against the full relative path or basename
+  (`*.md` is any depth; `bench/*.md` is one level), skipping `.gitignore`/generated trees, and
+  pages with `shown`/`next`/`has_more`, so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
   and headings inside a JS template literal, and CSS section comments, so the common
   component file is navigable without shell `grep`/`sed`.
 - **A read is a ledger, not a firehose:** `read(start/end)` is the canonical range; with no
