@@ -123,17 +123,19 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    20s) and is printed as the `[check]` line of the state card. `final_answer` is rejected
    (`GOAL_UNMET`) until the whole plan passes. Production passes `goal_stops=False`, so a
    failing check never ends the run by itself — it only rejects the finish.
-6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `hard.py` from the
-   fixtures. Editing a fixture silently redefines the expected answers; `H3_bigcsv`'s CSV is
-   generated and gitignored, and the H1/H2/H4 oracle lives in `hard_hidden/`.
+6. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `harness.py` /
+   `hard.py` from the fixtures. Editing a fixture silently redefines the expected answers;
+   `H3_bigcsv`'s CSV is generated and gitignored, and the H1/H2/H4 oracle lives in
+   `hard_hidden/`.
 7. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
    `bench/ws/` (frozen workspaces + `runs/` journals) is gitignored measurement output:
    rebuild `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and let
    `bench/live.py` create `runs/<tag>`; do not expect either in a fresh clone.
 8. **Generated, not source:** `bench/.tmp/` (per-run workspaces), `bench/.cache/` (cached LLM
    replies), `bench/ws/` (frozen workspaces, rebuilt on demand), `tui/node_modules/`, and the
-   TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` is committed but is
-   rebuilt by `edge.build()` when missing.
+   TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` and
+   `bench/harness_fixtures/` are committed but are rebuilt by `edge.build()` /
+   `harness.build()` when missing.
 9. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
    mode (`python3 -m bench.run`). Keep both working.
 10. **Every module explains itself, and something checks.** A source module carries all four

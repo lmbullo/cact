@@ -227,11 +227,11 @@ the `Client`. `loop.py` holds only those shared types: the former JSON tool-call
 `AgentLoop` is gone, and `tools.py` now builds the provider specs from `verbs.VERBS`.
 
 `ToolLoop.run` is the turn machine. `StateLoop` extends it with state cards; `ReplLoop`
-extends it with fenced-block reply parsing and overrides only `_reply` (plus the transcript
-and the `stop`/`history` switches), so budget stops, usage accounting, goal gating and trace
-writing are the same code. `FinishState` holds the staged and the accepted answer,
-`TurnOutcome` is what one turn decided, and a turn record's `calls` list holds one
-`CallRecord` per tool call (code, observation, runs, reads, notice, stop), so a turn that
+extends it with fenced-block reply parsing and overrides `_reply`, `_observe` (the transcript),
+`_before_turn` (the wrap-up nudge) and the `stop`/`history` switches, so budget stops, usage
+accounting, goal gating and trace writing are the same code. `FinishState` holds the staged
+and the accepted answer, `TurnOutcome` is what one turn decided, and a turn record's `calls`
+list holds one `CallRecord` per tool call (code, observation, runs, reads, notice, stop), so a turn that
 emits several calls keeps all of them in `turns` and in the trace. The stop names are module
 constants (`tool_loop.STOPS`). Stop reasons are a fixed vocabulary:
 
