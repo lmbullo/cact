@@ -199,7 +199,7 @@ When a task starts the server detects a plan (an ordered list of named commands)
 neither exists) from the root and `tui/package.json`. The plan is re-detected per task, so a
 script an earlier task added is picked up without restarting the server. The runner follows the
 lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). The plan is passed to the
-worker as `--checks <json>`, where one `checks.Verifier` owns it.
+worker as `--checks <json>`, where one `check_plan.Verifier` owns it.
 
 An entry is `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes for the cheap
 health run: a scoped entry is skipped unless the cell changed a path under one of them. The goal

@@ -26,7 +26,7 @@ INVARIANTS
     unattended: no human answers questions; typed modes build the kernel with
     `allow_shell=False`, so only repl has `run()`.
   - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/check_plan.py.
-    One `checks.Verifier` owns the plan, so the goal re-runs it on every finish attempt and
+    One `check_plan.Verifier` owns the plan, so the goal re-runs it on every finish attempt and
     `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
     never ends the run by itself. The same object decides the `cheap` health run (the
     `[check]` card line): each spec's `scope` keeps it to the paths that changed, the whole

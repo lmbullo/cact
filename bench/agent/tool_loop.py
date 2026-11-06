@@ -53,7 +53,7 @@ INVARIANTS
     branch; a continuing turn reports the last call-level stop (or none).
   - With a goal, finishing before the check passes is rejected (GOAL_UNMET).
     `goal_stops=True` ends the run itself once a mutating cell passes the goal (VERIFIED).
-  - A `verifier` (checks.Verifier) owns the goal, the cheap subset, the scope filter, the
+  - A `verifier` (check_plan.Verifier) owns the goal, the cheap subset, the scope filter, the
     20s throttle, the check cache and its rendering. `_goal_state` asks it for the whole
     plan; after a mutating cell `invalidate()` drops the cache, and `should_run`/`run`
     refresh `self.last_check` (the `[check]` line of the next card). It never ends the run;
@@ -81,7 +81,7 @@ WHERE TO CHANGE
                                           python to Kernel.run and every typed name to Kernel.call
   When a task counts as done ........... the `verifier` passed in by run.py / worker.py (or
                                           `goal=` for a bare callable)
-  The cheap check in the card .......... `_refresh_health`, `last_check`, checks.Verifier
+  The cheap check in the card .......... `_refresh_health`, `last_check`, check_plan.Verifier
 """
 from __future__ import annotations
 
