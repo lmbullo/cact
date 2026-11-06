@@ -244,6 +244,28 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    "delete": {
+        "function": "delete",
+        "summary": "Delete one file through the journal; use it instead of rm/mv through exec. Directories are refused (map the files first).",
+        "mutates": True,
+        "schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    },
+    "mkdir": {
+        "function": "mkdir",
+        "summary": "Create one directory (parents included); use it instead of mkdir through exec.",
+        "mutates": True,
+        "schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    },
     "apply": {
         "function": "apply",
         "summary": "Apply a unified diff, possibly across several files, in one journal entry. Prefer edit(edits=[...]) for ordinary atomic replacements; use apply when you already have a real unified diff.",

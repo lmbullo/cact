@@ -78,6 +78,7 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import json
 import re
 
 from .tool_loop import TOOL_RULES, ToolLoop
@@ -274,12 +275,29 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                 bits.append(f"offset={page['offset']}")
             if page.get("next") is not None:
                 bits.append(f"next={page['next']}")
+            if (env.get("data") or {}).get("hits") is not None:
+                bits.append(f"hits={(env.get('data') or {}).get('hits')}")
+            if page.get("pointer"):
+                bits.append("pointer=true")
             bits.append("has_more=" + ("true" if page.get("has_more") else "false"))
             bits.append("complete=" + ("true" if page.get("complete") else "false"))
             parts.append("[page] " + " ".join(bits))
         for note in env.get("notes") or []:
             parts.append("[note] " + str(note))
-        by_file = (env.get("data") or {}).get("by_file")
+        data = env.get("data") or {}
+        # Structured-only facts (did_you_mean, include_unmatched, edit paths, a git sha)
+        # have no stdout delivery. Render the small ones explicitly; by_file/sections are
+        # already in [hits]/[data] text and would only duplicate it.
+        small = {key: value for key, value in data.items()
+                 if key not in ("by_file", "sections")}
+        if small:
+            try:
+                payload = json.dumps(small, sort_keys=True, default=repr)
+            except (TypeError, ValueError):
+                payload = repr(small)
+            if len(payload) <= 600:
+                parts.append("[data] " + payload)
+        by_file = data.get("by_file")
         if cell.tool == "search" and by_file and page and not page.get("complete"):
             for path, info in list(by_file.items())[:6]:
                 numbers = info.get("lines") or []
@@ -296,13 +314,18 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                     where += " +%d more" % (len(ranges) - 6)
                 total_hits = page.get("total") or 0
                 remain = max(0, int(total_hits) - int(page.get("offset") or 0) - int(page.get("shown") or 0))
-                parts.append("[hits] %s: %s hit(s) in %d range(s); page of %d, %d remain"
-                             % (path, info.get("count"), len(ranges), total_hits, remain))
+                where_text = where or "(none)"
+                parts.append("[hits] %s: %s hit(s) at %s; page of %d, %d remain"
+                             % (path, info.get("count"), where_text, total_hits, remain))
         if not env.get("ok", True) and env.get("error"):
             err = env["error"]
+            code = err.get("code") or "error"
+            message = err.get("message") or err.get("path") or ""
+            hint = err.get("use")
+            if not hint and code == "outside_root":
+                hint = "paths are relative to the workspace root ('.') or its absolute path"
             parts.append("[error] %s: %s%s" % (
-                err.get("code") or "error", err.get("message") or "",
-                ("; use " + str(err["use"])) if err.get("use") else ""))
+                code, message, ("; use " + str(hint)) if hint else ""))
     if cell.stderr:
         if verbatim:
             body.append("[error]\n" + cell.stderr)

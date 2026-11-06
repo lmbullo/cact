@@ -117,7 +117,7 @@ bench/run.py                        tui/bin/code
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
           ├─ PRELUDE: the workspace verbs — guide/map/read/session_diff/search/recall/outline/
-          │           edit/splice/write/apply — plus the python helpers guide/grep/
+          │           edit/splice/write/delete/mkdir/apply — plus the python helpers guide/grep/
           │           diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
@@ -203,7 +203,7 @@ bench/run.py                        tui/bin/code
   bind of the workspace only when `writable=True`).
 - **Journalling:** the prelude snapshots the tree at start; every cell diffs it. That is
   what `changes()`, `diff()`, `undo()` and the `[state] changed:` line read from. `write()`,
-  `edit()`, `splice()` and `apply()` all funnel through the same `_commit`, so a multi-file
+  `edit()`, `splice()`, `delete()`, `mkdir()` and `apply()` all funnel through the same `_commit`, so a multi-file
   `apply()` is one diff and one `undo()`.
 - **Check plan:** `bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}`
   and the `Verifier` that owns it: the cheap subset, the `scope` filter, the 20s throttle,
@@ -367,8 +367,9 @@ imports `bench.agent` from this repo, so the checkout path matters.
    typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and the RUN_NOTE
    text honest.
 3. **`write()` always replaces** (it refuses to silently drop a tail without
-   `force=True`); **`edit()`** takes one `path/old/new` or a list of edits and validates the
-   whole batch before writing; `splice(path, start, end, text)` replaces a 1-based inclusive
+   `force=True`); the typed **`edit(edits=[...])`** validates the whole batch before writing
+   (the python `edit(path, old, new)` helper remains); **`delete(path)`** and **`mkdir(path)`**
+   are the journalled ways to remove a file or create a directory; `splice(path, start, end, text)` replaces a 1-based inclusive
    line range; `apply(<unified diff>)` writes several files in one cell. All of them go
    through the same journalled `_commit`; `commit()` is a python helper.
 4. **Graders hash the test files** (`edge.py::_suite`). Fixing `test_core.py` or

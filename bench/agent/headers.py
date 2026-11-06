@@ -220,9 +220,10 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
         want = str(path).replace(os.sep, "/").lstrip("./")
         hits = [row for row in rows if row["path"] == want or row["path"].endswith("/" + want)]
         if not hits:
+            message = "no module at %s; map() lists the files, search() finds text" % want
             return {"ok": True, "kind": "guide", "path": want, "modules": [],
                     "shown": 0, "total": 0, "next": None,
-                    "text": "no module at %s; map() lists the files, search() finds text" % want}
+                    "note": message, "text": message}
         return {"ok": True, "kind": "guide", "modules": hits, "shown": len(hits),
                 "total": len(hits), "next": None, "text": render(hits, chars)}
     if query:
@@ -257,7 +258,10 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
                     "shown": 0, "total": 0, "next": None,
                     "note": note, "text": note}
         if not lines:
-            lines = ["no documented module matches %r; try map() or search()" % str(query)]
+            message = "no documented module matches %r; try map() or search()" % str(query)
+            return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
+                    "shown": 0, "total": 0, "next": None,
+                    "note": message, "text": message}
         nxt = {"offset": end, "unit": "module"} if end < len(scored) else None
         return {"ok": True, "kind": "guide", "query": str(query), "modules": public,
                 "shown": len(public), "total": len(scored), "offset": start, "next": nxt,

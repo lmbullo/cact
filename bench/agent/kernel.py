@@ -672,24 +672,36 @@ def _commit(target, rel, body, source):
             before = _read_text(target)
     except OSError:
         before = None
-    _os.makedirs(_os.path.dirname(target) or _ROOT, exist_ok=True)
-    with _open(target, "w", encoding="utf-8") as fh:
-        fh.write(body)
+    if body is None:
+        # A typed delete is a journal row too: before text is the diff base and the tree
+        # state is what changes()/undo() read. Never write a placeholder empty file.
+        if before is None:
+            return None
+        _os.remove(target)
+        body_text = ""
+    else:
+        _os.makedirs(_os.path.dirname(target) or _ROOT, exist_ok=True)
+        with _open(target, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        body_text = body
     _READS_SESSION.pop(rel, None)
     if rel == ".gitignore":
         _IGNORE = None
     _MUT = True
     _JSEQ += 1
     diff_text = "".join(_difflib.unified_diff(
-        (before or "").splitlines(True), body.splitlines(True),
-        fromfile=("/dev/null" if before is None else "a/" + rel), tofile="b/" + rel, n=3))
+        (before or "").splitlines(True), body_text.splitlines(True),
+        fromfile=("/dev/null" if before is None else "a/" + rel),
+        tofile=("/dev/null" if body is None else "b/" + rel), n=3))
     adds = sum(1 for line in diff_text.splitlines() if line.startswith("+") and not line.startswith("+++"))
     dels = sum(1 for line in diff_text.splitlines() if line.startswith("-") and not line.startswith("---"))
     entry = {"seq": _JSEQ, "path": rel, "source": source, "created": before is None,
              "before_lines": 0 if before is None else len(before.splitlines()),
-             "after_lines": len(body.splitlines()), "adds": adds, "dels": dels,
+             "after_lines": len(body_text.splitlines()), "adds": adds, "dels": dels,
              "before_hash": None if before is None else _digest(before),
-             "after_hash": _digest(body), "diff": diff_text}
+             "after_hash": None if body is None else _digest(body_text), "diff": diff_text}
+    if body is None:
+        entry["deleted"] = True
     _JOURNAL.append(entry)
     _SNAP[entry["seq"]] = before
     if len(_JOURNAL) > 200:
@@ -897,7 +909,7 @@ def map(path=".", max_files=120, include=None, offset=0):
         text = "  lines  path\n" + "\n".join(
             "%6d  %s" % (item["lines"], item["path"]) for item in rows)
         result = {"ok": True, "kind": "map", "root": rel, "files": rows,
-                  "count": len(rows), "total_files": len(rows),
+                  "count": len(rows), "total_files": len(rows), "offset": 0,
                   "shown": [1, len(rows)] if rows else [],
                   "next": None, "has_more": False, "text": text}
         if not rows and includes:
@@ -949,7 +961,7 @@ def map(path=".", max_files=120, include=None, offset=0):
         text += "\nnote: include matched no file: " + ", ".join(unmatched)
     result = {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
               "files": page, "count": total, "total_files": total, "dirs_matched": dirs,
-              "include_unmatched": unmatched,
+              "include_unmatched": unmatched, "offset": start,
               "shown": [start + 1, end] if page else [],
               "next": {"offset": end, "unit": "file"} if end < total else None,
               "has_more": end < total, "text": text}
@@ -1628,7 +1640,12 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                           offset=skip, total=matched_lines, all_numbers=all_numbers)
     notes = []
     if matched_lines == 0:
-        notes.append("no matches for %r in %s" % (pattern, rel))
+        scope = ""
+        if section:
+            scope = " in section %r" % section
+        elif window is not None:
+            scope = " within [%d,%d]" % window
+        notes.append("no matches for %r in %s%s" % (pattern, rel, scope))
     if include_ignored:
         notes.append("include is only used for directory paths; the explicit file was searched")
     if includes and not explicit_file:
@@ -1744,6 +1761,56 @@ def write(path, content, force=False):
             "adds": entry["adds"], "dels": entry["dels"]}
 
 
+def delete(path):
+    # One file, through the tree state diff/undo already tracks. `rm`/`mv` through exec are
+    # refused because they would bypass the journal; this is the typed way to remove one.
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "kind": "wrong_call", "path": rel,
+                "error": {"code": "outside_root", "path": rel}}
+    if not _os.path.exists(target):
+        return {"ok": True, "kind": "no_change", "path": rel, "reason": "missing",
+                "text": "no file at %s" % rel}
+    if _os.path.isdir(target):
+        return {"ok": False, "kind": "wrong_call", "path": rel,
+                "error": {"code": "is_directory",
+                          "message": "delete() takes one file, not a directory",
+                          "use": "map(path) lists a directory; delete each file you mean"}}
+    try:
+        before = _read_text(target)
+        entry = _commit(target, rel, None, "delete")
+    except OSError as exc:
+        return {"ok": False, "kind": "delete_failed", "path": rel,
+                "error": {"code": "delete_failed", "message": str(exc)}}
+    if entry is None:
+        return {"ok": True, "kind": "no_change", "path": rel, "reason": "missing"}
+    return {"ok": True, "kind": "delete", "path": rel, "deleted": True,
+            "lines": len(before.splitlines()),
+            "text": "deleted %s (%d lines)" % (rel, len(before.splitlines()))}
+
+
+def mkdir(path):
+    # Empty directories are not journal rows (there is no file content to undo), but the
+    # typed verb keeps `mkdir` out of the shell gate and gives a clear result.
+    target, rel = _resolve(path)
+    if target is None:
+        return {"ok": False, "kind": "wrong_call", "path": rel,
+                "error": {"code": "outside_root", "path": rel}}
+    if _os.path.exists(target):
+        if _os.path.isdir(target):
+            return {"ok": True, "kind": "no_change", "path": rel, "reason": "exists",
+                    "text": "directory already exists: %s" % rel}
+        return {"ok": False, "kind": "wrong_call", "path": rel,
+                "error": {"code": "not_a_directory", "path": rel}}
+    try:
+        _os.makedirs(target, exist_ok=True)
+    except OSError as exc:
+        return {"ok": False, "kind": "mkdir_failed", "path": rel,
+                "error": {"code": "mkdir_failed", "message": str(exc)}}
+    return {"ok": True, "kind": "mkdir", "path": rel, "created": True,
+            "text": "created %s/" % rel}
+
+
 def edit(path, old, new, all=False, replace_all=None):
     target, rel = _resolve(path)
     if target is None:
@@ -1776,17 +1843,13 @@ def edit(path, old, new, all=False, replace_all=None):
             "adds": entry["adds"], "dels": entry["dels"]}
 
 
-def edit_many(edits=None, path=None, old=None, new=None, all=False):
-    # One typed edit: either edits=[{path, old, new}, ...] or the single path/old/new form.
-    # Validate every edit against the in-memory bodies first, then commit; a bad old string
-    # changes nothing. This is the tool for a docs pass, where one edit() per line is pure
-    # overhead, and for the simple replacement.
+def edit_many(edits=None, path=None):
+    # One typed edit: edits=[{path, old, new}, ...]. Validate every edit against the
+    # in-memory bodies first, then commit; a bad old string changes nothing. The single
+    # path/old/new shape stays available as the python `edit()` helper, not as this tool.
     if edits is None:
-        if isinstance(path, str) and isinstance(old, str) and isinstance(new, str):
-            edits = [{"path": path, "old": old, "new": new, "all": bool(all)}]
-        else:
-            return {"ok": False, "kind": "edit_failed",
-                    "reason": "pass edits=[...] or path, old and new"}
+        return {"ok": False, "kind": "edit_failed",
+                "reason": "pass edits=[{path, old, new}, ...]"}
     if not isinstance(edits, (list, tuple)) or not edits:
         return {"ok": False, "kind": "edit_failed",
                 "reason": "edits must be a non-empty list of {path, old, new}"}
@@ -2032,13 +2095,13 @@ _RUN_GIT_MUTATORS = {
 _HINT = {
     "tee": "write(path, content)", "touch": "write(path, '')",
     "cp": "read(path) then write(new_path, text)",
-    "mv": "write(new_path, read(path)['text']) then os.remove(path)",
-    "rm": "os.remove(path)", "truncate": "write(path, '')",
+    "mv": "write(new_path, read(path)['text']) then delete(path)",
+    "rm": "delete(path)", "truncate": "write(path, '')",
     "sed -i": "splice(path, start, end, text) or edit(path, old, new)",
-    "mkdir": "os.makedirs(path, exist_ok=True)",
+    "mkdir": "mkdir(path)",
     "patch": "apply(patch) or splice(path, start, end, text)",
     "git": "git add/commit/push are allowed; edit files with splice/edit/apply/commit",
-    ">": "splice(path, start, end, text) or write(path, content)", "find -delete": "map() then os.remove(path)",
+    ">": "splice(path, start, end, text) or write(path, content)", "find -delete": "map() then delete(path)",
     "xargs": "a Python loop",
 }
 

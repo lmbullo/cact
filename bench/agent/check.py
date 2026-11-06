@@ -58,7 +58,10 @@ class Check:
         if self.state == "unrunnable":
             detail = (self.stderr or self.stdout or "").strip()[-limit:]
             return f"{self.cmd}: could not run. This is not a failed test; the check itself is broken.\n{detail}"
-        head = f"{self.cmd}: failed (exit {self.exit_code}, {self.duration_ms}ms)"
+        if self.exit_code is None:
+            head = f"{self.cmd}: failed (not run)"
+        else:
+            head = f"{self.cmd}: failed (exit {self.exit_code}, {self.duration_ms}ms)"
         if self.failures:
             body = "\n".join(f"  - {hit['text']}" for hit in self.failures)
             return f"{head}\n{body}"

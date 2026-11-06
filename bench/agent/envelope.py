@@ -48,7 +48,7 @@ from __future__ import annotations
 import json
 
 UNITS = {
-    "read": "line", "file": "line", "files": "window", "search": "hit", "grep": "hit", "matches": "hit",
+    "read": "line", "file": "line", "files": "file", "search": "hit", "grep": "hit", "matches": "hit",
     "map": "file", "maps": "file", "outline": "entry", "outlines": "entry",
     "search_sections": "section",
     "guide": "module", "recall": "snippet", "git_diff": "char", "git_show": "char",
@@ -127,6 +127,12 @@ def page_of(kind, value):
             offset = int(offset)
         except (TypeError, ValueError):
             offset = None
+    if kind_name in ("map", "maps") and offset is None:
+        offset = 0
+    # A repeated read is a pointer, not a delivery: `shown` must not claim a page of text.
+    pointer = value.get("delivered") is False
+    if pointer:
+        shown = 0
     has_more = bool(value.get("has_more") or nxt is not None)
     # `complete` is "this request was served"; `has_more` is "the file/result continues".
     complete = not bool(value.get("truncated"))
@@ -140,9 +146,14 @@ def page_of(kind, value):
         next_arg = {"start": nxt}
     else:
         next_arg = {"offset": nxt}
-    return {"shown": shown, "total": total, "offset": offset, "next": next_arg,
+    page = {"shown": shown, "total": total, "offset": offset, "next": next_arg,
             "unit": unit or UNITS.get(kind) or UNITS.get(kind_name),
             "has_more": has_more, "complete": complete}
+    if pointer:
+        page["pointer"] = True
+    if isinstance(value.get("hits"), int):
+        page["hits"] = value["hits"]
+    return page
 
 
 def normalize(tool, value, handle=None):

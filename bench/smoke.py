@@ -464,11 +464,33 @@ def main() -> int:
               and (root / "batch_a.txt").read_text().startswith("one"),
               (cell.result or "")[:240])
 
+        kernel.run("write('remove_me.txt', 'gone')")
+        cell = kernel.call("delete", {"path": "remove_me.txt"})
+        check("kernel: call(delete) removes through the tree journal",
+              cell.envelope.get("kind") == "delete" and not (root / "remove_me.txt").exists(),
+              str(cell.envelope))
+        cell = kernel.call("mkdir", {"path": "new_dir"})
+        check("kernel: call(mkdir) creates a directory",
+              cell.envelope.get("kind") == "mkdir" and (root / "new_dir").is_dir(),
+              str(cell.envelope))
+
         cell = kernel.run("grep('beta', '.')")
         check("kernel: grep", "beta" in str(cell.result), str(cell.result)[:120])
 
         cell = kernel.run("map('.')")
         check("kernel: map", "a.txt" in str(cell.result), str(cell.result)[:120])
+        mapped = kernel.call("map", {"path": "."})
+        check("kernel: map offset is 0 on the first page",
+              mapped.envelope.get("page", {}).get("offset") == 0,
+              str(mapped.envelope.get("page")))
+        batch = kernel.call("read", {"path": ["a.txt", "batch_a.txt"]})
+        check("kernel: a batch read counts files, not windows",
+              batch.envelope.get("page", {}).get("unit") == "file",
+              str(batch.envelope.get("page")))
+        cell = kernel.call("read", {"path": "missing.txt"})
+        card, _ = state_loop.render_observation(cell, 1)
+        check("state: structured data survives the card", "[data]" in card and "did_you_mean" in card,
+              card[:300])
 
         body = "# Top\n\n## Alpha\n" + "".join("typed %d\n" % n for n in range(11))
         body += "\n## Beta\n" + "".join("typed %d\n" % n for n in range(11))
@@ -620,9 +642,11 @@ def main() -> int:
         kernel.call("read", {"path": "dedup.txt"})
         cell = kernel.call("read", {"path": "dedup.txt"})
         check("kernel: a repeated read is a pointer",
-              "already delivered" in cell.stdout and not cell.reads,
-              (cell.stdout + cell.stderr)[:220])
-        kernel.call("edit", {"path": "dedup.txt", "old": "alpha", "new": "beta"})
+              "already delivered" in cell.stdout and not cell.reads
+              and cell.envelope.get("page", {}).get("pointer") is True
+              and cell.envelope.get("page", {}).get("shown") == 0,
+              (cell.stdout + str(cell.envelope))[:300])
+        kernel.call("edit", {"edits": [{"path": "dedup.txt", "old": "alpha", "new": "beta"}]})
         cell = kernel.call("read", {"path": "dedup.txt"})
         check("kernel: a commit invalidates the read pointer",
               "beta" in cell.stdout and "already delivered" not in cell.stdout,
@@ -829,7 +853,7 @@ def main() -> int:
         cell = kernel.run("import subprocess; subprocess.run(['rm', 'a.txt'], capture_output=True)")
         gate = str(cell.result)
         check("kernel: spawn gate blocks a mutating process",
-              "wrong_call" in gate and "os.remove(path)" in gate, gate[:200])
+              "wrong_call" in gate and "delete(path)" in gate, gate[:200])
         check("kernel: the blocked spawn did not run", (root / "a.txt").exists(), str((root / "a.txt").exists()))
         cell = kernel.run("import subprocess; print(subprocess.run(['echo', 'ok'], capture_output=True, text=True).stdout.strip())")
         check("kernel: spawn gate allows programs", "ok" in cell.stdout, cell.stdout[:120])

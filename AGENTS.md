@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (guide, map, read, session_diff, search, recall, outline, edit, splice, write, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (guide, map, read, session_diff, search, recall, outline, edit, splice, write, delete, mkdir, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.
@@ -104,8 +104,10 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    journal is a typed-helper contract, not a sandbox. Keep `_mutating_command`, `_HINT` and
    RUN_NOTE honest.
 3. **`write()` replaces** (it refuses to silently drop a tail without `force=True`);
-   **`edit()`** takes one `path/old/new` or `edits=[{path, old, new}, ...]`; the list form is
-   atomic (all old strings must match, or nothing changes); **`splice(path, start, end, text)`**
+   **`edit(edits=[{path, old, new}, ...])`** is the typed form (the python `edit(path, old,
+   new)` helper remains); the list is atomic (all old strings must match, or nothing changes);
+   **`delete(path)`** and **`mkdir(path)`** cover the shell mutations that would bypass the
+   journal; **`splice(path, start, end, text)`**
    replaces 1-based inclusive lines through the same journal (read() numbers lines, so a
    surgical change emits only the changed lines); **`apply(<unified diff>)`** writes several
    files in one cell. All of them go through `_commit`, which is what makes the journal
