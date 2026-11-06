@@ -89,7 +89,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search files for a regex (default) or a literal. Returns path:line:text with exact hit text and merged context, plus shown/total/next; broad context output becomes locators above max_chars. include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
+        "summary": "Search files for a regex (default) or a literal. stdout is path:line:text with exact hit text and merged context; the result adds count/shown/total/offset/next/occurrences/truncated, keeps no duplicate hit table, and becomes locators above max_chars. include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
         "mutates": False,
         "schema": {
             "type": "object",

@@ -331,19 +331,18 @@ for line in sys.stdin:
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
-                    if value.get("kind") == "commands":
+                    if value.get("kind") in ("command", "commands"):
                         summary = {k: v for k, v in value.items()
                                    if k in ("ok", "kind", "count", "exit_code", "results")}
+                        summary["stdout_chars"] = len(str(value.get("stdout") or ""))
+                        summary["stderr_chars"] = len(str(value.get("stderr") or ""))
                     else:
                         summary = {k: v for k, v in value.items()
                                    if k not in ("stdout", "stderr", "text", "raw", "files", "hunk")}
                         if value.get("kind") == "matches":
-                            # The stdout text is the delivery; the result only carries the
-                            # locators, so a hit's text is not sent twice in one card. Keep
-                            # the locator list stable in both full and locator mode.
-                            summary["matches"] = [
-                                {k: v for k, v in hit.items() if k in ("path", "line")}
-                                for hit in value.get("matches") or []]
+                            # The stdout text is the delivery; keep the JSON envelope to
+                            # counts and paging so it does not restate the hit table.
+                            summary.pop("matches", None)
                         if value.get("kind") in ("outline", "outlines", "maps"):
                             summary.pop("entries", None)
                             summary.pop("files", None)
@@ -875,9 +874,11 @@ def map(path=".", max_files=120, include=None, offset=0):
                     "error": {"code": "read_failed", "message": str(exc)}}
         entry = {"path": rel, "lines": len(body.splitlines()), "bytes": len(body)}
         rows = [entry] if wanted(rel) else []
-        text = "\n".join("%6d  %s" % (item["lines"], item["path"]) for item in rows)
+        text = "  lines  path\n" + "\n".join(
+            "%6d  %s" % (item["lines"], item["path"]) for item in rows)
         return {"ok": True, "kind": "map", "root": rel, "files": rows,
-                "total_files": len(rows), "shown": [1, len(rows)] if rows else [],
+                "count": len(rows), "total_files": len(rows),
+                "shown": [1, len(rows)] if rows else [],
                 "next": None, "has_more": False, "text": text}
 
     base = target
@@ -901,7 +902,8 @@ def map(path=".", max_files=120, include=None, offset=0):
     start = max(0, int(offset or 0))
     page = entries[start:start + max(1, int(max_files or 1))]
     end = start + len(page)
-    text = "\n".join("%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
+    text = "  lines  path\n" + "\n".join(
+        "%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
     return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
             "files": page, "count": total, "total_files": total, "dirs": dirs,
             "shown": [start + 1, end] if page else [],
@@ -1240,12 +1242,11 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
         locators = "\n".join(
             "%s:%s: %s" % (hit["path"], hit["line"], hit.get("text") or "")
             for hit in hits)
-        common.update({"mode": "locators", "locator_mode": True,
-                       "text_chars": len(full),
+        common.update({"locator_mode": True, "text_chars": len(full),
                        "note": "broad result: locators only; pass max_chars=0 for full text"})
         common["text"] = locators
         return _Result(common)
-    common.update({"mode": "full", "clip": None, "text": full})
+    common["text"] = full
     return _Result(common)
 
 

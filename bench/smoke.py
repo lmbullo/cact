@@ -795,7 +795,7 @@ def main() -> int:
               and ranges[0][0] == 1 and ranges[-1][1] == 900 and [300, 300] in ranges,
               f"{ranges} covered={state_loop.covered(ranges or [])}")
         check("state: the digested card still names the ranges and the handle",
-              "[read] huge.txt" in card and "next " in card, card[:160])
+              "[read] huge.txt" in card and "unread " in card, card[:160])
         raw_text = "\n".join(f"row {n}" for n in range(1, 401))
         raw_cell = Cell(stdout=raw_text, stderr="", result=None, final=None, duration_ms=1,
                         reads={"raw.txt": {"ranges": [[1, 2]], "total": 2}})

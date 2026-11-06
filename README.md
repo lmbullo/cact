@@ -162,7 +162,7 @@ bench/run.py                        tui/bin/code
 - **Search is regex by default:** `search` uses the grep mental model, so `legacy|deprecated`
   is one call; pass `regex=false` for a literal substring. Match and context lines are exact
   (not clipped), adjacent context is merged so each line appears once, and the result carries
-  locators while stdout carries the text. `map(path, include='*.md')` lists files with line
+  counts/locators while stdout carries the text (the card never sends the hit table twice). `map(path, include='*.md')` lists files with line
   counts and an include filter matched against the full relative path or basename
   (`*.md` is any depth; `bench/*.md` is one level), skipping `.gitignore`/generated trees, and
   pages with `shown`/`next`/`has_more`, so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
@@ -175,7 +175,7 @@ bench/run.py                        tui/bin/code
   `start`/`end` that stops before EOF is complete and only has `has_more`.
   `read(path=[...])` applies one window to several files;
   `read(ranges=[{path,start,end},...])` batches different windows. `result.next.offset` is the
-  page cursor, while a state card's `[read] ... (next N)` is the first line not yet covered.
+  page cursor, while a state card's `[read] ... (unread N)` is the first line not yet covered.
   A range already delivered in the session returns a pointer to the earlier `_OBS` output;
   `repeat=True` re-delivers it. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
