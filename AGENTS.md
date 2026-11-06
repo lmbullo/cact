@@ -69,6 +69,7 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → typed observation or state card, context compaction |
 | `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
 | `bench/harness.py` | The tool-path evals L1-L8 (HTML analysis via map/read/outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum, docs grounding); each grades the call record as well as the answer |
+| `bench/sandbox.py` | One mutable feature probe S1: docs -> inspect -> atomic edit -> tests -> typed git commit; `sandbox_hidden/` is its oracle |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `bench/HARD.md` | Why the envelope exists: hard-suite results against `--mode bare` |
@@ -145,8 +146,8 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 8. **Generated, not source:** `bench/.tmp/` (per-run workspaces), `bench/.cache/` (cached LLM
    replies), `bench/ws/` (frozen workspaces, rebuilt on demand), `tui/node_modules/`, and the
    TUI state root `~/.local/state/code-tui/`. `bench/edge_fixtures/` and
-   `bench/harness_fixtures/` are committed but are rebuilt by `edge.build()` /
-   `harness.build()` when missing.
+   `bench/harness_fixtures/`, `bench/sandbox_fixtures/` and `bench/sandbox_hidden/` are
+   committed but rebuilt by their `build()` when missing.
 9. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
    mode (`python3 -m bench.run`). Keep both working.
 10. **Every module explains itself, and something checks.** A source module carries all four
@@ -188,6 +189,7 @@ framework: `bench/smoke.py` plus a real benchmark task is the whole story, e.g.
 ```bash
 DEEPSEEK_API_KEY=... python3 bench/run.py --suite edge --tasks E1_tests --mode state --traces
 DEEPSEEK_API_KEY=... python3 bench/run.py --suite harness --mode state  # tool-path evals L1-L8
+DEEPSEEK_API_KEY=... python3 bench/run.py --suite sandbox --tasks S1_feature --mode state --traces
 ```
 
 which needs network and a key; without one, fall back to the smoke checks above plus reading

@@ -59,6 +59,7 @@ import bench.agent.trace as trace
 import bench.map as map_cli
 import bench.edge as edge
 import bench.harness as harness
+import bench.sandbox as sandbox
 import bench.runs as runs
 import bench.tasks as tasks
 import bench.ws as ws
@@ -160,6 +161,9 @@ def main() -> int:
     check("tasks: by_id", tasks.by_id("T1_count").id == "T1_count")
     check("edge: edge suite", len(edge.EDGE_TASKS) == 10, str(len(edge.EDGE_TASKS)))
     check("harness: loop suite", len(harness.HARNESS_TASKS) == 8, str(len(harness.HARNESS_TASKS)))
+    check("sandbox: one mutable feature probe",
+          len(sandbox.TASKS) == 1 and sandbox.by_id("S1_feature").mutates,
+          str(len(sandbox.TASKS)))
     class _PathRun:
         errors = 0
         repeats = 0
@@ -465,6 +469,25 @@ def main() -> int:
 
         cell = kernel.run("map('.')")
         check("kernel: map", "a.txt" in str(cell.result), str(cell.result)[:120])
+
+        body = "# Top\n\n## Alpha\n" + "".join("typed %d\n" % n for n in range(11))
+        body += "\n## Beta\n" + "".join("typed %d\n" % n for n in range(11))
+        kernel.run("write('sections.md', %r)" % body)
+        cell = kernel.call("search", {"pattern": "typed", "path": "sections.md"})
+        check("kernel: a broad single-file search aggregates by section",
+              cell.envelope.get("kind") == "search_sections"
+              and "Alpha" in cell.stdout and "Beta" in cell.stdout
+              and "sections=false" in " ".join(cell.envelope.get("notes") or []),
+              (cell.stdout + str(cell.envelope))[:240])
+        cell = kernel.call("search", {"pattern": "typed", "path": "sections.md",
+                                       "sections": False})
+        check("kernel: sections=false keeps the raw hit table",
+              cell.envelope.get("kind") == "matches" and "typed" in cell.stdout,
+              (cell.stdout + str(cell.envelope))[:200])
+        cell = kernel.call("read", {"path": "sections.md", "section": "Beta"})
+        check("kernel: read(section=) resolves through outline",
+              "Beta" in cell.stdout and "typed 10" in cell.stdout,
+              (cell.stdout + str(cell.envelope))[:200])
 
         (root / "demo.py").write_text(
             '"""A demo module for the index.\n\nWHAT IT IS\n  demo only\n\nENTRY POINTS\n'

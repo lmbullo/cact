@@ -34,7 +34,8 @@ INVARIANTS
     section; `problems()` is stricter and demands all four. A half-written or unparsable
     module yields an empty header, never an exception.
   - `SKIP_DIRS` is the contract surface: `node_modules`, `__pycache__`, `bench/fixtures`,
-    `bench/edge_fixtures`, `bench/harness_fixtures`, `bench/hard_fixtures`, `bench/hard_hidden`,
+    `bench/edge_fixtures`, `bench/harness_fixtures`, `bench/hard_fixtures`, `bench/hard_hidden`, `bench/sandbox_fixtures`,
+    `bench/sandbox_hidden`,
     `bench/ws`, `bench/traces`, `bench/.tmp`, `bench/.cache`, `dist`, `build`, plus any
     dot-directory. Task workspaces and recorded evidence are inputs and outputs, not code an
     agent maintains.
@@ -58,7 +59,7 @@ SECTIONS = ("WHAT IT IS", "ENTRY POINTS", "INVARIANTS", "WHERE TO CHANGE")
 SKIP_DIRS = frozenset({
     ".git", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".tmp", ".cache", "dist", "build", "fixtures", "edge_fixtures", "harness_fixtures",
-    "hard_fixtures", "hard_hidden", "traces", "ws",
+    "hard_fixtures", "hard_hidden", "sandbox_fixtures", "sandbox_hidden", "traces", "ws",
 })
 LANGUAGES = {".py": "python", ".ts": "ts", ".tsx": "tsx", ".js": "javascript"}
 READ_LIMIT = 400_000

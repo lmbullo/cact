@@ -430,6 +430,7 @@ class HarnessTask:
     source: Path = HARNESS
     mutates: bool = False
     check: Callable[[Path], bool] | None = None
+    prepare: Callable[[Path], None] | None = None
 
 
 HARNESS_TASKS: list[HarnessTask] = [

@@ -330,7 +330,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "search_counts", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -1173,7 +1173,9 @@ def outline(path, max_entries=200, keys=False):
     else:
         header = ("# %s (%d of %d)\n" % (rel, len(entries), total_entries)) if truncated else ""
         text = header + "\n".join(
-            "%d-%d: %s %s" % (item["line"], item["end"], item["kind"], item["name"])
+            "%d-%d: %s %s%s" % (item["line"], item["end"], item["kind"], item["name"],
+                                    " (whole file)" if item.get("kind") == "h1"
+                                    and item["line"] == 1 and item["end"] == len(lines) else "")
             if item["end"] > item["line"]
             else "%d: %s %s" % (item["line"], item["kind"], item["name"])
             for item in entries)
@@ -1197,6 +1199,70 @@ def _section_bounds(path, section):
     for item in exact or partial:
         return int(item["line"]), int(item.get("end") or item["line"])
     return None
+
+
+def _range_count(numbers):
+    total = 0
+    previous = None
+    for number in sorted(set(int(item) for item in numbers)):
+        if previous is None or number > previous + 1:
+            total += 1
+        previous = number
+    return total
+
+
+def _section_search_result(path, numbers, hits_total, occurrences, offset=0, extra_note=""):
+    # A broad search is a discovery request, not a request for 88 lines. Assign each hit to
+    # the innermost outline section that owns it and return one row per section; the model
+    # can then search(section=...) or read() the winning range. Explicit sections=false keeps
+    # the raw hit table for callers that really want it.
+    try:
+        result = outline(path, max_entries=5000, keys=False)
+    except Exception:
+        return None
+    entries = [item for item in (result.get("entries") or [])
+               if int(item.get("line") or 0) > 0]
+    if not entries:
+        return None
+    counts = [0] * len(entries)
+    preamble = 0
+    for number in sorted(set(int(item) for item in numbers)):
+        owner = None
+        for index, item in enumerate(entries):
+            start = int(item.get("line") or 0)
+            end = int(item.get("end") or start)
+            if start <= number <= end:
+                owner = index
+        if owner is None:
+            preamble += 1
+        else:
+            counts[owner] += 1
+    rows = []
+    if preamble:
+        rows.append({"line": 1, "end": int(entries[0].get("line") or 1) - 1,
+                     "kind": "preamble", "name": "(before first section)",
+                     "count": preamble})
+    for item, count in zip(entries, counts):
+        if count:
+            rows.append({"line": int(item.get("line") or 0),
+                         "end": int(item.get("end") or item.get("line") or 0),
+                         "kind": item.get("kind"), "name": item.get("name"),
+                         "count": count})
+    if not rows:
+        return None
+    text = "\n".join("%d-%d: %s %s — %d hit(s)" % (
+        row["line"], row["end"], row["kind"], row["name"], row["count"]) for row in rows)
+    return _Result({
+        "ok": True, "kind": "search_sections", "path": path,
+        "sections": rows, "hits": hits_total, "occurrences": occurrences,
+        "ranges": _range_count(numbers), "shown": len(rows), "total": len(rows),
+        "offset": int(offset), "next": None, "complete": True,
+        "by_file": {path: {"count": hits_total, "lines": sorted(set(int(item) for item in numbers))}},
+        "note": ("aggregated %d hit(s) by section; pass sections=false for matching lines, "
+                 "or section='Heading' to search one section" % hits_total)
+                + (("; " + extra_note) if extra_note else ""),
+        "text": text,
+    })
 
 
 def _coerce_paths(path):
@@ -1334,7 +1400,7 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
     if hit is not None:
         handle = "_OBS[%d]['stdout']" % int(hit["obs"])
         note = ("already delivered in this session; use read(%r, start=%d, end=%d, repeat=True) "
-                "to receive it again, or print(%s)" % (rel, start, stop, handle))
+                "to receive it again" % (rel, start, stop))
         result.update({"already_read": True, "delivered": False,
                        "handle": handle, "text": "# " + note})
         return _Result(result)
@@ -1369,7 +1435,8 @@ def _count_result(counts, occurrences=0, note=None):
                     "note": note})
 
 
-def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=None):
+def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=None,
+                 all_numbers=None):
     # Render each file once. Adjacent/overlapping hits share their context lines, so the
     # model sees every line once; a line that is both a hit and another hit's context keeps
     # the `:` marker. The structured `matches` stays complete for python callers.
@@ -1399,9 +1466,11 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
         entry = by_file.setdefault(path, {"count": 0, "lines": []})
         entry["count"] += 1
         entry["lines"].append(int(hit["line"]))
+    all_numbers = sorted({int(hit["line"]) for hit in hits}) if all_numbers is None else all_numbers
+    range_count = _range_count(all_numbers)
     common = {"ok": True, "kind": "matches", "matches": hits,
               "truncated": truncated, "shown": len(hits), "total": total,
-              "offset": int(offset), "by_file": by_file,
+              "offset": int(offset), "by_file": by_file, "ranges": range_count,
               "next": {"offset": int(offset) + len(hits), "unit": "hit"} if int(offset) + len(hits) < total else None}
     if int(offset) >= total and not hits:
         common["note"] = "end of results (offset %d >= total %d)" % (int(offset), total)
@@ -1414,7 +1483,7 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
             for hit in hits)
         elided = any(hit.get("before") or hit.get("after") for hit in hits)
         common.update({"text_elided": elided, "text_chars": len(full)})
-        if elided:
+        if elided and int(max_chars) != 12000:
             common["note"] = ("broad result: max_chars is a locator threshold, not a cap; "
                               "max_chars=0 disables locator mode")
         common["text"] = locators
@@ -1425,7 +1494,7 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
 
 def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
          ignore_case=False, max_chars=12000, offset=0, count=False, within=None,
-         section=None):
+         section=None, sections=None):
     # Search: one path or a list, an optional include glob, and optional context. The typed
     # `search` and the python `grep` share this one implementation and the same regex default.
     path = _coerce_paths(path)
@@ -1436,7 +1505,8 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
             for item in (sorted(path) if isinstance(path, set) else path):
                 result = grep(pattern, item, max_results=max_results, regex=regex,
                               include=include, context=context, ignore_case=ignore_case,
-                              max_chars=max_chars, offset=0, count=True, within=within)
+                              max_chars=max_chars, offset=0, count=True, within=within,
+                              section=section, sections=False)
                 counts.update(result.get("counts") or {})
                 occurred += int(result.get("occurrences") or 0)
             return _count_result(counts, occurred)
@@ -1444,7 +1514,8 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
         for item in (sorted(path) if isinstance(path, set) else path):
             result = grep(pattern, item, max_results=max_results, regex=regex,
                           include=include, context=context, ignore_case=ignore_case,
-                          max_chars=max_chars, offset=0, within=within)
+                          max_chars=max_chars, offset=0, within=within, section=section,
+                          sections=False)
             hits.extend(result.get("matches") or [])
             occurred += int(result.get("occurrences") or 0)
             truncated = truncated or bool(result.get("truncated"))
@@ -1499,6 +1570,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
     files = [target] if explicit_file else list(_walk(target))
     hits = []
     counts = {}
+    all_numbers = []
     occurrences = 0
     matched_lines = 0
     truncated = False
@@ -1532,6 +1604,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                                 for n in range(number + 1, min(len(lines), number + width) + 1)]
             counts[full_rel] = counts.get(full_rel, 0) + 1
             matched_lines += 1
+            all_numbers.append(number)
             if count:
                 continue
             if matched_lines <= skip:
@@ -1543,8 +1616,16 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
     if count:
         note = None if counts else "no matches for %r in %s" % (pattern, rel)
         return _count_result(counts, occurrences, note)
+    if explicit_file and skip == 0 and (sections is True or
+                                       (sections is None and matched_lines > 20)):
+        aggregated = _section_search_result(
+            rel, all_numbers, matched_lines, occurrences, offset=skip,
+            extra_note=("include is only used for directory paths; the explicit file was searched"
+                        if include_ignored else ""))
+        if aggregated is not None:
+            return aggregated
     result = _grep_result(hits, occurrences, truncated, max_chars,
-                          offset=skip, total=matched_lines)
+                          offset=skip, total=matched_lines, all_numbers=all_numbers)
     notes = []
     if matched_lines == 0:
         notes.append("no matches for %r in %s" % (pattern, rel))
@@ -1564,14 +1645,14 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
 
 def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
            ignore_case=False, max_chars=12000, offset=0, count=False, within=None,
-           section=None):
+           section=None, sections=None):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is
     # regex by default, matching the grep mental model: an alternation like `a|b` is one
     # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
                 include=include, context=context, ignore_case=ignore_case,
                 max_chars=max_chars, offset=offset, count=count, within=within,
-                section=section)
+                section=section, sections=sections)
 
 
 def recall(pattern, limit=10, context=100):

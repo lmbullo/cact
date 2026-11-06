@@ -50,6 +50,7 @@ import json
 UNITS = {
     "read": "line", "file": "line", "files": "window", "search": "hit", "grep": "hit", "matches": "hit",
     "map": "file", "maps": "file", "outline": "entry", "outlines": "entry",
+    "search_sections": "section",
     "guide": "module", "recall": "snippet", "git_diff": "char", "git_show": "char",
     "git_log": "commit",
 }

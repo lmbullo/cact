@@ -52,6 +52,7 @@ cact/
 │   ├── tasks.py             READ suite T1-T5 (answer in text) + MUTATION suite M1-M3 (grade the workspace)
 │   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
 │   ├── harness.py           HARNESS suite L1-L8: grades the answer and the tool path
+│   ├── sandbox.py           SANDBOX S1: one mutable docs -> edit -> test -> git probe
 │   ├── hard.py              HARD suite H1-H4 with a held-out oracle; `bench/HARD.md` has the numbers
 │   ├── hard_runner.py       runs a held-out test directory against a workspace (the hard oracle)
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
@@ -63,6 +64,7 @@ cact/
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
 │   ├── harness_fixtures/    the HARNESS workspace: HTML-in-JS, regex hits, a local checksum, current docs, two edit targets
+│   ├── sandbox_fixtures/    the changeable feature workspace; sandbox_hidden/ owns its oracle
 │   ├── hard_fixtures/       the H1-H4 workspaces; the H3 CSV is generated and gitignored
 │   ├── hard_hidden/         the held-out test tree for H1/H2/H4, outside every workspace
 │   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, hard/, sweep/
@@ -169,7 +171,8 @@ bench/run.py                        tui/bin/code
   context is merged so each line appears once, and `path:line:text` (hit) vs `path:line-text`
   (context) is the separator. `within=[start,end]` or `section="Heading"` narrows the search;
   a paged result carries `[hits]` and a `[more]` sentinel so the next move is a `read`, not
-  offset arithmetic.
+  offset arithmetic. A single-file search with more than 20 hits aggregates by outline
+  section (name, range, hit count); pass `sections=false` for the raw hit table.
 - **Map: files, not headers.** `map(path, include='*.md')` lists files with line counts;
   a literal include is an exact relative path and a glob matches the full path or basename
   (`*.md` any depth, `bench/*.md` one level). Ignored/generated trees are skipped, unmatched
@@ -284,13 +287,14 @@ python3 bench/run.py                                   # read suite, state mode,
 python3 bench/run.py --suite all --mode state          # read + mutation, production loop
 python3 bench/run.py --suite edge --tasks E1_tests,E6_repair --mode state --traces
 python3 bench/run.py --suite harness --mode state      # tool-path evals L1-L8
+python3 bench/run.py --suite sandbox --tasks S1_feature --mode state --traces  # one mutable probe
 python3 bench/run.py --suite hard --mode state         # envelope vs `--mode bare`; see bench/HARD.md
 python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-lib all
 ```
 
 Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and rewrites
 `bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` of each run
-(`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|harness|hard`,
+(`err`/`call`/`get`/`text` lines). Useful knobs: `--suite read|mutation|all|edge|harness|hard|sandbox`,
 `--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--read-chars`,
 `--obs-chars`, `--map off|tool|inline`, `--context map|full`, `--context-chars`,
 `--allow-run off|on`, `--cell-timeout`, `--health on|off`,
@@ -399,7 +403,7 @@ imports `bench.agent` from this repo, so the checkout path matters.
 | What the agent can do (new file/exec/typed verb) | `bench/agent/verbs.py` (schema + summary + function), `kernel.PRELUDE` or `RUN_PRELUDE` (implementation), `bench/smoke.py` (a `Kernel.call` case), and the rules text in `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`. The tool specs and `help()` are generated from the registry; the prose rules are the one hand-written catalog. |
 | How observations look to the model | `state_loop.StateLoop._observe` / `_compact`, `repl.observation` |
 | A stop reason or the finish protocol | `tool_loop.ToolLoop.run`; a different reply dialect overrides `_reply` (see `repl.ReplLoop`) |
-| A new benchmark task | `tasks.py` (read/mutation), `edge.py` (edge) or `harness.py` (tool path), then a run to record the trace |
+| A new benchmark task | `tasks.py` (read/mutation), `edge.py` (edge), `harness.py` (tool path) or `sandbox.py` (one mutable probe), then a run to record the trace |
 | Grading semantics | the `grade_*` functions in `tasks.py` / `edge.py` / `harness.py` |
 | Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env vars |
 | Goal check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |

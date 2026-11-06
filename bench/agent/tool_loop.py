@@ -484,7 +484,9 @@ class ToolLoop:
         }
         if cell.failed or cell.rejected:
             tally.errors += 1
-        if cell.mutated:
+        git_changed = (name == "git"
+                       and str((args or {}).get("action") or "").lower() in ("add", "commit"))
+        if cell.mutated or git_changed:
             if self.verifier is not None:
                 self.verifier.invalidate()
             else:
