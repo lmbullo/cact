@@ -55,6 +55,7 @@ export function taskProgress(task: Task): string {
     .join(" · ");
 }
 
+/** Board order: status band first (running, queued, done, failed), then oldest task first. */
 export function orderTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
     const diff = rank(a) - rank(b);
@@ -67,6 +68,7 @@ export function taskHandle(id: string): string {
   return id;
 }
 
+/** A board row: a status band header, or one task. */
 export type ListRow =
   | { kind: "section"; status: TaskStatus; count: number }
   | { kind: "task"; task: Task };

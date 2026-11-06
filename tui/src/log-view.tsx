@@ -116,6 +116,7 @@ export function EventView({ event, width }: { event: TaskEvent; width: number })
   return <text fg={C.faint}>{clip(`? ${kind}`, width)}</text>;
 }
 
+/** One task's live event stream, one row per event, inside a scrollbox; null task renders nothing. */
 export function LogView({ task, events, width }: { task: Task | null; events: TaskEvent[]; width: number }) {
   if (!task) return null;
   if (events.length === 0) {

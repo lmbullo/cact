@@ -232,9 +232,11 @@ know it exists. If it replaces a mutating shell verb, add it to `_RUN_SHELL_MUTA
 ## 7. Working rules
 
 - State the contract, the entry point and the failure mode. Delete tutorials.
-- Every public function and class carries a one-line docstring: that line is the contract an
-  agent reads through `inspect`, `help(tool)` and `outline`. It states what the thing does, not
-  how. A private helper gets one when its name is not obvious.
+- Every public function, method, class and exported TS symbol carries a one-line docstring
+  (Python) or JSDoc line (TS): that line is the contract an agent reads through `inspect`,
+  `help(tool)`, `outline` and editor hover. It states what the thing does, not how. A private
+  helper gets one when its name is not obvious. Python is gated by `smoke_checks/style.py`;
+  TS conventions are not gated, so match the file you are editing.
 - Prefer one call that does the job over a pipeline of calls; prefer a typed tool over
   `exec(shell=...)`; prefer deleting a duplicate catalog over syncing two copies.
 - A doc claim must be executable or checkable. If you cannot verify it, cut it.

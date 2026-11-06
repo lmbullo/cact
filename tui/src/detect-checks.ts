@@ -27,11 +27,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { CheckSpec } from "./types";
 
+/** The environment knobs this detector reads; a test passes its own instead of process.env. */
 export type CheckEnv = {
   CODE_TUI_CHECKS?: string;
   CODE_TUI_CHECK?: string;
 };
 
+/** The verification plan for one workspace: CODE_TUI_CHECKS, else CODE_TUI_CHECK, else the
+ * package manager's test/typecheck scripts, else bench/smoke.py. Empty means no goal. */
 export function detectChecks(root: string, env: CheckEnv = process.env as CheckEnv): CheckSpec[] {
   const explicit = env.CODE_TUI_CHECKS;
   if (explicit !== undefined) {

@@ -62,6 +62,7 @@ import { C, PROMPT_MAX_ROWS, clip } from "./theme";
 import { Rule, SectionHeader, TaskRow } from "./board-view";
 import { LogView } from "./log-view";
 
+/** The board: task list + live run log + one prompt box, mounted against one server's HTTP URL. */
 export function App({ httpUrl, workspace }: { httpUrl: string; workspace: string }) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();

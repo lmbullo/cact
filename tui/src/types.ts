@@ -32,6 +32,7 @@
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 
+/** One queued/running/finished task as tasks/<id>.json stores it; the board reads only this. */
 export type Task = {
   id: string;
   prompt: string;
@@ -60,6 +61,7 @@ export type Task = {
   cancelRequested?: boolean;
 };
 
+/** One line of events/<id>.jsonl: what the log view renders, in `seq` order. */
 export type TaskEvent = {
   seq: number;
   ts: number;
@@ -73,6 +75,7 @@ export type TaskEvent = {
   data?: Record<string, unknown>;
 };
 
+/** server.json: how to reach this workspace's server and what it was started with. */
 export type ServerInfo = {
   workspace: string;
   stateDir: string;
@@ -90,6 +93,7 @@ export type ServerInfo = {
   checks: CheckSpec[];
 };
 
+/** One entry of the verification plan; mirrors bench.agent.check_plan.CheckSpec. */
 export type CheckSpec = {
   name: string;
   cmd: string;
@@ -97,18 +101,21 @@ export type CheckSpec = {
   scope?: string[];
 };
 
+/** The first WebSocket message: the whole board, so a reconnect needs no replay. */
 export type Snapshot = {
   type: "snapshot";
   server: ServerInfo;
   tasks: Task[];
 };
 
+/** Everything the server pushes over the WebSocket: a snapshot, then task/event deltas. */
 export type WsMessage =
   | Snapshot
   | { type: "task"; task: Task }
   | { type: "event"; taskId: string; event: TaskEvent }
   | { type: "ping"; ts: number };
 
+/** One `@@TUI@@` line from python/worker.py; server.ts is the only reader. */
 export type WorkerMessage =
   | { kind: "cell.start"; cell: number; code?: string; tool?: string; args?: Record<string, unknown> }
   | { kind: "turn"; turn: number; data: Record<string, unknown> }

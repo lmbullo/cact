@@ -34,6 +34,7 @@ import type { TaskStatus } from "./types";
  */
 const hex = (value: string): RGBA => RGBA.fromHex(value);
 
+/** The palette, one named role per colour; never a raw hex at a call site. */
 export const C = {
   bg: hex("#282828"), // bg0
   bg1: hex("#3c3836"), // bg1, for subtle raised surfaces
@@ -63,6 +64,7 @@ export const STATUS: Record<TaskStatus, { word: string; color: RGBA }> = {
 /** The prompt grows with its content up to this many rows, then scrolls internally. */
 export const PROMPT_MAX_ROWS = 5;
 
+/** `text` on one line, at most `width` chars, elided with `…`; width<=1 renders nothing. */
 export function clip(text: string, width: number): string {
   if (width <= 1) return "";
   const flat = text.replace(/\s+/g, " ").trim();

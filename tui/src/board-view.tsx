@@ -27,6 +27,7 @@ import { C, STATUS, clip } from "./theme";
 import { taskHandle, taskProgress } from "./list-model";
 import type { Task, TaskStatus } from "./types";
 
+/** One full-width rule; the optional `note` is sacrificed to keep the line on one row. */
 export function Rule({ width, note }: { width: number; note?: string }) {
   // Keep the hint visible: shrink the rule instead of letting the note run off-screen.
   const hint = note ? ` ${note}` : "";
@@ -34,6 +35,7 @@ export function Rule({ width, note }: { width: number; note?: string }) {
   return note ? <text fg={C.faint}>{`${line}${hint}`}</text> : <text fg={C.faint}>{line}</text>;
 }
 
+/** The status band of the board: the word and colour for `status`, plus its task count. */
 export function SectionHeader({ status, count }: { status: TaskStatus; count: number }) {
   const meta = STATUS[status];
   return (
@@ -46,6 +48,7 @@ export function SectionHeader({ status, count }: { status: TaskStatus; count: nu
   );
 }
 
+/** One task row: handle, prompt, progress and age. Clicking it selects the task. */
 export function TaskRow(props: {
   task: Task;
   selected: boolean;
