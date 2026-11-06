@@ -638,6 +638,7 @@ class ToolLoop:
         usage: dict = {}
         turns: list[dict] = []
         final = ""
+        error = ""
         stop = STEP_LIMIT
         seen: set[str] = set()
         finish = FinishState()
@@ -672,10 +673,13 @@ class ToolLoop:
                     final = outcome.final or ""
                     stop = outcome.stop or DONE
                     break
-        except LLMError:
+        except LLMError as exc:
             # A primary model call failed. Mirror `_push`: stop rather than escape, and keep
-            # whatever answer had already been staged or accepted.
+            # whatever answer had already been staged or accepted. Keep the provider detail:
+            # "LLM_FAILED" alone cannot tell a graph owner whether it was a 429, a 500 or a
+            # malformed request.
             stop = LLM_FAILED
+            error = f"{type(exc).__name__}: {exc}"
             final = final or finish.terminal or finish.staged or ""
         finally:
             wall_ms = (time.perf_counter() - t0) * 1000.0
@@ -693,6 +697,7 @@ class ToolLoop:
                     "usage": usage,
                     "wall_ms": round(wall_ms),
                     "final": final,
+                    "error": error,
                 })
                 trace.close()
 
@@ -709,4 +714,5 @@ class ToolLoop:
             trace=getattr(trace, "path", None),
             turns=turns,
             llm_calls=tally.llm_calls,
+            error=error,
         )

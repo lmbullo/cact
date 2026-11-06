@@ -169,8 +169,10 @@ def run(check):
           fail_result.stop == tool_loop.LLM_FAILED
           and fail_summary.get("summary") is True
           and fail_summary["stop"] == tool_loop.LLM_FAILED
-          and fail_summary["llm_calls"] == 2,
-          f"{fail_result.stop} {fail_summary}")
+          and fail_summary["llm_calls"] == 2
+          and "upstream 500" in fail_result.error
+          and "upstream 500" in fail_summary.get("error", ""),
+          f"{fail_result.stop} {fail_summary} {fail_result.error!r}")
 
     push_client = FakeClient([_reply(content="budget summary", finish="stop")])
     push_result = tool_loop.ToolLoop(push_client, FakeKernel({}), loop.Budget(max_steps=0)).run(

@@ -19,6 +19,8 @@ INVARIANTS
     production; do not tune production from here. The live caps are `max_steps`,
     `max_wall_s` and `max_output_tokens`; a field no loop reads does not belong in Budget.
   - `_usage_add` is additive and tolerates missing provider fields, including cache hits.
+  - `RunResult.error` is the provider/loop failure detail for a stop that has no final answer
+    (LLM_FAILED is the first user); an empty string means no separate detail.
   - `RunResult.steps` is the number of turns, i.e. primary `client.complete` calls. `calls`
     is the number of tool calls / kernel cells, a different axis. `llm_calls` is every model
     request the loop made, including the budget-forced `_push`, so `llm_calls >= steps`.
@@ -59,6 +61,7 @@ class RunResult:
     turns: list[dict] = field(default_factory=list)
     workspace: str = ""
     llm_calls: int = 0
+    error: str = ""
 
 
 def _usage_add(acc: dict, usage: dict) -> None:

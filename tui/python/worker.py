@@ -327,6 +327,8 @@ def main() -> int:
         emit({"kind": "final", "status": "failed", "stop": "NO_RESULT"})
         return 1
 
+    if result.error:
+        emit({"kind": "error", "text": result.error})
     if result.stop in ("DONE", "VERIFIED"):
         status = "done"
     elif result.stop in ("STEP_LIMIT", "WALL_LIMIT") and (result.final or "").strip():
@@ -345,6 +347,7 @@ def main() -> int:
             "errors": result.errors,
             "usage": result.usage,
             "wallMs": round(result.wall_ms),
+            "error": result.error,
         }
     )
     return 0 if status == "done" else 1
