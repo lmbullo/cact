@@ -67,7 +67,7 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 | `bench/agent/tools.py` | `TYPE_TOOLS` generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
 | `bench/agent/headers.py` | The header index: `index()`, `guide()`, `problems()`. Shipped as source to every kernel child, so `python3 bench/map.py` and the `guide()` verb run the same code |
 | `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
-| `bench/harness.py` | The tool-path evals L1-L7 (HTML outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum); each grades the call record as well as the answer |
+| `bench/harness.py` | The tool-path evals L1-L7 (HTML analysis via map/read/outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum); each grades the call record as well as the answer |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `bench/HARD.md` | Why the envelope exists: hard-suite results against `--mode bare` |

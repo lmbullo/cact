@@ -4,8 +4,9 @@ touched.
 WHAT IT IS
   The one command that tells a coding agent "the code still works" without spending tokens.
   It imports every module, drives the kernel prelude end to end (map/read/search/outline/write/
-  edit/splice/apply/commit/changes/diff/undo, batched read and exec, exec/run allowing reads
-  and refusing mutation, a bad typed call answered as `bad_args`, the HTML outline and the
+  edit/splice/apply/commit/changes/diff/undo, batched read and exec, the repeated-read
+  pointer (`repeat=True` re-delivers), `map(include=...)`, exec/run allowing reads and
+  refusing mutation, a bad typed call answered as `bad_args`, the HTML outline and the
   regex search default) and checks the pure helpers (reply parsing, state digests, read
   coverage, the spawn gate, check plans), plus the header index (`bench/agent/headers.py`)
   and the contract CLI (`bench/map.py`).

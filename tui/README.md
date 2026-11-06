@@ -140,7 +140,8 @@ same keys on both screens — you can keep typing (and queue) a prompt while a r
 - The server broadcasts task updates and events over WebSocket; the TUI only keeps
   in-memory state and reconnects every second on close. There is no TUI-side database.
 
-State lives here (`$XDG_STATE_HOME/code-tui` when set, else `~/.local/state/code-tui`):
+State lives here (`$CODE_TUI_STATE_ROOT` when set, else `$XDG_STATE_HOME/code-tui`, else
+`~/.local/state/code-tui`):
 
 ```
 workspaces/<sha256-of-workspace, first 16 hex>/
@@ -331,8 +332,9 @@ with `-c`/`-lc` inside argv is refused as `shell_via_exec`; use `exec(shell=<str
 an explicit shell string. Direct process spawning
 (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through
 the same classifier, so a program cannot shell out around the gate. The kernel provides
-`read()` (one path or a list), `search()` (`grep()` is the python alias), `outline()`
-(headings/defs with line numbers), `guide()`, `map()`, `write()`, `edit()`, `splice()`,
+`read()` (one path or a list; a range already shown returns an `already_read` pointer unless
+`repeat=True`), `search()` (`grep()` is the python alias), `outline()` (headings/defs with
+line numbers), `guide()`, `map()` (`include` filters by glob), `write()`, `edit()`, `splice()`,
 `apply()` and `recall()` for earlier cell output; `exec()` and `git()` arrive with the
 process prelude, so they are absent when `CODE_TUI_ALLOW_RUN=0`. Mutations are journalled
 together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program

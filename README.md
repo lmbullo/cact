@@ -130,7 +130,8 @@ bench/run.py                        tui/bin/code
   `rejected`). The typed call and the Python cell share every step after dispatch, so a
   typed edit is journalled, covered and digested exactly like a printed cell. The typed
   process tool is `exec` — `argv`, `commands=[[...]]` or the explicit `shell=<string>`; the
-  typed `git` tool covers status/diff/show/log/files/add/commit/push without a pager.
+  typed `git` tool covers status/diff/show/log/files/add/commit/push/remote/branch without a
+  pager.
   `run(command)` is the shell escape hatch inside a Python cell, and exists only in repl/bare.
   `deltas` is the per-file unified diff; `delta` is only their joined text for the card. A
   reply whose `protocol` does not match `PROTOCOL` is never read through the current shape:
@@ -200,7 +201,8 @@ bench/run.py                        tui/bin/code
   Mutating scratch space (`/tmp`, `/var/tmp`, `/dev/shm`, `$TMPDIR`) is allowed:
   the journal covers the tree, not scratch.
 - **TUI:** `server.ts` owns task JSON + append-only event journals under
-  `~/.local/state/code-tui/workspaces/<sha256-of-cwd, 16 hex>/`; `client.tsx` holds no
+  `$CODE_TUI_STATE_ROOT` (else `$XDG_STATE_HOME/code-tui`, else
+  `~/.local/state/code-tui`)/workspaces/<sha256-of-cwd, 16 hex>/; `client.tsx` holds no
   persistent state of its own and reconnects every second. A `turn` message updates
   `Task.progress` (turn number plus prompt tokens), so a board row moves before the final
   answer arrives; a turn that rejected or staged a finish carries a `notice`, rendered as
@@ -334,7 +336,8 @@ imports `bench.agent` from this repo, so the checkout path matters.
    bypass the journal and make `diff()`/`undo()` lie. `git add`, `commit`, `push`, `fetch`,
    `init` and `clone` are allowed: they do not overwrite working-tree content. `exec` and
    `run()` share the gate. Use the typed `git` tool for status/diff/show/log/files/add/
-   commit/push: it has no pager and pages large diffs with `offset`/`max_chars`. Mutations
+   commit/push/remote/branch: it has no pager and pages large diffs with
+   `offset`/`max_chars`. Mutations
    whose targets are absolute paths under a scratch root (`/tmp`, `/var/tmp`, `/dev/shm`,
    `$TMPDIR`) are allowed; the journal only promises the tree. Direct process spawning
    (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) goes through
