@@ -2,7 +2,7 @@
 
 WHAT IT IS
   The turn machine the production loop extends. The model gets the typed tools generated
-  from `verbs.VERBS` (map/read/search/outline/edit/splice/write/apply/exec/git)
+  from `verbs.VERBS` (guide/map/read/diff/search/recall/outline/edit/splice/write/apply/exec/git)
   plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is dispatched to
   `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return the same
   `Cell`; a `Verifier` (checks.py) decides whether the task may finish and what the cheap
@@ -132,7 +132,7 @@ PYTHON_TOOL = {
     },
 }
 
-TOOL_RULES = """You act by calling tools. The typed tools (guide, map, read, search, recall, outline, edit, splice, write, apply, exec, git) execute against the workspace and return structured observations. A typed observation has `[observe]`/`[page]` (`shown/total/next/unit/complete`) and `[data]`; the card does not clip it, so trust `page.complete` rather than a prose tail. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
+TOOL_RULES = """You act by calling tools. The typed tools (guide, map, read, diff, search, recall, outline, edit, splice, write, apply, exec, git) execute against the workspace and return structured observations. A typed observation has `[observe]`/`[page]` (`shown/total/next/unit/complete`) and `[data]`; the card does not clip it, so trust `page.complete` rather than a prose tail. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
 
 For "which module owns this?", use guide(query) (ranked rows; total/next are truthful, default limit 10) or guide(path) for one module's full header. For files, use map, outline, read and search. map(path, include='*.md') lists files with line counts; a literal include is an exact relative path and a glob matches full path or basename, skipping .gitignore/generated trees (use it instead of ls/find through exec); outline(path) returns headings and definitions with line numbers (Markdown sections, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS template literals, CSS section comments), so read a long file by its structure instead of guessing. read takes a path or a list and a line range (start/end); has_more means the file continues, truncated only means the default page limit cut it, and a range already shown this session returns a short pointer (read(..., repeat=True) re-delivers it). search takes a pattern, one path or a list, include='*.py' to filter, context=N for merged surrounding lines, and ignore_case; its line text is exact, and broad context returns locators (`text_elided`) instead of a silently digested blob. Search is regex by default, so `a|b` is one call; pass regex=False for a literal substring. They return line numbers and handles, so you can go straight to the range you need.
 
@@ -140,7 +140,7 @@ exec(argv, ...) is the one process tool. Use argv for one program, commands=[[..
 
 Every mutation is journalled through write, edit, splice or apply. edit takes one path/old/new or edits=[{path, old, new}, ...]; a list is atomic, so use it instead of one edit per line. splice(path, start, end, text) replaces 1-based inclusive lines; apply takes a unified diff; write is for a new file or a real rewrite. Scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are not gated.
 
-Earlier cells keep their full output in _OBS. The typed recall tool searches it (including turns a fold removed) and returns matching snippets plus the handle to page the full text; search is for the tree, recall is for the session. help(), diff()/session_diff(), changes(), undo() and commit() remain python helpers; session_diff() is the journal view, while the git tool's diff is the working tree.
+Earlier cells keep their full output in _OBS. The typed recall tool searches it (including turns a fold removed) and returns matching snippets plus the handle to page the full text; search is for the tree, recall is for the session. The typed diff tool is the journal view of the current session; git diff is the working tree, and session_diff()/changes()/undo()/commit() remain python helpers.
 """
 
 @dataclass

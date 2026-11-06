@@ -18,8 +18,9 @@ task board in front of it.
 There is no root `package.json`, no `pyproject.toml`, no CI. The only install step is
 `bun install` inside `tui/`.
 
-Coding agents: call the typed `guide(query)` first, or run `python3 bench/map.py` outside a
-cell — both index the header of every source module (what it is, entry points, invariants,
+Coding agents: for source contracts call the typed `guide(query)` (or `python3 bench/map.py`
+outside a cell); for Markdown/docs use `map`/`read`/`search` — the index covers the header of
+every source module (what it is, entry points, invariants,
 where to change it). `guide` is the in-kernel verb; `bench/map.py --query <topic>` is the CLI
 equivalent and `--check` fails when a header is incomplete. The typed `map` tool lists files;
 it is not the header index. `AGENTS.md` is the short version of this file plus the rules that
@@ -113,8 +114,8 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the workspace verbs — guide/map/read/search/recall/outline/edit/
-          │           splice/write/apply — plus the python helpers guide/grep/
+          ├─ PRELUDE: the workspace verbs — guide/map/read/diff/search/recall/outline/
+          │           edit/splice/write/apply — plus the python helpers guide/grep/
           │           diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │

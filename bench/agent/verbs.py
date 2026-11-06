@@ -78,7 +78,7 @@ VERBS: dict[str, dict] = {
     },
     "read": {
         "function": "read",
-        "summary": "Read one file or several files. Returns kind/total_lines/shown/next/has_more/truncated and the numbered text; path=[...] applies one window to several files, ranges=[{path,start,end}] batches different windows. start/end are the canonical line range; has_more means the file continues after shown, while truncated only means the default page limit cut the requested output. A range already shown this session returns a short pointer; pass repeat=true to re-deliver it.",
+        "summary": "Read one file or several. start/end are the canonical line range; path=[...] applies one window to several files, ranges=[{path,start,end}] batches different windows. has_more means the file continues; truncated means the page limit cut the request. A range already shown this session returns a pointer; repeat=true re-delivers it.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -102,9 +102,22 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    "diff": {
+        "function": "diff",
+        "summary": "The journal view: the unified diff of the current session's mutations, optionally for one path. For git history/working-tree diff use the git tool.",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "max_chars": {"type": "integer", "minimum": 0},
+            },
+            "additionalProperties": False,
+        },
+    },
     "search": {
         "function": "search",
-        "summary": "Search files for a regex (default) or a literal. stdout is path:line:text with exact hit text and merged context; the result adds shown/total/offset/next/truncated, keeps no duplicate hit table, and becomes locators when max_chars is exceeded (text_elided=true; max_chars is a threshold, not a cap). include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
+        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap). include filters directory walks; a file path is searched as given.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -231,7 +244,7 @@ VERBS: dict[str, dict] = {
     },
     "exec": {
         "function": "exec_argv",
-        "summary": "The process tool for typed modes: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd replaces cd. run() is the python-only equivalent in repl/bare, not here. Do not pass bash -lc in argv; use shell. For files use search/read, not the shell.",
+        "summary": "The typed process tool: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd/env/stdin are explicit; run() is python-only. For files use search/read, not the shell.",
         "mutates": False,
         "requires_run": True,
         "schema": {
@@ -270,7 +283,7 @@ VERBS: dict[str, dict] = {
     },
     "git": {
         "function": "git_tool",
-        "summary": "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars and return next.offset plus has_more, the same paging shape as read; commit takes message and optional paths. Use it instead of git through exec; session_diff() is the journal view, not git.",
+        "summary": "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars and return next.offset plus has_more, the same paging shape as read; commit takes message and optional paths. Use it instead of git through exec; the typed diff tool is the journal view, not git.",
         "mutates": False,
         "requires_run": True,
         "schema": {

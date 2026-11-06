@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Orientation for coding agents. The human owner does not read this code; you do. Read this
-file first, then call the typed `guide(query)` (or `python3 bench/map.py` outside a cell):
+file first, then for source contracts call `guide(query)` (or `python3 bench/map.py` outside a cell); for docs use map/read/search:
 it parses the header of every source module (WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE
 TO CHANGE) and prints which module owns what. `guide(query)` answers "where do I change
 this?"; `guide(path)` prints one module whole. The typed `map` tool lists files; it is not
@@ -17,7 +17,7 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent itself (`bench/agent/`) plus the benchmark suites, fixtures and recorded traces |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (guide, map, read, search, recall, outline, edit, splice, write, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
+The agent is a model in a loop with a **persistent Python kernel**. The default action space is a small set of typed tools (guide, map, read, diff, search, recall, outline, edit, splice, write, apply, exec, git, in that registry order) generated from one registry (`bench/agent/verbs.py`); `python` is for computation. `exec` is the one process tool: argv, commands, or an explicit `shell` string; the typed `git` tool covers the common git reads and writes. `run()` is available only in python-only modes (repl/bare). A cell can read, search, map, write, edit and run programs; every mutation is journalled so `changes()`, `diff()` and `undo()` work. `bench/` scores that loop against graded tasks; `tui/` puts a task board in front of it.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install`
 inside `tui/`.

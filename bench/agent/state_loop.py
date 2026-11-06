@@ -101,7 +101,8 @@ _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNOREC
 _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
 # Typed verbs already page and name their own loss. The card renders their observation
 # verbatim; only process/python output is digested, because only it has no paging contract.
-_VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall", "git"})
+_VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall",
+                            "diff", "git"})
 
 
 def merge_ranges(ranges) -> list[list[int]]:

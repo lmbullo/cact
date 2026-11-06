@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 
 UNITS = {
-    "read": "line", "file": "line", "search": "hit", "grep": "hit", "matches": "hit",
+    "read": "line", "file": "line", "files": "window", "search": "hit", "grep": "hit", "matches": "hit",
     "map": "file", "maps": "file", "outline": "entry", "outlines": "entry",
     "guide": "module", "recall": "snippet", "git_diff": "char", "git_show": "char",
     "git_log": "commit",
@@ -83,6 +83,8 @@ def page_of(kind, value):
             shown = len(value["items"])
         elif isinstance(value.get("modules"), list):
             shown = len(value["modules"])
+        elif str(value.get("kind") or "") == "files" and value.get("count") is not None:
+            shown = int(value.get("count") or 0)
         else:
             shown = 0
     total = value.get("total")
@@ -104,7 +106,8 @@ def page_of(kind, value):
     nxt = value.get("next")
     unit = value.get("unit")
     if isinstance(nxt, dict):
-        offset = nxt.get("offset", offset)
+        if offset is None:
+            offset = nxt.get("offset")
         unit = nxt.get("unit", unit)
         nxt = nxt.get("offset")
     elif nxt is not None:

@@ -7,7 +7,7 @@ WHAT IT IS
                     or dispatch one typed verb call in the namespace that survives between
                     requests -> one `@@K@@` JSON line back on stdout.
        PRELUDE      injects the workspace verbs from verbs.VERBS that need no process
-                    (map/read/search/outline/edit/splice/write/apply) plus the python
+                    (map/read/diff/search/outline/edit/splice/write/apply) plus the python
                     helpers guide()/grep()/recall()/verbs()/diff()/changes()/undo()/
                     commit()/help()/final_answer()/emit(), and journals every mutation
                     (snapshot at start, tree diff after each cell). `guide()` is headers.py,
@@ -41,8 +41,8 @@ ENTRY POINTS
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor (normalizes a typed
                                        result into `Cell.envelope`)
-  Inside the kernel namespace: PRELUDE's typed verbs (map/read/search/outline/edit/
-        splice/write/apply) and helpers guide()/grep()/recall()/verbs()/diff()/changes()/
+  Inside the kernel namespace: PRELUDE's typed verbs (map/read/diff/search/outline/edit/
+        splice/write/apply) and helpers guide()/grep()/recall()/verbs()/changes()/
         undo()/commit()/help(); RUN_PRELUDE adds exec_argv() (the typed `exec` tool) and
         git_tool(), and run() only when allow_shell. final_answer()/emit() are always there.
   Helper used by the loops: `run_check` lives in check.py; loops read `Cell.changed` /

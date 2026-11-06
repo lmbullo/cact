@@ -233,7 +233,11 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000):
         if len(scored) > len(public):
             lines.append("(showing %d of %d; pass limit= to see more)" % (len(public), len(scored)))
         if note:
-            lines.insert(0, note)
+            # The query named a real non-source file. Do not pad it with weak header rows:
+            # ``guide`` is the source-contract index, not the docs search.
+            return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
+                    "shown": 0, "total": 0, "next": None,
+                    "note": note, "text": note}
         if not lines:
             lines = ["no documented module matches %r; try map() or search()" % str(query)]
         nxt = {"offset": len(public), "unit": "module"} if len(scored) > len(public) else None
