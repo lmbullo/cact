@@ -6,7 +6,7 @@ WHAT IT IS
   cell's result is rendered as a state card instead of a transcript:
 
     [state]  turn, elapsed, prompt tokens, and the files this cell changed
-    [observe]/[page]  a typed verb's envelope: op/status, shown/total/next/unit/complete
+    [observe]/[page]  a typed verb's envelope: op/status, shown/total/next/unit/has_more/complete
     [data]   the typed result's text, verbatim (typed verbs page; the card does not clip them)
     [note] / [error]  explicit notes and the structured rejection
     [stderr] / [stdout]  for python/exec only: head, error lines, tail, plus an _OBS[n] handle
@@ -87,7 +87,7 @@ STATE_RULES = TOOL_RULES + """
 STATE CARDS
 Every tool result is a state card, not a terminal transcript:
   [state]  the turn, its cost, and the files this cell changed
-  [observe] and [page] are the typed envelope: op/status, shown/total/next/unit/complete
+  [observe] and [page] are the typed envelope: op/status, shown/total/next/unit/has_more/complete
   [data] is the typed result's text, already paged by the verb; [note]/[error] are structured
   [stderr] and [stdout] (python/exec only) are bounded: head, tail, error lines and an _OBS[n] handle
   [result] the last python expression, clipped; a typed result never repeats its text here
@@ -95,7 +95,7 @@ Every tool result is a state card, not a terminal transcript:
   [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is the next cursor in `unit`, `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels each `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: a-b, ...)` on that line lists the holes, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels each `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
@@ -103,7 +103,7 @@ _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
 # Typed verbs already page and name their own loss. The card renders their observation
 # verbatim; only process/python output is digested, because only it has no paging contract.
 _VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall",
-                            "diff", "git"})
+                            "session_diff", "git"})
 
 
 def merge_ranges(ranges) -> list[list[int]]:
@@ -274,6 +274,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                 bits.append(f"offset={page['offset']}")
             if page.get("next") is not None:
                 bits.append(f"next={page['next']}")
+            bits.append("has_more=" + ("true" if page.get("has_more") else "false"))
             bits.append("complete=" + ("true" if page.get("complete") else "false"))
             parts.append("[page] " + " ".join(bits))
         for note in env.get("notes") or []:
@@ -293,7 +294,10 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                                   for a, b in ranges[:6])
                 if len(ranges) > 6:
                     where += " +%d more" % (len(ranges) - 6)
-                parts.append("[hits] %s %s: %s" % (path, info.get("count"), where))
+                total_hits = page.get("total") or 0
+                remain = max(0, int(total_hits) - int(page.get("offset") or 0) - int(page.get("shown") or 0))
+                parts.append("[hits] %s: %s hit(s) in %d range(s); page of %d, %d remain"
+                             % (path, info.get("count"), len(ranges), total_hits, remain))
         if not env.get("ok", True) and env.get("error"):
             err = env["error"]
             parts.append("[error] %s: %s%s" % (
@@ -323,9 +327,11 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
         missing = gaps(list(session.get("ranges") or []) + ranges, total)
         tail = ""
         if missing:
-            shown_gaps = ", ".join("%d-%d" % (a, b) for a, b in missing[:3])
-            if len(missing) > 3:
-                shown_gaps += " +%d more" % (len(missing) - 3)
+            if len(missing) <= 6:
+                shown_gaps = ", ".join("%d-%d" % (a, b) for a, b in missing)
+            else:
+                shown_gaps = "%d ranges / %d lines" % (
+                    len(missing), sum(b - a + 1 for a, b in missing))
             tail = f" (unread: {shown_gaps})"
         text = ", ".join(f"{a}-{b}" for a, b in merge_ranges(ranges))
         parts.append(f"[read] {path} {text}/{total}{tail}")

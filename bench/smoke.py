@@ -422,9 +422,9 @@ def main() -> int:
         check("kernel: diff() returns text, not a dict",
               "str" in cell.stdout and "---" in cell.stdout, cell.stdout[:160])
 
-        cell = kernel.call("diff", {"path": "b.txt"})
-        check("kernel: call(diff) is the typed journal view",
-              cell.tool == "diff" and "---" in cell.stdout and "+++" in cell.stdout,
+        cell = kernel.call("session_diff", {"path": "b.txt"})
+        check("kernel: call(session_diff) is the typed journal view",
+              cell.tool == "session_diff" and "---" in cell.stdout and "+++" in cell.stdout,
               (cell.stdout + cell.stderr)[:200])
         cell = kernel.run("print(changes())")
         check("kernel: changes lists the file", "b.txt" in cell.stdout, cell.stdout[:120])

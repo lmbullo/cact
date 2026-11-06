@@ -104,9 +104,9 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
-    "diff": {
+    "session_diff": {
         "function": "diff",
-        "summary": "The journal view: the unified diff of the current session's mutations, optionally for one path. For git history/working-tree diff use the git tool.",
+        "summary": "The session journal view: the unified diff of mutations made this run, optionally for one path. For the working tree/history use git(action='diff').",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -119,7 +119,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count. include filters directory walks; a file path is searched as given.",
+        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count; within=[start,end] restricts a range. include filters directory walks; a file path is searched as given.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -139,6 +139,9 @@ VERBS: dict[str, dict] = {
                            "description": "Skip this many matching lines; next.offset pages the result."},
                 "count": {"type": "boolean", "default": False,
                           "description": "Only count matching lines per file; returns path:count rows, no hit text."},
+                "within": {"type": "array", "items": {"type": "integer", "minimum": 1},
+                           "minItems": 2, "maxItems": 2,
+                           "description": "Restrict line matching to [start, end] (1-based); useful with an outline range."},
                 "max_chars": {"type": "integer", "minimum": 0,
                               "description": "Locator threshold, not a cap: above it broad results are text_elided locators; 0 disables locator mode and returns full text."},
             },
@@ -288,7 +291,7 @@ VERBS: dict[str, dict] = {
     },
     "git": {
         "function": "git_tool",
-        "summary": "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars and return next.offset plus has_more, the same paging shape as read; commit takes message and optional paths. Use it instead of git through exec; the typed diff tool is the journal view, not git.",
+        "summary": "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars and return next.offset plus has_more, the same paging shape as read; commit takes message and optional paths. Use it instead of git through exec; the typed session_diff tool is the journal view, not git.",
         "mutates": False,
         "requires_run": True,
         "schema": {

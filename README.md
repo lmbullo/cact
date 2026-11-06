@@ -114,7 +114,7 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the workspace verbs — guide/map/read/diff/search/recall/outline/
+          ├─ PRELUDE: the workspace verbs — guide/map/read/session_diff/search/recall/outline/
           │           edit/splice/write/apply — plus the python helpers guide/grep/
           │           diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
@@ -186,7 +186,7 @@ bench/run.py                        tui/bin/code
   different windows. A range already delivered this session returns a pointer to the earlier
   `_OBS` output; `repeat=True` re-delivers it. `Cell.reads` records `{path: {ranges, total}}`;
   the card prints `[read] path ranges/total (unread: holes)`, and `[page]` carries
-  `shown/total/next/unit/complete`. Coverage is guidance, not a finish gate: reads through
+  `shown/total/next/unit/has_more/complete`; `next` is a replayable argument object. Coverage is guidance, not a finish gate: reads through
   python `open()` (or `run()` in repl/bare) are equally valid and are not tracked.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —

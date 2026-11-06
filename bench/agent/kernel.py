@@ -7,7 +7,7 @@ WHAT IT IS
                     or dispatch one typed verb call in the namespace that survives between
                     requests -> one `@@K@@` JSON line back on stdout.
        PRELUDE      injects the workspace verbs from verbs.VERBS that need no process
-                    (map/read/diff/search/outline/edit/splice/write/apply) plus the python
+                    (map/read/session_diff/search/outline/edit/splice/write/apply) plus the python
                     helpers guide()/grep()/recall()/verbs()/diff()/changes()/undo()/
                     commit()/help()/final_answer()/emit(), and journals every mutation
                     (snapshot at start, tree diff after each cell). `guide()` is headers.py,
@@ -41,7 +41,7 @@ ENTRY POINTS
     .failure(message, ...) the one restart/error constructor
     .from_reply(reply, duration_ms=...) the one success constructor (normalizes a typed
                                        result into `Cell.envelope`)
-  Inside the kernel namespace: PRELUDE's typed verbs (map/read/diff/search/outline/edit/
+  Inside the kernel namespace: PRELUDE's typed verbs (map/read/session_diff/search/outline/edit/
         splice/write/apply) and helpers guide()/grep()/recall()/verbs()/changes()/
         undo()/commit()/help(); RUN_PRELUDE adds exec_argv() (the typed `exec` tool) and
         git_tool(), and run() only when allow_shell. final_answer()/emit() are always there.
@@ -1390,7 +1390,7 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
 
 
 def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-         ignore_case=False, max_chars=12000, offset=0, count=False):
+         ignore_case=False, max_chars=12000, offset=0, count=False, within=None):
     # Search: one path or a list, an optional include glob, and optional context. The typed
     # `search` and the python `grep` share this one implementation and the same regex default.
     path = _coerce_paths(path)
@@ -1401,7 +1401,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
             for item in (sorted(path) if isinstance(path, set) else path):
                 result = grep(pattern, item, max_results=max_results, regex=regex,
                               include=include, context=context, ignore_case=ignore_case,
-                              max_chars=max_chars, offset=0, count=True)
+                              max_chars=max_chars, offset=0, count=True, within=within)
                 counts.update(result.get("counts") or {})
                 occurred += int(result.get("occurrences") or 0)
             return _count_result(counts, occurred)
@@ -1409,7 +1409,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
         for item in (sorted(path) if isinstance(path, set) else path):
             result = grep(pattern, item, max_results=max_results, regex=regex,
                           include=include, context=context, ignore_case=ignore_case,
-                          max_chars=max_chars, offset=0)
+                          max_chars=max_chars, offset=0, within=within)
             hits.extend(result.get("matches") or [])
             occurred += int(result.get("occurrences") or 0)
             truncated = truncated or bool(result.get("truncated"))
@@ -1434,6 +1434,17 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                               "use": "search(pattern, regex=False) for a literal substring"}}
     needle = pattern.lower() if ignore_case else pattern
     includes = _include_patterns(include)
+    window = None
+    if within is not None:
+        try:
+            if isinstance(within, dict):
+                window = (int(within.get("start") or 1), int(within.get("end") or 0))
+            elif isinstance(within, (list, tuple)) and len(within) == 2:
+                window = (int(within[0]), int(within[1]))
+        except (TypeError, ValueError):
+            window = None
+        if window is not None and window[1] < window[0]:
+            window = None
     explicit_file = _os.path.isfile(target)
     include_ignored = bool(includes and explicit_file)
     files = [target] if explicit_file else list(_walk(target))
@@ -1456,6 +1467,8 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
         for number, line in enumerate(lines, 1):
             hay = line.lower() if ignore_case else line
             if not (matcher.search(line) if matcher else needle in hay):
+                continue
+            if window is not None and not (window[0] <= number <= window[1]):
                 continue
             if matcher:
                 occurrences += len(matcher.findall(line))
@@ -1501,13 +1514,13 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
 
 
 def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-           ignore_case=False, max_chars=12000, offset=0, count=False):
+           ignore_case=False, max_chars=12000, offset=0, count=False, within=None):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is
     # regex by default, matching the grep mental model: an alternation like `a|b` is one
     # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
                 include=include, context=context, ignore_case=ignore_case,
-                max_chars=max_chars, offset=offset, count=count)
+                max_chars=max_chars, offset=offset, count=count, within=within)
 
 
 def recall(pattern, limit=10, context=100):

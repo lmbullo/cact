@@ -105,11 +105,12 @@ def page_of(kind, value):
         total = int(total) if total is not None else None
     except (TypeError, ValueError):
         total = None
+    kind_name = str(value.get("kind") or kind)
     offset = value.get("offset")
     nxt = value.get("next")
     unit = value.get("unit")
     if isinstance(nxt, dict):
-        if offset is None:
+        if offset is None and kind_name not in ("file", "files"):
             offset = nxt.get("offset")
         unit = nxt.get("unit", unit)
         nxt = nxt.get("offset")
@@ -118,6 +119,8 @@ def page_of(kind, value):
             nxt = int(nxt)
         except (TypeError, ValueError):
             nxt = None
+    if offset is None and isinstance(value.get("shown"), (list, tuple)) and len(value["shown"]) == 2:
+        offset = value["shown"][0]
     if offset is not None:
         try:
             offset = int(offset)
@@ -125,12 +128,19 @@ def page_of(kind, value):
             offset = None
     has_more = bool(value.get("has_more") or nxt is not None)
     # `complete` is "this request was served"; `has_more` is "the file/result continues".
-    # An explicit read range is complete even when the file has more lines.
     complete = not bool(value.get("truncated"))
-    if has_more and str(value.get("kind") or kind) not in ("file", "files"):
+    if has_more and kind_name not in ("file", "files"):
         complete = False
-    return {"shown": shown, "total": total, "offset": offset, "next": nxt,
-            "unit": unit or UNITS.get(kind) or UNITS.get(str(value.get("kind") or "")),
+    # `next` is a replayable argument object, not a bare number whose unit the caller has to
+    # remember: read is line-based, every other pager is offset-based.
+    if nxt is None:
+        next_arg = None
+    elif kind_name in ("file", "files"):
+        next_arg = {"start": nxt}
+    else:
+        next_arg = {"offset": nxt}
+    return {"shown": shown, "total": total, "offset": offset, "next": next_arg,
+            "unit": unit or UNITS.get(kind) or UNITS.get(kind_name),
             "has_more": has_more, "complete": complete}
 
 
