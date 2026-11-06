@@ -60,7 +60,7 @@ INVARIANTS
   - `_compact` cuts only on an assistant tool-call boundary, so no tool result is orphaned
     from its call.
   - The `[state] changed:` line and `[diff]` both come from the kernel's journal
-    (kernel.py::_commit): `Cell.changed` lists the paths, `Cell.deltas` carries each one's
+    (kernel/prelude.py::_commit): `Cell.changed` lists the paths, `Cell.deltas` carries each one's
     unified diff, and `Cell.delta` is only their joined text for the card. `_note_cell`
     reads the structured `deltas`; it never re-parses the text.
   - `[check]` is ToolLoop's `last_check` (the Verifier's cheap subset, refreshed after a

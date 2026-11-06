@@ -5,10 +5,10 @@ WHAT IT IS
   description, the JSON schema the provider sees, whether the action mutates the tree, the
   prelude function that implements it (`function`, default `name`), and whether it is a
   typed tool (`typed`, default True) or a python-only helper. `tools.py` builds the provider
-  specs from the typed entries; `kernel.py` ships the whole dict to the child as KERNEL_VERBS
-  so `help()`/`verbs()` and the driver resolve the same names. Adding a verb here,
-  implementing the function in kernel.PRELUDE, adding a smoke call, and mentioning it in
-  the rules text is the whole job.
+  specs from the typed entries; `kernel/process.py` ships the whole dict to the child as
+  KERNEL_VERBS so `help()`/`verbs()` and the driver resolve the same names. Adding a verb
+  here, implementing the function in kernel/prelude.py, adding a smoke call in
+  bench/smoke_checks/, and mentioning it in the rules text is the whole job.
 
 ENTRY POINTS
   VERBS          name -> {function, summary, schema, mutates, typed?, requires_run?}
@@ -17,8 +17,8 @@ ENTRY POINTS
   summary(name)  the provider-facing description for one verb
 
 INVARIANTS
-  - Stdlib-only and import-free: kernel.py imports it in the parent and ships its JSON to the
-    child, so it must never touch the filesystem or import bench modules.
+  - Stdlib-only and import-free: kernel/process.py imports it in the parent and ships its JSON
+    to the child, so it must never touch the filesystem or import bench modules.
   - The schema is the contract, and the function's real signature is the authority: the
     driver binds each typed call with `inspect.signature().bind`, so a schema/signature
     mismatch surfaces as `bad_args`/`bad_arguments` instead of a traceback, and `help()`
@@ -32,8 +32,8 @@ INVARIANTS
     is the shell-string escape hatch inside a python cell.
 
 WHERE TO CHANGE
-  A new typed action ................ add the entry here, the function in kernel.PRELUDE,
-                                      and a `Kernel.call` case in bench/smoke.py
+  A new typed action ................ add the entry here, the function in kernel/prelude.py,
+                                      and a `Kernel.call` case in bench/smoke_checks/verbs.py
   A verb's arguments ................ its `schema` here and the function signature in PRELUDE
   What the model is told ............ `summary` (provider tool description)
 """

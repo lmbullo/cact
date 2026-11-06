@@ -12,7 +12,7 @@ WHAT IT IS
     SECTIONS         the four names, in order
 
   Kernel cells cannot import `bench`: their cwd is a task workspace and their interpreter is
-  a bare `python3 -c`. `kernel.py` therefore ships *this file's source* to the child in
+  a bare `python3 -c`. `kernel/prelude.py` therefore ships *this file's source* to the child in
   KERNEL_HEADERS, execs it into a private `_HEADERS` namespace, and exposes one verb,
   `guide()`, so the verb and `python3 bench/map.py` run identical code. Everything here is
   stdlib-only (`_OPEN` pins builtins.open before the prelude replaces it), side-effect-free,

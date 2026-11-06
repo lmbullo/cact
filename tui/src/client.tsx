@@ -7,10 +7,13 @@
  *  All state is local UI state; the truth is the server's snapshot/event stream, re-fetched
  *  on connect and on every reconnect (1s backoff, Ctrl-R forces one).
  *
+ *  This file holds `App` (state + keys + layout) and `main`; the pieces it renders live next
+ *  to it: theme.ts (palette, status words, one-line helpers), board-view.tsx (Rule,
+ *  SectionHeader, TaskRow), log-view.tsx (EventView, LogView).
+ *
  * ENTRY POINTS
  *  main()                       createCliRenderer + createRoot(<App/>); not run on import
  *  App({httpUrl, workspace})    the whole screen: header, list or log, prompt box, toast
- *  Presentational pieces: Rule, SectionHeader, TaskRow, EventView, LogView
  *
  * KEYS
  *  Ctrl-C / Ctrl-Q quit, Ctrl-K cancel the selected task, Ctrl-R reconnect,
@@ -19,33 +22,30 @@
  *  prompt then leaves the log.
  *
  * INVARIANTS
- *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and are unit
- *    tested there; the screen itself is covered by the character-frame tests in tui/tests/.
- *    Keep layout maths out of here when it can be a pure function.
+ *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and theme.ts
+ *    (palette, clipping); the screen itself is covered by the character-frame tests in
+ *    tui/tests/, which import `App` from this module. Keep `App` exported and layout maths
+ *    out of here when it can be a pure function.
  *  - The prompt box is shared by both views: submitting always queues a new task with the
  *    current text; it never "continues" an existing one.
  *  - Events are capped (last 1000) and de-duplicated by `seq`; a snapshot that no longer
  *    contains the open task falls back to the list.
- *  - A turn event is invisible unless it carries a `notice` (a rejected or staged finish);
- *    that notice prints as one yellow row, because it is the only explanation on screen.
  *  - Live progress is `taskProgress(task)`: `Task.progress` from the server's turn handling,
  *    falling back to the final `steps`/`usage` once a task ends.
- *  - Palette lives in `C`; no ansi() slots, so the host terminal scheme cannot change it.
  *
  * WHERE TO CHANGE
- *  Layout / wording ................. the components above App
- *  Live steps/tokens ................ taskProgress in list-model.ts, TaskRow and the log header
- *  A rejected-finish notice ......... EventView's `turn` case
- *  Keys / focus rules ............... the useKeyboard block
- *  Ordering, rows, scrolling ........ list-model.ts
- *  Data contract .................... types.ts
+ *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
+ *  A colour, a status word, a clip rule ...... theme.ts
+ *  Live steps/tokens ........................ taskProgress in list-model.ts, TaskRow, log final
+ *  Keys / focus rules ....................... the useKeyboard block below
+ *  Ordering, rows, scrolling ................ list-model.ts
+ *  Data contract ............................ types.ts
  */
 import {
   createCliRenderer,
   type TextareaRenderable,
   type KeyEvent,
   TextAttributes,
-  RGBA,
 } from "@opentui/core";
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -60,257 +60,10 @@ import {
   taskHandle,
   type ListRow,
 } from "./list-model";
+import { C, PROMPT_MAX_ROWS, clip } from "./theme";
+import { Rule, SectionHeader, TaskRow } from "./board-view";
+import { LogView } from "./log-view";
 
-/**
- * Gruvbox dark palette. Explicit hex values rather than ansi() slots, so the app keeps
- * the same look no matter how the host terminal's own scheme is configured.
- */
-const hex = (value: string): RGBA => RGBA.fromHex(value);
-
-const C = {
-  bg: hex("#282828"), // bg0
-  bg1: hex("#3c3836"), // bg1, for subtle raised surfaces
-  bg2: hex("#504945"), // bg2, selection fill
-  bg4: hex("#7c6f64"), // bg4, scrollbar thumb
-  text: hex("#ebdbb2"), // fg1
-  dim: hex("#a89984"), // fg4
-  faint: hex("#928374"), // gray
-  accent: hex("#83a598"), // blue
-  green: hex("#b8bb26"), // green
-  yellow: hex("#fabd2f"), // yellow
-  red: hex("#fb4934"), // red
-  tool: hex("#d3869b"), // gruvbox purple, tool calls in the run log
-  orange: hex("#fe8019"), // orange
-};
-
-/** One short word per status, so a row reads `3 running fix the flaky test`. */
-const STATUS: Record<TaskStatus, { word: string; color: RGBA }> = {
-  running: { word: "running", color: C.green },
-  queued: { word: "queue", color: C.yellow },
-  done: { word: "done", color: C.dim },
-  partial: { word: "partial", color: C.yellow },
-  failed: { word: "failed", color: C.red },
-  cancelled: { word: "cancelled", color: C.faint },
-};
-
-/** The prompt grows with its content up to this many rows, then scrolls internally. */
-const PROMPT_MAX_ROWS = 5;
-
-function clip(text: string, width: number): string {
-  if (width <= 1) return "";
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= width ? flat : `${flat.slice(0, Math.max(0, width - 1))}…`;
-}
-
-/** Collapse any multi-line blob onto one space-separated line. */
-function oneLine(text: string): string {
-  return text.replace(/\r/g, "").replace(/\s+/g, " ").trim();
-}
-
-/** Count non-empty lines, so a big error dump reads `(+42L)` instead of 42 rows. */
-function lineCount(text: string): number {
-  return text.replace(/\r/g, "").split("\n").filter((line) => line.trim().length > 0).length;
-}
-
-/**
- * A cell parsed down to the one line the log shows: only the arguments of the
- * call, since the log keeps tool calls to their bare arguments.
- */
-function toolArgs(code: string): string {
-  const lines = code
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return "(empty cell)";
-  const flat = oneLine(lines[0]!);
-  const call = flat.match(/^([A-Za-z_][\w.]*)\s*\(/);
-  if (!call) return flat;
-  const start = call[0].length;
-  let depth = 1;
-  let end = start;
-  for (; end < flat.length; end++) {
-    const ch = flat[end];
-    if (ch === "(") depth += 1;
-    else if (ch === ")") {
-      depth -= 1;
-      if (depth === 0) break;
-    }
-  }
-  return flat.slice(start, end).trim();
-}
-
-function Rule({ width, note }: { width: number; note?: string }) {
-  // Keep the hint visible: shrink the rule instead of letting the note run off-screen.
-  const hint = note ? ` ${note}` : "";
-  const line = "─".repeat(Math.max(0, width - hint.length));
-  return note ? <text fg={C.faint}>{`${line}${hint}`}</text> : <text fg={C.faint}>{line}</text>;
-}
-
-function SectionHeader({ status, count }: { status: TaskStatus; count: number }) {
-  const meta = STATUS[status];
-  return (
-    <box style={{ height: 1, width: "100%", flexShrink: 0 }}>
-      <text>
-        <span fg={meta.color} attributes={TextAttributes.BOLD}>{`─ ${meta.word} `}</span>
-        <span fg={C.faint}>{`(${count})`}</span>
-      </text>
-    </box>
-  );
-}
-
-function TaskRow(props: {
-  task: Task;
-  selected: boolean;
-  width: number;
-  onSelect: (id: string) => void;
-}) {
-  const { task, selected, width, onSelect } = props;
-  const meta = STATUS[task.status];
-  const handle = taskHandle(task.id);
-  const head = `${selected ? "›" : " "} ${handle} `;
-  // Selection is shown with an arrow, not a background highlight.
-  const marker = selected ? " ←" : "";
-  // Live counters sit between the status and the prompt, so a running row shows progress.
-  const progress = taskProgress(task);
-  const progressCell = progress ? `${clip(progress, 20).padEnd(20)} ` : "";
-  const prompt = clip(
-    task.prompt,
-    Math.max(8, width - head.length - meta.word.length - progressCell.length - marker.length - 2),
-  );
-  return (
-    <box
-      style={{
-        height: 1,
-        width: "100%",
-        flexShrink: 0,
-      }}
-      onMouseDown={() => onSelect(task.id)}
-    >
-      <text>
-        <span fg={selected ? C.accent : C.faint}>{head}</span>
-        <span fg={meta.color}>{meta.word.padEnd(9)}</span>
-        {progressCell ? <span fg={C.faint}>{progressCell}</span> : null}
-        <span fg={selected ? C.text : C.dim}>{` ${prompt}`}</span>
-        <span fg={selected ? C.accent : C.faint}>{marker}</span>
-      </text>
-    </box>
-  );
-}
-/**
- * One event, one row. The full payload still reaches the model; this view only
- * truncates what fits on a terminal line so a run never dumps a wall of text.
- */
-function EventView({ event, width }: { event: TaskEvent; width: number }) {
-  const fit = Math.max(8, width - 2);
-  const kind = event.kind;
-
-  if (kind === "cell.start") {
-    // Just the marker and the arguments: no verb, no cell index, no counters. A typed call
-    // shows its tool and JSON args; a python cell shows its first call, as before.
-    const room = Math.max(2, fit - 2);
-    const label = event.tool && event.tool !== "python"
-      ? `${event.tool}(${oneLine(JSON.stringify(event.args ?? {}))})`
-      : toolArgs(event.code ?? "");
-    return (
-      <text>
-        <span fg={C.faint}>{"▸ "}</span>
-        <span fg={C.tool}>{clip(label, room)}</span>
-      </text>
-    );
-  }
-
-  // A turn is normally silent (tool output is never rendered), but the loop records a
-  // `notice` when it rejects or stages a finish: that reason must stay visible.
-  if (kind === "turn") {
-    const notice = (event.data ?? {}).notice;
-    if (typeof notice !== "string" || !notice.trim()) return null;
-    const more = lineCount(notice) > 1 ? ` (+${lineCount(notice) - 1}L)` : "";
-    return (
-      <text fg={C.yellow} attributes={TextAttributes.BOLD}>
-        {clip(`↺ ${oneLine(notice)}${more}`, width)}
-      </text>
-    );
-  }
-
-  if (kind === "final") {
-    const data = (event.data ?? {}) as Record<string, unknown>;
-    const status = String(data.status ?? "");
-    const color = status === "done" ? C.green : status === "partial" ? C.yellow : C.red;
-    const meta = [
-      data.stop ? `stop=${String(data.stop)}` : "",
-      data.steps !== undefined ? `${String(data.steps)} steps` : "",
-      data.calls !== undefined ? `${String(data.calls)} cells` : "",
-      data.errors !== undefined ? `${String(data.errors)} errors` : "",
-      data.wallMs !== undefined ? `${String(data.wallMs)}ms` : "",
-      (data.usage as Record<string, number> | undefined)?.total_tokens
-        ? `${String((data.usage as Record<string, number>).total_tokens)} tok`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    const text = oneLine(event.text ?? "");
-    const tail = clip(meta, Math.max(6, fit - status.length - 3));
-    const summaryLength = 2 + status.length + 1 + tail.length;
-    const headText = text ? clip(`  = ${text}`, Math.max(0, fit - summaryLength)) : "";
-    return (
-      <text>
-        <span fg={color} attributes={TextAttributes.BOLD}>{`● ${status} `}</span>
-        <span fg={C.faint}>{tail}</span>
-        <span fg={color}>{headText}</span>
-      </text>
-    );
-  }
-
-  if (kind === "error") {
-    const text = event.text ?? "error";
-    const more = lineCount(text) > 1 ? ` (+${lineCount(text) - 1}L)` : "";
-    return (
-      <text fg={C.red} attributes={TextAttributes.BOLD}>
-        {clip(`✖ ${oneLine(text)}${more}`, width)}
-      </text>
-    );
-  }
-  if (kind === "stderr") {
-    const text = event.text ?? "";
-    const first = oneLine(text);
-    const more = lineCount(text) > 1 ? ` (+${lineCount(text) - 1}L)` : "";
-    return <text fg={C.red}>{clip(`! ${first}${more}`, width)}</text>;
-  }
-  if (kind === "log") {
-    return <text fg={C.dim}>{clip(`· ${oneLine(event.text ?? "")}`, width)}</text>;
-  }
-  if (kind === "started" || kind === "finished" || kind === "queued" || kind === "pid") {
-    return <text fg={C.faint}>{clip(`○ ${oneLine(event.text ?? kind)}`, width)}</text>;
-  }
-  // An unknown kind still gets one word, never the payload it carries.
-  return <text fg={C.faint}>{clip(`? ${kind}`, width)}</text>;
-}
-
-function LogView({ task, events, width }: { task: Task | null; events: TaskEvent[]; width: number }) {
-  if (!task) return null;
-  if (events.length === 0) {
-    return (
-      <box style={{ flexGrow: 1, flexBasis: 0, minHeight: 0, flexDirection: "column" }}>
-        <text fg={C.faint}>waiting for output…</text>
-      </box>
-    );
-  }
-  return (
-    <scrollbox
-      style={{ flexGrow: 1, flexBasis: 0, minHeight: 0 }}
-      stickyScroll
-      stickyStart="bottom"
-      focused={false}
-    >
-      <box style={{ flexDirection: "column", width: "100%" }}>
-        {events.map((event) => (
-          <EventView key={`${task.id}:${event.seq}`} event={event} width={width} />
-        ))}
-      </box>
-    </scrollbox>
-  );
-}
 export function App({ httpUrl, workspace }: { httpUrl: string; workspace: string }) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
