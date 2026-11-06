@@ -9,16 +9,17 @@ WHAT IT IS
     op       the verb name
     kind     the helper's own kind (file/matches/map/git_diff/...)
     data     small, tool-specific fields (path, count, occurrences, ...)
-    page     {shown, total, offset, next, unit, complete} or None
+    page     {shown, total, offset, next, unit, has_more, complete} or None
     handle   the `_OBS[n]` address of the full delivered text, or None
     notes    human-readable notes as a list (never the only copy of a fact)
     error    {code, message, use} when ok is false
 
   `page` is the only paging contract. `shown` is a count (or the inclusive [a, b] range the
   helper already reports), `next` is the next cursor, `unit` names what the cursor counts
-  (line/char/hit/file/entry/module), and `complete` says whether the result is whole. A
-  helper may keep its legacy top-level keys for python callers; the envelope does not repeat
-  them, so a model never sees the same fact twice.
+  (line/char/hit/file/entry/module), `has_more` says the file/result continues, and
+  `complete` says this request was served (an explicit read window is complete even when the
+  file continues). A helper may keep its legacy top-level keys for python callers; the
+  envelope does not repeat them, so a model never sees the same fact twice.
 
 ENTRY POINTS
   normalize(tool, value, handle=None) -> dict
@@ -32,8 +33,10 @@ INVARIANTS
   - Bulk payloads (`text`, `stdout`, `stderr`, `matches`, `files`, `entries`, `items`,
     `modules`, `hunk`) stay out of the envelope. Their delivery is stdout; their address is
     the handle. That keeps the structured half small and makes duplication impossible.
-  - `complete` is false when a helper reports `has_more`, `truncated`, or a non-null `next`.
-    A page that ends at EOF is complete even when the caller explicitly stopped early.
+  - `complete` is false only when the helper reports `truncated` (the page limit cut the
+    request) or, for non-file results, when `next`/`has_more` remains. An explicit read
+    window is complete even when `has_more` is true. `has_more` is separate and always
+    means the underlying file/result continues.
 
 WHERE TO CHANGE
   A new paging field ................. `page_of` and the helper that returns it
@@ -120,10 +123,15 @@ def page_of(kind, value):
             offset = int(offset)
         except (TypeError, ValueError):
             offset = None
-    complete = not bool(value.get("has_more") or value.get("truncated") or nxt is not None)
+    has_more = bool(value.get("has_more") or nxt is not None)
+    # `complete` is "this request was served"; `has_more` is "the file/result continues".
+    # An explicit read range is complete even when the file has more lines.
+    complete = not bool(value.get("truncated"))
+    if has_more and str(value.get("kind") or kind) not in ("file", "files"):
+        complete = False
     return {"shown": shown, "total": total, "offset": offset, "next": nxt,
             "unit": unit or UNITS.get(kind) or UNITS.get(str(value.get("kind") or "")),
-            "complete": complete}
+            "has_more": has_more, "complete": complete}
 
 
 def normalize(tool, value, handle=None):
@@ -140,12 +148,15 @@ def normalize(tool, value, handle=None):
         out["notes"] = [str(item) for item in note if item]
     elif note:
         out["notes"] = [str(note)]
-    for key in ("include_ignored", "include_unmatched", "text_elided", "occurrences",
-                "text_chars", "already_read", "delivered", "path", "root", "count", "by_file",
-                "total", "total_lines", "total_files", "total_entries", "exit_code",
-                "files", "results"):
-        if key in value and key not in BULK and value[key] is not None:
-            out["data"][key] = value[key]
+    # Invert the filter: only bulk payloads and page fields are consumed elsewhere. A new
+    # verb field reaches the card without editing this allow-list.
+    consumed = {"ok", "kind", "text", "raw", "stdout", "stderr", "note", "error",
+                "shown", "total", "total_lines", "total_files", "total_entries", "offset",
+                "next", "has_more", "truncated", "handle", "file_count"}
+    for key, item in value.items():
+        if key in BULK or key in consumed or item is None:
+            continue
+        out["data"][key] = item
     return out
 
 

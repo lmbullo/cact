@@ -385,7 +385,9 @@ def main() -> int:
         kernel.run(r"write('range.txt', 'aa\nbb\ncc\n')")
         cell = kernel.call("read", {"path": "range.txt", "start": 1, "end": 1})
         check("kernel: an explicit complete range has_more but is not truncated",
-              '"has_more": true' in (cell.result or "") and '"truncated": false' in (cell.result or ""),
+              '"has_more": true' in (cell.result or "") and '"truncated": false' in (cell.result or "")
+              and cell.envelope.get("page", {}).get("complete") is True
+              and cell.envelope.get("page", {}).get("has_more") is True,
               (cell.result or "")[:240])
         kernel.run(r"write('longread.txt', '\n'.join('line %d %s' % (n, 'x' * 60) for n in range(600)))")
         cell = kernel.call("read", {"path": "longread.txt"})

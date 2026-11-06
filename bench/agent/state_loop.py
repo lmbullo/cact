@@ -95,7 +95,7 @@ Every tool result is a state card, not a terminal transcript:
   [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is the next cursor in `unit`, and `complete` says whether that page is the whole result; a `ranges` read labels each `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: a-b, ...)` on that line lists the holes, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read [page] before [data]: `next` is the next cursor in `unit`, `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels each `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: a-b, ...)` on that line lists the holes, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
@@ -292,7 +292,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                 where = ", ".join("%d-%d" % (a, b) if a != b else str(a)
                                   for a, b in ranges[:6])
                 if len(ranges) > 6:
-                    where += ", ..."
+                    where += " +%d more" % (len(ranges) - 6)
                 parts.append("[hits] %s %s: %s" % (path, info.get("count"), where))
         if not env.get("ok", True) and env.get("error"):
             err = env["error"]
@@ -325,7 +325,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
         if missing:
             shown_gaps = ", ".join("%d-%d" % (a, b) for a, b in missing[:3])
             if len(missing) > 3:
-                shown_gaps += ", ..."
+                shown_gaps += " +%d more" % (len(missing) - 3)
             tail = f" (unread: {shown_gaps})"
         text = ", ".join(f"{a}-{b}" for a, b in merge_ranges(ranges))
         parts.append(f"[read] {path} {text}/{total}{tail}")

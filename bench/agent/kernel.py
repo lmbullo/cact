@@ -932,11 +932,14 @@ def map(path=".", max_files=120, include=None, offset=0):
         except OSError:
             nonempty = False
         if nonempty:
-            return {"ok": False, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-                    "count": 0, "total_files": 0, "dirs_matched": {},
-                    "error": {"code": "empty_index",
-                              "message": "directory has entries but the filter yielded no files",
-                              "use": "check include, or call map without include"}}
+            result = {"ok": False, "kind": "map", "root": _os.path.relpath(base, _ROOT),
+                      "count": 0, "total_files": 0, "dirs_matched": {},
+                      "include_unmatched": includes,
+                      "error": {"code": "empty_index",
+                                "message": "directory has entries but the filter yielded no files",
+                                "use": ("include matched no file: " + ", ".join(includes)
+                                        if includes else "call map(path) without include")}}
+            return result
     start = max(0, int(offset or 0))
     page = entries[start:start + max(1, int(max_files or 1))]
     end = start + len(page)
@@ -1029,9 +1032,17 @@ def outline(path, max_entries=200):
     def _key_entries(value):
         if not isinstance(value, _ast.Dict):
             return []
-        return [{"line": key.lineno, "kind": "key", "name": key.value}
-                for key in value.keys
-                if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
+        out = []
+        for key, item in zip(value.keys, value.values):
+            # Only a key whose value is a real multi-line block is structure; a flat dict
+            # such as UNITS would explode into alphabetized noise.
+            if not (isinstance(key, _ast.Constant) and isinstance(key.value, str)):
+                continue
+            start = getattr(item, "lineno", key.lineno)
+            end = getattr(item, "end_lineno", start)
+            if end > start:
+                out.append({"line": key.lineno, "kind": "key", "name": key.value})
+        return out
 
     if ext == ".py":
         try:
@@ -1311,14 +1322,17 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
     return _Result(result)
 
 
-def _count_result(counts, occurrences=0):
+def _count_result(counts, occurrences=0, note=None):
     total = sum(int(value) for value in counts.values())
     text = "\n".join("%s:%d" % (path, count) for path, count in sorted(counts.items()))
+    if note:
+        text = (text + "\n" if text else "") + "note: " + note
     return _Result({"ok": True, "kind": "search_counts", "counts": counts,
                     "by_file": {path: {"count": count, "lines": []}
                                 for path, count in counts.items()},
                     "occurrences": occurrences, "shown": total, "total": total,
-                    "offset": 0, "next": None, "complete": True, "text": text})
+                    "offset": 0, "next": None, "complete": True, "text": text,
+                    "note": note})
 
 
 def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=None):
@@ -1465,10 +1479,13 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
             else:
                 truncated = True
     if count:
-        return _count_result(counts, occurrences)
+        note = None if counts else "no matches for %r in %s" % (pattern, rel)
+        return _count_result(counts, occurrences, note)
     result = _grep_result(hits, occurrences, truncated, max_chars,
                           offset=skip, total=matched_lines)
     notes = []
+    if matched_lines == 0:
+        notes.append("no matches for %r in %s" % (pattern, rel))
     if include_ignored:
         notes.append("include is only used for directory paths; the explicit file was searched")
     if includes and not explicit_file:
@@ -1525,10 +1542,15 @@ def recall_tool(pattern, limit=10, context=100):
     # Typed session search: the same _OBS snippets as recall(), with a text rendering so the
     # model does not need a python cell to recover a digested card.
     items = recall(pattern, limit=limit, context=context)
+    scanned = len(globals().get("_OBS") or [])
     text = "\n".join("[%s] %s: %s" % (item["handle"], item["field"], item["text"])
                      for item in items)
+    note = None if items else ("no matches for %r in %d earlier cell(s)" % (pattern, scanned))
+    if note:
+        text = "note: " + note
     return {"ok": True, "kind": "recall", "items": items,
-            "count": len(items), "text": text}
+            "shown": len(items), "total": len(items), "next": None,
+            "scanned": scanned, "count": len(items), "note": note, "text": text}
 
 
 def verbs(topic=None):

@@ -176,6 +176,15 @@ def render(rows, chars=20000):
     return "\n\n".join(blocks)
 
 
+def _short_title(title):
+    title = str(title or "").strip()
+    if ". " in title:
+        return title.split(". ", 1)[0].rstrip() + "."
+    if len(title) > 140:
+        return title[:137].rsplit(" ", 1)[0].rstrip() + " ..."
+    return title
+
+
 def _non_indexed_note(root, query, rows):
     """A query that names a real non-source file is not an index miss; say where to look."""
     base = root or os.getcwd()
@@ -233,7 +242,8 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
         hits = [item[2] for item in scored[start:start + limit]]
         public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in hits]
         lines = ["%s  (%s, %d lines)  %s" % (
-            row["path"], row["language"], row["lines"], row["title"] or "<no header>")
+            row["path"], row["language"], row["lines"],
+            _short_title(row["title"]) or "<no header>")
             for row in public]
         end = start + len(public)
         if end < len(scored):
@@ -254,6 +264,6 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
     public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]
     return {"ok": True, "kind": "guide", "modules": public,
             "shown": len(public), "total": len(public), "next": None,
-            "text": "\n".join("%s  %s" % (row["path"], row["title"] or "<no header>")
+            "text": "\n".join("%s  %s" % (row["path"], _short_title(row["title"]) or "<no header>")
                               for row in public),
             "documented": len([row for row in rows if row["sections"]]), "files": len(rows)}

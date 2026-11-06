@@ -80,7 +80,7 @@ VERBS: dict[str, dict] = {
     },
     "read": {
         "function": "read",
-        "summary": "Read one file or several. start/end are the canonical line range; path=[...] applies one window to several files, ranges=[{path,start,end}] batches different windows. has_more means the file continues; truncated means the page limit cut the request. A range already shown this session returns a pointer; repeat=true re-delivers it.",
+        "summary": "Read one file or several. start/end are the canonical line range; path=[...] applies one window to several files, ranges=[{path,start,end}] batches different windows. page.complete means this request was served; page.has_more means the file continues; truncated means the page limit cut the request. A range already shown this session returns a pointer; repeat=true re-delivers it.",
         "mutates": False,
         "schema": {
             "type": "object",
