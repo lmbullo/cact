@@ -209,7 +209,10 @@ Selected by `--mode` in `run.py`, by `CODE_TUI_MODE` in production (default `sta
 All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`), `RunResult` and the
 `Client`. `ToolLoop.run` is the turn machine; `StateLoop` adds cards and compaction; `ReplLoop`
 overrides `_reply`, `_observe`, `_before_turn` and the stop/history switches, so budget stops,
-usage accounting, goal gating and trace writing are one implementation. A turn record's `calls`
+usage accounting, goal gating and trace writing are one implementation. The base machine adds
+one wrap-up nudge at 80% of `max_steps` and one last-turn nudge at `max_steps - 1`; subclasses
+change the wording, not the timing. This is the stop signal an open-ended refactor needs, not a
+lower step cap. A turn record's `calls`
 holds one `CallRecord` per tool call (code, observation, runs, reads, notice, stop).
 
 Stop vocabulary (`tool_loop.STOPS`):

@@ -34,7 +34,8 @@ INVARIANTS
     (GOAL_UNMET).
   - `history` decides what stays in the transcript: the full reply, just the action, or
     nothing. Large observations are capped by `obs_chars` with an `_OBS` handle.
-  - `wrap_up_at` sends a "start wrapping up" nudge at that fraction of the wall budget.
+  - `wrap_up_at` sends a "start wrapping up" nudge at that fraction of the step budget; the
+    base ToolLoop owns the timing, this class only supplies the fenced-answer wording.
   - Budget, usage, goal gating and the trace summary are ToolLoop's; this module only
     supplies the repl wording (`BUDGET_NOTE`, `CHECK_NOUN`, `REJECT_*_TAIL`) and the
     per-turn wraparound reminders in `_before_turn`.
@@ -135,6 +136,12 @@ class ReplLoop(ToolLoop):
     CHECK_NOUN = "goal check"
     REJECT_NONE_TAIL = "The task is not complete. Continue working."
     REJECT_DETAIL_TAIL = "Keep working and re-run the check when you believe it passes."
+    WRAP_UP_NOTE = ("[runtime] {left} steps left. Stop exploring. Make the smallest necessary "
+                    "change, verify it, and finish with final_answer(<short summary>). Do not "
+                    "start new investigations.")
+    LAST_TURN_NOTE = ("[runtime] This is your last turn. Do not run more code or inspect more "
+                      "files. Reply with exactly one fenced ```python block that calls "
+                      "final_answer(<short summary>) and prints nothing.")
 
     def __init__(
         self,
@@ -159,6 +166,7 @@ class ReplLoop(ToolLoop):
             goal_label=goal_label,
             goal_stops=goal_stops,
             obs_chars=obs_chars,
+            wrap_up_at=wrap_up_at,
         )
         self.tools = None                   # repl replies carry no tool_calls
         self.stop_mode = stop               # "call" -> cell.final, "var" -> cell.answer
@@ -166,36 +174,13 @@ class ReplLoop(ToolLoop):
         self.wrap_up_at = wrap_up_at
 
     def _on_run_start(self, messages: list[dict]) -> None:
+        super()._on_run_start(messages)
         self._prefix_key = hashlib.sha256(
             json.dumps(messages, sort_keys=True).encode()).hexdigest()
         self._drift = 0
-        self._last_turn = False
-        self._wrapped = False
 
     def _before_turn(self, messages: list[dict], tally) -> None:
-        b = self.budget
-        if not self._last_turn and tally.steps >= max(1, b.max_steps - 1):
-            self._last_turn = True
-            messages.append({
-                "role": "user",
-                "content": (
-                    "[runtime] This is your last turn. Do not run more code or inspect more files. "
-                    "Reply with exactly one fenced ```python block that calls "
-                    "final_answer(<short summary>) and prints nothing."
-                ),
-            })
-        elif self.wrap_up_at is not None and not self._wrapped:
-            threshold = max(1, int(b.max_steps * self.wrap_up_at))
-            if tally.steps >= threshold and tally.steps < max(1, b.max_steps - 1):
-                self._wrapped = True
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[runtime] {b.max_steps - tally.steps} steps left. Stop exploring. "
-                        "Make the smallest necessary change, verify it, and finish with "
-                        "final_answer(<short summary>). Do not start new investigations."
-                    ),
-                })
+        super()._before_turn(messages, tally)
         if hashlib.sha256(json.dumps(messages[:2], sort_keys=True).encode()).hexdigest() != self._prefix_key:
             self._drift += 1
 

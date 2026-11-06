@@ -168,20 +168,45 @@ def edit_many(edits=None, path=None):
     if not isinstance(edits, (list, tuple)) or not edits:
         return {"ok": False, "kind": "edit_failed",
                 "reason": "edits must be a non-empty list of {path, old, new}"}
+    # Validate the whole batch's shape first. A missing path is the common model error
+    # ("continue editing the file I just read"), and the old single message blamed `old`,
+    # so a batch could be rejected repeatedly without naming the actual defect. Report every
+    # malformed item at once; atomicity still guarantees nothing is written.
+    problems = []
+    for index, item in enumerate(edits):
+        if not isinstance(item, dict):
+            problems.append({"index": index, "reason": "each edit must be an object",
+                             "keys": []})
+            continue
+        item_path = item.get("path") or path
+        if not isinstance(item_path, str) or not item_path:
+            problems.append({"index": index,
+                             "reason": "missing path: every edits[] item needs its own path",
+                             "keys": sorted(item)})
+            continue
+        old = item.get("old")
+        if not isinstance(old, str) or not old:
+            problems.append({"index": index, "path": item_path,
+                             "reason": "old must be a non-empty string",
+                             "keys": sorted(item)})
+        elif not isinstance(item.get("new"), str):
+            problems.append({"index": index, "path": item_path,
+                             "reason": "new must be a string (it may be empty)",
+                             "keys": sorted(item)})
+    if problems:
+        first = problems[0]
+        return {"ok": False, "kind": "edit_failed", "index": first["index"],
+                "reason": first["reason"], "problems": problems,
+                "use": "edits=[{path, old, new}, ...]; every item needs its own path and a non-empty old"}
+
     originals = {}
     bodies = {}
     order = []
     writes = 0
     for index, item in enumerate(edits):
-        if not isinstance(item, dict):
-            return {"ok": False, "kind": "edit_failed", "index": index,
-                    "reason": "each edit must be an object with path, old, new"}
         item_path = item.get("path") or path
         old = item.get("old")
         new = item.get("new")
-        if not isinstance(item_path, str) or not isinstance(old, str) or not isinstance(new, str) or not old:
-            return {"ok": False, "kind": "edit_failed", "index": index,
-                    "reason": "path, old and new must be strings; old must not be empty"}
         target, rel = _resolve(item_path)
         if target is None:
             return {"ok": False, "kind": "edit_failed", "index": index,

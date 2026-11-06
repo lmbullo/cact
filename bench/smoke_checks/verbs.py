@@ -93,6 +93,16 @@ def run(check, root, kernel):
           and cell.envelope.get("page", {}).get("shown") == 0,
           (cell.stdout + str(cell.envelope))[:300])
     kernel.call("edit", {"edits": [{"path": "dedup.txt", "old": "alpha", "new": "beta"}]})
+    cell = kernel.call("edit", {"edits": [
+        {"old": "beta", "new": "B"},
+        {"path": "dedup.txt", "old": "", "new": "C"},
+    ]})
+    failed = cell.result or ""
+    check("kernel: a malformed edit batch names every bad item",
+          "missing path" in failed and "non-empty string" in failed
+          and '"index": 0' in failed and '"index": 1' in failed
+          and (root / "dedup.txt").read_text() == "beta\n",
+          failed[:420])
     cell = kernel.call("read", {"path": "dedup.txt"})
     check("kernel: a commit invalidates the read pointer",
           "beta" in cell.stdout and "already delivered" not in cell.stdout,
@@ -150,6 +160,9 @@ def run(check, root, kernel):
     check("kernel: call(exec) turns a bad keyword into bad_args",
           "bad_arguments" in (cell.result or "") and not cell.failed,
           (cell.result or "")[:240])
+    check("kernel: a bad keyword answer carries the accepted signature",
+          all(word in (cell.result or "") for word in ("argv", "commands", "shell", "valid keywords"))
+          and "signature" in (cell.result or ""), (cell.result or "")[:420])
     cell = kernel.call("exec", {"argv": ["bash", "-lc", "echo one"]})
     check("kernel: call(exec) points a shell -c string at the shell field",
           "shell_via_exec" in (cell.result or "") and "exec(shell=" in (cell.result or "")

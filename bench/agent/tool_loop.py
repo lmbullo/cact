@@ -25,7 +25,7 @@ ENTRY POINTS
   CallRecord(index, name, call_id) .. .code/.args/.observation/.runs/.reads/.notice/.stop
   TurnOutcome(stop, final, end)
   ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
-           health, verifier)
+           health, verifier, wrap_up_at=0.8)
     .run(task_id, prompt, trace) -> RunResult
   Hooks subclasses override: `_reply(messages, rec, resp, finish, tally, seen, step)`
     (reply -> TurnOutcome; ReplLoop's fenced-block dialect is the only other implementation),
@@ -67,6 +67,9 @@ INVARIANTS
     the trace summary. `_push` already turns its own LLMError into an empty summary text.
   - `tally.steps` counts turns (primary completes); `tally.llm_calls` counts every request,
     including the budget-forced `_push`, so `llm_calls >= steps`.
+  - Every run gets one wrap-up nudge at `wrap_up_at` of the step budget and one last-turn
+    nudge at `max_steps - 1`; a long run may not discover more work after the budget is gone.
+    Subclasses change the wording through `WRAP_UP_NOTE` / `LAST_TURN_NOTE`, not the timing.
   - `changed` accumulates every file the kernel reports; worker.py records it as history.
 
 WHERE TO CHANGE
@@ -75,7 +78,9 @@ WHERE TO CHANGE
   Per-call record shape ................ CallRecord.as_dict, `_merge_calls`
   What the model sees per cell ......... `_observe` (StateLoop overrides it with state cards)
   Another reply dialect ................ `_reply` (ReplLoop overrides it in repl.py)
-  Budget / goal-check wording .......... BUDGET_NOTE, CHECK_NOUN, REJECT_*_TAIL
+  Budget / goal-check wording .......... BUDGET_NOTE, WRAP_UP_NOTE, LAST_TURN_NOTE,
+                                          CHECK_NOUN, REJECT_*_TAIL
+  Budget reminder timing ............... WRAP_UP_AT, `_before_turn`
   Rules and the python escape hatch .... TOOL_RULES, PYTHON_TOOL
   Typed tool names, schemas, summaries . verbs.VERBS (tools.py follows); `_dispatch` routes
                                           python to Kernel.run and every typed name to Kernel.call
@@ -269,6 +274,12 @@ class ToolLoop:
     CHECK_NOUN = "project check"
     REJECT_NONE_TAIL = "Keep working."
     REJECT_DETAIL_TAIL = ("Keep working and re-run the check when you believe it passes.")
+    WRAP_UP_AT = 0.8
+    WRAP_UP_NOTE = ("[runtime] {left} steps left. Stop exploring. Finish the current change, "
+                    "verify it, then reply with a final summary and no tool call. Do not start "
+                    "new investigations.")
+    LAST_TURN_NOTE = ("[runtime] This is your last turn. Do not run more tools or inspect more "
+                      "files. Reply with a final summary and no tool call.")
 
     def __init__(
         self,
@@ -283,6 +294,7 @@ class ToolLoop:
         obs_chars: int = 0,
         health: Any = None,
         verifier: Any = None,
+        wrap_up_at: float | None = WRAP_UP_AT,
     ) -> None:
         self.client = client
         self.kernel = kernel
@@ -301,6 +313,7 @@ class ToolLoop:
         self.compactions = 0
         self.health = health
         self.verifier = verifier
+        self.wrap_up_at = wrap_up_at
         self.last_check: Any = None
         self._health_at = 0.0
         self.check_cache: dict[str, str] = {}
@@ -334,11 +347,26 @@ class ToolLoop:
 
     def _on_run_start(self, messages: list[dict]) -> None:
         """Hook: initialise per-run policy state (ReplLoop's prefix drift, for example)."""
-        return None
+        self._last_turn = False
+        self._wrapped = False
 
     def _before_turn(self, messages: list[dict], tally: Tally) -> None:
-        """Hook: a per-turn nudge (ReplLoop's wrap-up and last-turn reminders)."""
-        return None
+        """Add the budget reminders every loop needs: wrap-up, then one last-turn notice.
+
+        A loop that never says how many turns are left lets a model keep finding more work
+        after the task is green. These are deterministic, once-per-run messages at the
+        budget boundary; subclasses word them through WRAP_UP_NOTE / LAST_TURN_NOTE.
+        """
+        b = self.budget
+        if not self._last_turn and tally.steps >= max(1, b.max_steps - 1):
+            self._last_turn = True
+            messages.append({"role": "user", "content": self.LAST_TURN_NOTE})
+        elif self.wrap_up_at is not None and not self._wrapped:
+            threshold = max(1, int(b.max_steps * self.wrap_up_at))
+            if tally.steps >= threshold and tally.steps < max(1, b.max_steps - 1):
+                self._wrapped = True
+                messages.append({"role": "user",
+                                 "content": self.WRAP_UP_NOTE.format(left=b.max_steps - tally.steps)})
 
     def _drift_count(self) -> int:
         return 0

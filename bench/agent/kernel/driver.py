@@ -20,8 +20,9 @@ INVARIANTS
     print cannot corrupt the channel.
   - Before dispatch the args are bound to the verb function's live signature
     (`inspect.signature().bind(**args)`); a bad keyword or a missing argument becomes
-    `kind: "bad_args"` with `error.code: "bad_arguments"` and a `help(tool)` hint, never a
-    traceback. A verb returning `{"ok": false}` is `rejected`, not `failed`.
+    `kind: "bad_args"` with `error.code: "bad_arguments"`, the live signature and the valid
+    keyword list, never a traceback. A verb returning `{"ok": false}` is `rejected`, not
+    `failed`.
   - stdin is read with one readline per request; the parent's request carries `timeout` and
     `check_cache`. `final_answer()` raises `Final`, which is reported as `Cell.final`
     unconditionally — the loop, not the child, decides what that means.
@@ -179,13 +180,23 @@ for line in sys.stdin:
                 if not callable(fn):
                     raise NameError("unknown kernel verb %r; call help() for the list" % tool)
                 call_args = request.get("args") or {}
+                signature = _inspect.signature(fn)
                 try:
-                    _inspect.signature(fn).bind(**call_args)
+                    signature.bind(**call_args)
                 except TypeError as exc:
+                    # A bare "see help()" cost repeated retries in a long run: name the
+                    # accepted keywords in the answer itself, before the model spends a turn
+                    # asking for the signature it already has.
+                    names = [name for name, param in signature.parameters.items()
+                             if param.kind not in (_inspect.Parameter.VAR_POSITIONAL,
+                                                   _inspect.Parameter.VAR_KEYWORD)]
                     value = {"ok": False, "kind": "bad_args",
                              "error": {"code": "bad_arguments",
                                        "message": str(exc),
-                                       "use": "help(%r) prints the live signature" % tool}}
+                                       "signature": "%s%s" % (tool, signature),
+                                       "valid": names,
+                                       "use": "call %s%s; valid keywords: %s"
+                                              % (tool, signature, ", ".join(names))}}
                 else:
                     value = fn(**call_args)
                 if isinstance(value, dict):

@@ -180,6 +180,25 @@ def run(check):
           and push_result.stop == tool_loop.STEP_LIMIT,
           f"steps={push_result.steps} llm_calls={push_result.llm_calls} stop={push_result.stop}")
 
+    nudge_client = FakeClient(
+        [_reply(calls=[_call(f"n{i}", "print(1)")]) for i in range(5)]
+        + [_reply(content="budget summary", finish="stop")])
+    nudge_result = tool_loop.ToolLoop(
+        nudge_client, FakeKernel({}), loop.Budget(max_steps=5), wrap_up_at=0.4,
+    ).run("smoke", "task")
+
+    def _runtime(request: list[dict]) -> list[str]:
+        return [m.get("content") or "" for m in request
+                if m.get("role") == "user" and (m.get("content") or "").startswith("[runtime]")]
+    requests = nudge_client.requests
+    check("turn: the wrap-up nudge arrives once before the last-turn nudge",
+          nudge_result.stop == tool_loop.STEP_LIMIT
+          and not any("steps left" in text for text in _runtime(requests[1]))
+          and sum("steps left" in text for text in _runtime(requests[2])) == 1
+          and sum("steps left" in text for text in _runtime(requests[3])) == 1
+          and sum("This is your last turn" in text for text in _runtime(requests[4])) == 1,
+          f"{nudge_result.stop} {[_runtime(r) for r in requests[1:5]]}")
+
     restarted = Cell(stdout="", stderr="kernel died; restarted with an empty namespace",
                      result=None, final=None, duration_ms=1, restarted=True)
     restart_client = FakeClient([_reply(calls=[_call("r1", "print(1)")]),
