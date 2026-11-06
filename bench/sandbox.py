@@ -84,6 +84,7 @@ def shipping(weight_g, zone):
         raise ValueError("unknown zone: %r" % (zone,))
     return BASE_CHARGE + ZONE_SURCHARGE[zone] + max(0, int(weight_g) - 500) // 100
 """)
+    _write(SANDBOX / "tests" / "__init__.py", "")
     _write(SANDBOX / "tests" / "test_rates.py", """import unittest
 
 from pricing import shipping
