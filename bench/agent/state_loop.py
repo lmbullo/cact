@@ -129,7 +129,7 @@ def clip(text: str, limit: int) -> str:
     return f"{text[:limit]}\n...[+{len(text) - limit} chars]"
 
 
-def digest_card(text: str, budget: int, handle: str) -> tuple[str, bool]:
+def digest_card(text: str, budget: int, handle: str, errors: bool = False) -> tuple[str, bool]:
     """`(rendered text, was it digested at all)`.
 
     The flag is the only honest signal for coverage: an undigested stream reached the model
@@ -142,13 +142,15 @@ def digest_card(text: str, budget: int, handle: str) -> tuple[str, bool]:
     tail_count = max(6, budget // 300)
     head = "\n".join(lines[:head_count])
     tail = "\n".join(lines[-tail_count:])
-    errors = [line.rstrip() for line in lines if _ERROR_LINE.search(line)][:6]
+    error_lines = [line.rstrip() for line in lines if _ERROR_LINE.search(line)][:6]
     parts = [head]
-    if errors:
-        parts.append("error lines:\n" + "\n".join(errors))
+    if errors and error_lines:
+        parts.append("error lines:\n" + "\n".join(error_lines))
+    first_elided = head_count + 1
+    last_elided = max(first_elided - 1, len(lines) - tail_count)
     parts.append(
-        f"...[{len(lines)} lines, {len(text)} chars; full text is {handle}; page it with "
-        f"print({handle}['stdout'][a:b])]..."
+        f"...[elided {first_elided}-{last_elided} of {len(lines)} lines, {len(text)} chars; "
+        f"full text is {handle}; page it with print({handle}['stdout'][a:b])]..."
     )
     parts.append(tail)
     return "\n".join(parts), True
@@ -248,7 +250,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
     body: list[str] = []
     digested = False
     if cell.stderr:
-        rendered, cut = digest_card(cell.stderr, output_budget, handle)
+        rendered, cut = digest_card(cell.stderr, output_budget, handle, errors=True)
         digested = digested or cut
         body.append("[stderr]\n" + clip(rendered, output_budget))
     if cell.stdout:

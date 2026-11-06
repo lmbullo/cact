@@ -346,8 +346,9 @@ for line in sys.stdin:
                         if value.get("kind") in ("outline", "outlines", "maps"):
                             summary.pop("entries", None)
                             summary.pop("files", None)
-                        if value.get("kind") == "recall":
+                        if value.get("kind") in ("recall", "guide"):
                             summary.pop("items", None)
+                            summary.pop("modules", None)
                     result_repr = json.dumps(summary, default=repr)
                 elif isinstance(value, str):
                     out.write(value)
@@ -458,7 +459,7 @@ _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
 
 
-def guide(query=None, path=None, limit=6, chars=900):
+def guide(query=None, path=None, limit=3, chars=2400):
     fn = _HEADERS.get("guide")
     if fn is None:
         return {"ok": False, "error": {"code": "no_index",

@@ -783,7 +783,7 @@ def main() -> int:
         check("state: a printed read counts as delivered",
               probe.coverage.get("a.txt", {}).get("ranges") == [[1, 2]], str(probe.coverage))
         # A card the output budget actually digests claims only the numbered lines it kept:
-        # head, error lines and tail -- no file is opened to work that out.
+        # head and tail (stdout error prose is not promoted); no file is opened to work that out.
         numbered = "\n".join(f"{n:>6}| " + ("error: boom" if n == 300 else f"line {n}")
                              for n in range(1, 901))
         huge = Cell(stdout=numbered, stderr="", result=None, final=None, duration_ms=1,
@@ -792,7 +792,7 @@ def main() -> int:
         ranges = visible.get("huge.txt")
         check("state: a digested card claims only the lines it kept",
               bool(ranges) and 0 < state_loop.covered(ranges) < 900
-              and ranges[0][0] == 1 and ranges[-1][1] == 900 and [300, 300] in ranges,
+              and ranges[0][0] == 1 and ranges[-1][1] == 900,
               f"{ranges} covered={state_loop.covered(ranges or [])}")
         check("state: the digested card still names the ranges and the handle",
               "[read] huge.txt" in card and "unread " in card, card[:160])

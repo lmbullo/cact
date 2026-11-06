@@ -231,7 +231,7 @@ VERBS: dict[str, dict] = {
     },
     "exec": {
         "function": "exec_argv",
-        "summary": "The single process tool: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd replaces cd. Do not pass bash -lc in argv; use shell. For files use search/read, not the shell.",
+        "summary": "The process tool for typed modes: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd replaces cd. run() is the python-only equivalent in repl/bare, not here. Do not pass bash -lc in argv; use shell. For files use search/read, not the shell.",
         "mutates": False,
         "requires_run": True,
         "schema": {

@@ -151,8 +151,9 @@ def problems(root=None):
 
 
 def render(rows, chars=900):
-    """Rows -> the text form: path, language, size, title, then each section it has."""
+    """Rows -> text: path/language/size/title, then sections under a total `chars` budget."""
     blocks = []
+    remaining = max(0, int(chars or 0))
     for row in rows:
         parts = ["%s  (%s, %d lines)" % (row["path"], row["language"], row["lines"])]
         if row["title"]:
@@ -163,15 +164,19 @@ def render(rows, chars=900):
             body = row["sections"].get(name)
             if not body:
                 continue
-            if len(body) > chars:
-                body = body[:chars].rstrip() + " ..."
+            if remaining <= 0:
+                parts.append("  ...[header budget reached]...")
+                break
+            if len(body) > remaining:
+                body = body[:remaining].rstrip() + " ..."
+            remaining -= len(body)
             parts.append("  " + name)
             parts.extend("    " + line for line in body.splitlines())
         blocks.append("\n".join(parts))
     return "\n\n".join(blocks)
 
 
-def guide(root=None, query=None, path=None, limit=6, chars=900):
+def guide(root=None, query=None, path=None, limit=3, chars=2400):
     """Answer "which module owns this?" over the headers.
 
     No query, no path -> one line per source file (the map). `path` -> that module's header.
@@ -183,8 +188,10 @@ def guide(root=None, query=None, path=None, limit=6, chars=900):
         hits = [row for row in rows if row["path"] == want or row["path"].endswith("/" + want)]
         if not hits:
             return {"ok": True, "kind": "guide", "path": want, "modules": [],
+                    "shown": 0, "total": 0, "next": None,
                     "text": "no module at %s; map() lists the files, grep() searches them" % want}
-        return {"ok": True, "kind": "guide", "modules": hits, "text": render(hits, chars)}
+        return {"ok": True, "kind": "guide", "modules": hits, "shown": len(hits),
+                "total": len(hits), "next": None, "text": render(hits, chars)}
     if query:
         terms = [term for term in _TERMS.split(str(query).lower()) if term]
         scored = []
@@ -200,10 +207,14 @@ def guide(root=None, query=None, path=None, limit=6, chars=900):
         hits = [item[2] for item in scored[:max(1, int(limit))]]
         if not hits:
             return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
+                    "shown": 0, "total": 0, "next": None,
                     "text": "no documented module matches %r; try map() or grep()" % str(query)}
         return {"ok": True, "kind": "guide", "query": str(query), "modules": hits,
+                "shown": len(hits), "total": len(hits), "next": None,
                 "text": render(hits, chars)}
-    return {"ok": True, "kind": "guide", "modules": rows,
+    public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]
+    return {"ok": True, "kind": "guide", "modules": public,
+            "shown": len(public), "total": len(public), "next": None,
             "text": "\n".join("%s  %s" % (row["path"], row["title"] or "<no header>")
-                              for row in rows),
+                              for row in public),
             "documented": len([row for row in rows if row["sections"]]), "files": len(rows)}
