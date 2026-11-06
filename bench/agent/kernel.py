@@ -1031,11 +1031,30 @@ def outline(path, max_entries=200):
                 names = [target.id for target in node.targets
                          if isinstance(target, _ast.Name)]
                 if names:
-                    entries.append({"line": node.lineno, "kind": "assign",
-                                    "name": ", ".join(names)})
+                    label = ", ".join(names)
+                    keys = []
+                    if isinstance(node.value, _ast.Dict):
+                        keys = [key.value for key in node.value.keys
+                                if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
+                    elif isinstance(node.value, (_ast.Tuple, _ast.List)):
+                        keys = [item.value for item in node.value.elts
+                                if isinstance(item, _ast.Constant) and isinstance(item.value, str)]
+                    if keys:
+                        shown = ", ".join(keys[:12]) + (" ..." if len(keys) > 12 else "")
+                        label += " (%s, %d keys): %s" % (
+                            "dict" if isinstance(node.value, _ast.Dict) else "sequence",
+                            len(keys), shown)
+                    entries.append({"line": node.lineno, "kind": "assign", "name": label})
             elif isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
-                entries.append({"line": node.lineno, "kind": "assign",
-                                "name": node.target.id})
+                name = node.target.id
+                keys = []
+                if isinstance(node.value, _ast.Dict):
+                    keys = [key.value for key in node.value.keys
+                            if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
+                if keys:
+                    shown = ", ".join(keys[:12]) + (" ..." if len(keys) > 12 else "")
+                    name += " (dict, %d keys): %s" % (len(keys), shown)
+                entries.append({"line": node.lineno, "kind": "assign", "name": name})
     elif ext in (".md", ".markdown"):
         for number, line in enumerate(lines, 1):
             match = _re.match(r"^(#{1,6})\s+(.*\S)\s*$", line)
@@ -1270,6 +1289,8 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
               "truncated": truncated, "shown": len(hits), "total": total,
               "offset": int(offset),
               "next": {"offset": int(offset) + len(hits), "unit": "hit"} if int(offset) + len(hits) < total else None}
+    if int(offset) >= total and not hits:
+        common["note"] = "end of results (offset %d >= total %d)" % (int(offset), total)
     if max_chars and len(full) > int(max_chars):
         # A broad context search can exceed the card budget and lose its middle. Deliver
         # locators instead of a silently digested blob. Hit lines stay exact; only context
@@ -1277,7 +1298,8 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
         locators = "\n".join(
             "%s:%s: %s" % (hit["path"], hit["line"], hit.get("text") or "")
             for hit in hits)
-        common.update({"text_elided": True, "text_chars": len(full),
+        common.update({"text_elided": any(hit.get("before") or hit.get("after") for hit in hits),
+                       "text_chars": len(full),
                        "note": "broad result: max_chars is a locator threshold, not a cap; max_chars=0 disables locator mode"})
         common["text"] = locators
         return _Result(common)

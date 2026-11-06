@@ -176,7 +176,7 @@ bench/run.py                        tui/bin/code
   `start`/`end` that stops before EOF is complete and only has `has_more`.
   `read(path=[...])` applies one window to several files;
   `read(ranges=[{path,start,end},...])` batches different windows. `result.next.offset` is the
-  page cursor, while a state card's `[read] ... (unread N)` is the first line not yet covered.
+  page cursor, while a state card's `[read] ... (next unread: N)` is the first line not yet covered.
   A range already delivered in the session returns a pointer to the earlier `_OBS` output;
   `repeat=True` re-delivers it. `Cell.reads` records
   the delivered ranges as `{path: {ranges, total}}`, which the state card renders as

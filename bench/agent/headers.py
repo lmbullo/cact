@@ -209,9 +209,12 @@ def guide(root=None, query=None, path=None, limit=3, chars=20000):
             return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
                     "shown": 0, "total": 0, "next": None,
                     "text": "no documented module matches %r; try map() or search()" % str(query)}
-        return {"ok": True, "kind": "guide", "query": str(query), "modules": hits,
-                "shown": len(hits), "total": len(hits), "next": None,
-                "text": render(hits, chars)}
+        public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in hits]
+        return {"ok": True, "kind": "guide", "query": str(query), "modules": public,
+                "shown": len(public), "total": len(public), "next": None,
+                "text": "\n".join("%s  (%s, %d lines)  %s" % (
+                    row["path"], row["language"], row["lines"], row["title"] or "<no header>")
+                    for row in public)}
     public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]
     return {"ok": True, "kind": "guide", "modules": public,
             "shown": len(public), "total": len(public), "next": None,
