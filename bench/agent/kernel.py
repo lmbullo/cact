@@ -98,7 +98,7 @@ INVARIANTS
     turns into a `wrong_call` result with the helper hint. Allowed spawns are appended to
     `Cell.runs`. Inside run()/exec_argv() the gate classifies but does not double-log.
   - `read()` is a ledger, not a firehose: with no range it returns the whole file only while
-    it fits 400 lines / 20 KB; beyond that the result carries `next.offset` and `has_more`.
+    it fits 550 lines / 60 KB; beyond that the result carries `next.offset` and `has_more`.
     A list argument reads several files in one cell (same start/end, `text` concatenated with
     `# path` headers),
     so batching is the tool's shape rather than a rule. Every delivered range is returned as
@@ -330,7 +330,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "search_counts", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -463,12 +463,12 @@ _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
 
 
-def guide(query=None, path=None, limit=10, chars=20000):
+def guide(query=None, path=None, limit=10, chars=20000, offset=0):
     fn = _HEADERS.get("guide")
     if fn is None:
         return {"ok": False, "error": {"code": "no_index",
                 "message": "the header index is not loaded; use map() and grep() instead"}}
-    return fn(_ROOT, query=query, path=path, limit=limit, chars=chars)
+    return fn(_ROOT, query=query, path=path, limit=limit, chars=chars, offset=offset)
 
 
 _ROOT = _os.getcwd()
@@ -477,8 +477,8 @@ _READS_CELL = {}
 # the file is unchanged, returns a pointer instead of the same text again. `repeat=True`
 # opts back into a full delivery, so this is a context optimisation, not a cap.
 _READS_SESSION = {}
-_READ_MAX_CHARS = 20000
-_READ_MAX_LINES = 400
+_READ_MAX_CHARS = 60000
+_READ_MAX_LINES = 550
 _MUT = False
 _JOURNAL = []
 _SNAP = {}
@@ -1026,6 +1026,13 @@ def outline(path, max_entries=200):
     ext = _os.path.splitext(target)[1].lower()
     entries = []
 
+    def _key_entries(value):
+        if not isinstance(value, _ast.Dict):
+            return []
+        return [{"line": key.lineno, "kind": "key", "name": key.value}
+                for key in value.keys
+                if isinstance(key, _ast.Constant) and isinstance(key.value, str)]
+
     if ext == ".py":
         try:
             tree = _ast.parse(body)
@@ -1062,6 +1069,7 @@ def outline(path, max_entries=200):
                             "dict" if isinstance(node.value, _ast.Dict) else "sequence",
                             len(keys), shown)
                     entries.append({"line": node.lineno, "kind": "assign", "name": label})
+                    entries.extend(_key_entries(node.value))
             elif isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
                 name = node.target.id
                 keys = []
@@ -1072,6 +1080,7 @@ def outline(path, max_entries=200):
                     shown = ", ".join(keys[:12]) + (" ..." if len(keys) > 12 else "")
                     name += " (dict, %d keys): %s" % (len(keys), shown)
                 entries.append({"line": node.lineno, "kind": "assign", "name": name})
+                entries.extend(_key_entries(node.value))
     elif ext in (".md", ".markdown"):
         for number, line in enumerate(lines, 1):
             match = _re.match(r"^(#{1,6})\s+(.*\S)\s*$", line)
@@ -1199,7 +1208,10 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
         for item in results:
             rel = str(item.get("path") or "")
             if item.get("kind") == "file":
-                chunks.append("# " + rel + "\n" + (item.get("text") or ""))
+                page = item.get("next")
+                status = ("next=%s" % (page.get("offset") if isinstance(page, dict) else page)
+                          if page is not None else "complete")
+                chunks.append("# %s (%s)\n%s" % (rel, status, item.get("text") or ""))
             else:
                 chunks.append("# " + rel + "\n" + str(dict(item)))
         return _Result({"ok": all(bool(item.get("ok")) for item in results),
@@ -1299,6 +1311,16 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
     return _Result(result)
 
 
+def _count_result(counts, occurrences=0):
+    total = sum(int(value) for value in counts.values())
+    text = "\n".join("%s:%d" % (path, count) for path, count in sorted(counts.items()))
+    return _Result({"ok": True, "kind": "search_counts", "counts": counts,
+                    "by_file": {path: {"count": count, "lines": []}
+                                for path, count in counts.items()},
+                    "occurrences": occurrences, "shown": total, "total": total,
+                    "offset": 0, "next": None, "complete": True, "text": text})
+
+
 def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=None):
     # Render each file once. Adjacent/overlapping hits share their context lines, so the
     # model sees every line once; a line that is both a hit and another hit's context keeps
@@ -1354,11 +1376,21 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
 
 
 def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-         ignore_case=False, max_chars=12000, offset=0):
+         ignore_case=False, max_chars=12000, offset=0, count=False):
     # Search: one path or a list, an optional include glob, and optional context. The typed
     # `search` and the python `grep` share this one implementation and the same regex default.
     path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
+        if count:
+            counts = {}
+            occurred = 0
+            for item in (sorted(path) if isinstance(path, set) else path):
+                result = grep(pattern, item, max_results=max_results, regex=regex,
+                              include=include, context=context, ignore_case=ignore_case,
+                              max_chars=max_chars, offset=0, count=True)
+                counts.update(result.get("counts") or {})
+                occurred += int(result.get("occurrences") or 0)
+            return _count_result(counts, occurred)
         hits, occurred, truncated = [], 0, False
         for item in (sorted(path) if isinstance(path, set) else path):
             result = grep(pattern, item, max_results=max_results, regex=regex,
@@ -1392,6 +1424,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
     include_ignored = bool(includes and explicit_file)
     files = [target] if explicit_file else list(_walk(target))
     hits = []
+    counts = {}
     occurrences = 0
     matched_lines = 0
     truncated = False
@@ -1421,13 +1454,18 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                                  for n in range(max(1, number - width), number)]
                 hit["after"] = [{"line": n, "text": lines[n - 1].strip()}
                                 for n in range(number + 1, min(len(lines), number + width) + 1)]
+            counts[full_rel] = counts.get(full_rel, 0) + 1
             matched_lines += 1
+            if count:
+                continue
             if matched_lines <= skip:
                 continue
             if len(hits) < int(max_results):
                 hits.append(hit)
             else:
                 truncated = True
+    if count:
+        return _count_result(counts, occurrences)
     result = _grep_result(hits, occurrences, truncated, max_chars,
                           offset=skip, total=matched_lines)
     notes = []
@@ -1446,13 +1484,13 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
 
 
 def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
-           ignore_case=False, max_chars=12000, offset=0):
+           ignore_case=False, max_chars=12000, offset=0, count=False):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is
     # regex by default, matching the grep mental model: an alternation like `a|b` is one
     # call, not a literal miss. Pass regex=False for a literal substring.
     return grep(pattern, path=path, max_results=max_results, regex=regex,
                 include=include, context=context, ignore_case=ignore_case,
-                max_chars=max_chars, offset=offset)
+                max_chars=max_chars, offset=offset, count=count)
 
 
 def recall(pattern, limit=10, context=100):

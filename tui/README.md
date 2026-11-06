@@ -9,7 +9,7 @@ under `~/.local/state/code-tui/` (or `$XDG_STATE_HOME/code-tui`), and keeps runn
 after the TUI exits. Reopening `code` in the same directory reconnects to the same
 server and the same task board.
 
-### For coding agents
+## For coding agents
 
 Start at `../AGENTS.md`, then run `python3 ../bench/map.py --query tui` to hear it from the
 headers themselves. Every file here opens with a header stating what it is, its entry points,

@@ -15,7 +15,7 @@ WHAT IT IS
   Plus a ledger and a fold:
     coverage  every read() records the line ranges it delivered in `Cell.reads`; the renderer
               turns that plus the text it actually rendered into `(card, visible ranges)`, and
-              the card prints `[read] path ranges/total` and the next unread offset. This is
+              the card prints `[read] path ranges/total (unread: holes)`. This is
               guidance, not a finish gate: reads through run()/open() are equally valid and are
               not tracked, and the loop never opens a workspace file to check.
     fold      when the provider's real prompt count crosses `context_budget`, old turns are
@@ -95,7 +95,7 @@ Every tool result is a state card, not a terminal transcript:
   [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is the next cursor in `unit`, and `complete` says whether that page is the whole result. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: a-b, ...)` on that line lists the holes, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read [page] before [data]: `next` is the next cursor in `unit`, and `complete` says whether that page is the whole result; a `ranges` read labels each `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: a-b, ...)` on that line lists the holes, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)

@@ -216,6 +216,12 @@ def main() -> int:
 
     # --- the contract index: every module explains itself --------------------------------
     rows = headers.index(ROOT)
+    paged = headers.guide(ROOT, query="read", limit=1, offset=1)
+    check("headers: guide(query) pages with offset",
+          paged.get("shown") == 1 and paged.get("offset") == 1
+          and (paged.get("total") or 0) >= 2,
+          str(paged)[:240])
+
     check("headers: the index reaches the agent", any(r["path"] == "bench/agent/kernel.py" for r in rows),
           str([r["path"] for r in rows[:3]]))
     gaps = headers.problems(ROOT)
@@ -621,6 +627,10 @@ def main() -> int:
               and "row" in cell.stdout and "text_chars" in (cell.result or "")
               and '"total": 30' in (cell.result or ""),
               (cell.result or "")[:260])
+        cell = kernel.call("search", {"pattern": "one", "path": "call_a.txt", "count": True})
+        check("kernel: search count mode returns per-file counts, not hit text",
+              "search_counts" in (cell.result or "") and "call_a.txt:1" in cell.stdout,
+              (cell.stdout + (cell.result or ""))[:240])
         cell = kernel.call("search", {"pattern": "RED", "path": ".", "include": "*.txt",
                                       "context": 1, "ignore_case": True})
         check("kernel: call(search) filters include and adds context",

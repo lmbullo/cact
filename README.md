@@ -179,7 +179,7 @@ bench/run.py                        tui/bin/code
   and CSS section comments. A Markdown heading's range ends at the next same-or-shallower
   heading, so a parent includes its children. Read the range, not the heading line.
 - **Read: a ledger, not a firehose.** `read(start/end)` is the canonical range; with no range
-  it returns the whole file only while it fits 400 lines / 20 KB, else `next`/`has_more`.
+  it returns the whole file only while it fits 550 lines / 60 KB, else `next`/`has_more`.
   `truncated` means the default page limit cut the requested output; an explicit
   `start`/`end` that stops before EOF is complete and only has `has_more`. `read(path=[...])`
   applies one window to several files; `read(ranges=[{path,start,end},...])` batches

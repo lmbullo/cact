@@ -44,7 +44,7 @@ NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 VERBS: dict[str, dict] = {
     "guide": {
         "function": "guide",
-        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked one-line rows (truthful total/next; default limit 10), path gives one module's whole header. Read-only and in-kernel (no bench/map.py process). Only source headers are indexed; current docs use map/outline/search.",
+        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked one-line rows (truthful total/next; default limit 10; offset pages), path gives one module's whole header. Read-only and in-kernel (no bench/map.py process). Only source headers are indexed; current docs use map/outline/search.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -52,6 +52,8 @@ VERBS: dict[str, dict] = {
                 "query": {"type": "string"},
                 "path": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "Row offset into the ranked query results; use next.offset."},
                 "chars": {"type": "integer", "minimum": 0},
             },
             "additionalProperties": False,
@@ -117,23 +119,26 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges. include filters directory walks; a file path is searched as given.",
+        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count. include filters directory walks; a file path is searched as given.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
                 "pattern": {"type": "string"},
-                "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                         "description": "A file path is searched as given; a directory walk is filtered by include."},
                 "regex": {"type": "boolean", "default": True,
                           "description": "Treat pattern as a regular expression (default true). Set false for a literal substring."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                            "description": "Literal = exact relative path; glob = full path or basename ('*.py' any depth, 'bench/*.py' one level)."},
+                            "description": "Filters a directory walk only; literal = exact relative path, glob = full path or basename ('*.py' any depth, 'bench/*.py' one level). Ignored for an explicit file path."},
                 "context": {"type": "integer", "minimum": 0,
                             "description": "Lines before and after each hit; 0 returns the matching line only."},
                 "ignore_case": {"type": "boolean"},
                 "max_results": {"type": "integer", "minimum": 1},
                 "offset": {"type": "integer", "minimum": 0,
                            "description": "Skip this many matching lines; next.offset pages the result."},
+                "count": {"type": "boolean", "default": False,
+                          "description": "Only count matching lines per file; returns path:count rows, no hit text."},
                 "max_chars": {"type": "integer", "minimum": 0,
                               "description": "Locator threshold, not a cap: above it broad results are text_elided locators; 0 disables locator mode and returns full text."},
             },

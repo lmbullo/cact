@@ -22,10 +22,10 @@ WHAT IT IS
 
 ENTRY POINTS
   python3 bench/map.py [--query TEXT | --module PATH | --json | --check]
-  guide(root=None, query=None, path=None, limit=6, chars=900) -> dict
+  guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0) -> dict
   index(root=None) -> list[dict];  documented(root=None);  problems(root=None)
   header(path) -> (header text, line count);  split(text) -> (title, sections)
-  render(rows, chars=900) -> str
+  render(rows, chars=20000) -> str
 
 INVARIANTS
   - Read-only. It opens source files and returns dicts; no writes, no network, no imports of
@@ -150,7 +150,7 @@ def problems(root=None):
             for row in index(root) if row["missing"]]
 
 
-def render(rows, chars=900):
+def render(rows, chars=20000):
     """Rows -> text: path/language/size/title, then sections under a total `chars` budget."""
     blocks = []
     remaining = max(0, int(chars or 0))
@@ -186,8 +186,12 @@ def _non_indexed_note(root, query, rows):
     except OSError:
         names = []
     for name in names:
-        stem = os.path.splitext(name)[0]
-        if name in indexed or stem.lower() not in text:
+        stem = os.path.splitext(name)[0].lower()
+        if name in indexed or len(stem) < 3:
+            continue
+        # Match the filename as a token, not as a substring: a file called `a.txt` must not
+        # turn the query "read" into a docs miss.
+        if not re.search(r"(?<![\w.-])" + re.escape(stem) + r"(?![\w.-])", text):
             continue
         if os.path.isfile(os.path.join(base, name)):
             return ("%s is not in the contract index (only Python/TS source headers are); "
@@ -195,7 +199,7 @@ def _non_indexed_note(root, query, rows):
     return None
 
 
-def guide(root=None, query=None, path=None, limit=10, chars=20000):
+def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
     """Answer "which module owns this?" over the headers.
 
     No query, no path -> one line per source file (the map). `path` -> that module's header.
@@ -225,13 +229,16 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000):
         scored.sort(key=lambda item: (-item[0], item[1]))
         note = _non_indexed_note(root, query, rows)
         limit = max(1, int(limit))
-        hits = [item[2] for item in scored[:limit]]
+        start = max(0, int(offset or 0))
+        hits = [item[2] for item in scored[start:start + limit]]
         public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in hits]
         lines = ["%s  (%s, %d lines)  %s" % (
             row["path"], row["language"], row["lines"], row["title"] or "<no header>")
             for row in public]
-        if len(scored) > len(public):
-            lines.append("(showing %d of %d; pass limit= to see more)" % (len(public), len(scored)))
+        end = start + len(public)
+        if end < len(scored):
+            lines.append("(showing %d-%d of %d; pass offset=%d or limit=%d)"
+                         % (start + 1, end, len(scored), end, len(scored)))
         if note:
             # The query named a real non-source file. Do not pad it with weak header rows:
             # ``guide`` is the source-contract index, not the docs search.
@@ -240,9 +247,9 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000):
                     "note": note, "text": note}
         if not lines:
             lines = ["no documented module matches %r; try map() or search()" % str(query)]
-        nxt = {"offset": len(public), "unit": "module"} if len(scored) > len(public) else None
+        nxt = {"offset": end, "unit": "module"} if end < len(scored) else None
         return {"ok": True, "kind": "guide", "query": str(query), "modules": public,
-                "shown": len(public), "total": len(scored), "next": nxt,
+                "shown": len(public), "total": len(scored), "offset": start, "next": nxt,
                 "note": note, "text": "\n".join(lines)}
     public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]
     return {"ok": True, "kind": "guide", "modules": public,
