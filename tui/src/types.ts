@@ -20,7 +20,7 @@
  *    counters. The client prefers `progress` until the final event clears it.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
- *  - `CheckSpec` mirrors `bench.agent.checks.CheckSpec`: {name, cmd, cheap, scope?}, where
+ *  - `CheckSpec` mirrors `bench.agent.check_plan.CheckSpec`: {name, cmd, cheap, scope?}, where
  *    `scope` is a list of path prefixes. It is parsed in detect-checks.ts from
  *    CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
  *

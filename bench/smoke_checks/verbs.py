@@ -28,6 +28,7 @@ import bench.agent.state_loop as state_loop
 
 
 def run(check, root, kernel):
+    """The typed verbs through Kernel.call: map/read/search/splice/exec/outline/help."""
     kernel.run("write('call_a.txt', 'one\\ntwo\\n'); write('call_b.txt', 'red\\nblue\\n')")
     cell = kernel.call("map", {"path": ".", "include": "*.txt"})
     check("kernel: call(map) lists files without a shell and filters include",

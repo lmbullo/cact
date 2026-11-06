@@ -20,7 +20,7 @@ ENTRY POINTS
 
 INVARIANTS
   - Hidden tests live outside the workspace and are executed by `bench/hard_runner.py` with
-    cwd=the workspace; the runner prints `FAILED test: message` lines so check.py parses them.
+    cwd=the workspace; the runner prints `FAILED test: message` lines so check_run.py parses them.
   - H1's visible suite passes on the broken workspace on purpose. A loop that trusts green
     tests and never reads SPEC.md fails.
   - H3's ground truth is computed from the generated CSV at import; the CSV itself is
@@ -31,19 +31,18 @@ WHERE TO CHANGE
   A new hard task ......... HARD_TASKS, its fixture builder in build(), and its oracle under
                             `bench/hard_hidden/` (never inside `hard_fixtures/`)
   What the goal check is ... hidden_check() / the H3 grader
-  A failure line's shape ... bench/hard_runner.py, kept in step with check.py::_PATTERNS
+  A failure line's shape ... bench/hard_runner.py, kept in step with check_run.py::_PATTERNS
 """
 from __future__ import annotations
 
-import os
 import random
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .agent.check import Check, run_check
+from .agent.check_run import Check, run_check
 
 HERE = Path(__file__).parent
 HARD = HERE / "hard_fixtures"
@@ -358,19 +357,23 @@ def _h3_truth(path: Path) -> dict:
 
 
 def build() -> None:
+    """(Re)create the four `hard_fixtures/` workspaces; H1/H2/H4 are committed, H3 is generated."""
     for task_id, writer in (("H1_spec", _h1), ("H2_bughunt", _h2), ("H4_refactor", _h4)):
         writer(HARD / task_id)
     _h3(HARD / "H3_bigcsv")
 
 
 def hidden_check(task_id: str, ws: Path) -> Check:
+    """Run the held-out oracle for `task_id` against `ws` (never inside the workspace)."""
     hidden = HIDDEN / task_id
     cmd = f"{sys.executable} {RUNNER} {hidden}"
     return run_check(cmd, str(ws), timeout=120.0)
 
 
 def _grade_hidden(task_id: str) -> Callable[[str, object], tuple[bool, str]]:
+    """A grader that defers to the held-out oracle for `task_id`; no workspace means a failure."""
     def grade(answer: str, run) -> tuple[bool, str]:
+        """Score the workspace with the held-out oracle; the workspace has to exist first."""
         ws = Path(getattr(run, "workspace", ""))
         if not str(ws) or not ws.exists():
             return False, "no workspace to grade"
@@ -380,6 +383,7 @@ def _grade_hidden(task_id: str) -> Callable[[str, object], tuple[bool, str]]:
 
 
 def grade_bigcsv(answer: str, run) -> tuple[bool, str]:
+    """H3: the first three numbers are refund/reps/mod and the region name appears."""
     text = answer or ""
     match = re.search(r"(?im)^\s*ANSWER:\s*(.+?)\s*$", text)
     body = match.group(1) if match else text
@@ -399,6 +403,8 @@ def grade_bigcsv(answer: str, run) -> tuple[bool, str]:
 
 @dataclass
 class HardTask:
+    """One hard task: grader, workspace (`source`), whether it writes, and its held-out goal."""
+
     id: str
     prompt: str
     grade: Callable[[str, object], tuple[bool, str]]
@@ -451,6 +457,7 @@ HARD_TASKS: list[HardTask] = [
 
 
 def by_id(task_id: str) -> HardTask:
+    """The HardTask with that id; KeyError when the id is not a hard task."""
     for task in HARD_TASKS:
         if task.id == task_id:
             return task

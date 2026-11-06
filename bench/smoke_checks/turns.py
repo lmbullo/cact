@@ -41,6 +41,7 @@ from bench.smoke_support import FakeClient, FakeKernel, _call, _cell, _paired_me
 
 
 def run(check):
+    """The turn machine offline: stop vocabulary, staged finishes, goal rejection, call pairing."""
     # --- the turn machine: finish protocol, stop vocabulary and call pairing --------------
     check("turn: the stop vocabulary is fixed",
           set(tool_loop.STOPS) == {"DONE", "VERIFIED", "STEP_LIMIT", "WALL_LIMIT", "STAGED",
@@ -193,6 +194,7 @@ def run(check):
     goals = []
 
     def flaky_goal() -> bool:
+        """Fails the first check, passes the second: the re-prompt path."""
         goals.append(1)
         return len(goals) > 1
 
@@ -209,6 +211,7 @@ def run(check):
     goal_checks = []
 
     def goal_eventually_passes() -> bool:
+        """Fails once, then passes: a staged answer must survive the rejection."""
         goal_checks.append(1)
         return len(goal_checks) > 1
 

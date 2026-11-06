@@ -1,14 +1,15 @@
-"""Read a TUI task journal back: tasks/<id>.json + events/<id>.jsonl -> a summary.
+"""task_journal: read a TUI task journal back — tasks/<id>.json + events/<id>.jsonl -> summary.
 
 WHAT IT IS
   Post-hoc analysis for one task in a TUI state directory
   (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts the typed call mix
   (`tool_mix`), structured rejections, which kernel verbs the model used, which files it
-  wrote, steps, tokens, stop reason.
+  wrote, steps, tokens, stop reason. (`bench/run.py` is the benchmark CLI; this is the
+  reader for runs the TUI recorded, formerly `bench/runs.py`.)
 
 ENTRY POINTS
-  python3 bench/runs.py <state-dir> <task-id>
-  python3 bench/runs.py --recent [N]          every workspace's latest tasks, newest first
+  python3 bench/task_journal.py <state-dir> <task-id>
+  python3 bench/task_journal.py --recent [N]  every workspace's latest tasks, newest first
   load(state_dir, task_id) -> (task, turns)
   summarize(state_dir, task_id) -> dict
   recent(state_root, limit) -> list[dict]
@@ -26,8 +27,10 @@ WHERE TO CHANGE
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import time
 from pathlib import Path
 
 VERBS = ("map", "read", "outline", "search", "grep", "guide", "recall", "write", "edit", "splice",
@@ -36,6 +39,7 @@ VERBS = ("map", "read", "outline", "search", "grep", "guide", "recall", "write",
 
 
 def load(state_dir: Path, task_id: str) -> tuple[dict, list[dict]]:
+    """The task record and its `turn` events; malformed lines are skipped."""
     task = json.loads((state_dir / "tasks" / f"{task_id}.json").read_text())
     turns = []
     for line in (state_dir / "events" / f"{task_id}.jsonl").read_text().splitlines():
@@ -49,6 +53,7 @@ def load(state_dir: Path, task_id: str) -> tuple[dict, list[dict]]:
 
 
 def summarize(state_dir: Path, task_id: str) -> dict:
+    """The one-row metrics dict printed by `main()`; keys are the contract."""
     task, turns = load(state_dir, task_id)
     code = "\n".join(turn.get("code") or "" for turn in turns)
     obs = "\n".join((turn.get("observation") or {}).get("stdout", "") + (turn.get("observation") or {}).get("stderr", "") for turn in turns)
@@ -84,7 +89,7 @@ def summarize(state_dir: Path, task_id: str) -> dict:
 
 
 def _state_root() -> Path:
-    import os
+    """The state root the server uses: CODE_TUI_STATE_ROOT, else XDG_STATE_HOME, else ~."""
     root = os.environ.get("CODE_TUI_STATE_ROOT")
     if root:
         return Path(root)
@@ -93,6 +98,7 @@ def _state_root() -> Path:
 
 
 def _workspace_name(state_dir: Path) -> str:
+    """server.json's workspace path, falling back to the state directory name."""
     info = state_dir / "server.json"
     try:
         return str(json.loads(info.read_text()).get("workspace") or state_dir.name)
@@ -134,9 +140,13 @@ def recent(state_root: Path | None = None, limit: int = 20) -> list[dict]:
 
 
 def main() -> int:
-    if len(sys.argv) > 1 and sys.argv[1] == "--recent":
+    """CLI: `--recent [N]` across workspaces, or `<state-dir> <task-id>...` summaries."""
+    if len(sys.argv) < 2:
+        print("usage: python3 bench/task_journal.py <state-dir> <task-id>... | --recent [N]",
+              file=sys.stderr)
+        return 2
+    if sys.argv[1] == "--recent":
         limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-        import time
         for row in recent(limit=limit):
             task = row["task"]
             usage = task.get("usage") or {}

@@ -35,6 +35,7 @@ from bench.agent.kernel import Cell
 
 
 def run(check, root, kernel):
+    """Process gates, recall, orphan reaping, apply/commit, the state card and the finish protocol."""
     kernel.run("write('multi_a.txt', 'one\\ntwo\\nthree\\n'); write('multi_b.txt', 'red\\nblue\\n')")
     cell = kernel.run("r = read(['multi_a.txt', 'multi_b.txt']); print(r['kind'], r['count'], 'multi_a' in r['text'], 'multi_b' in r['text'])")
     check("kernel: read() accepts a list and concatenates the delivery",

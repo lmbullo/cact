@@ -10,7 +10,7 @@ ENTRY POINTS
   python3 bench/live.py ...       one end-to-end task through tui/python/worker.py
   python3 bench/smoke.py          offline contract check
   bench/tasks.py, bench/edge.py, bench/hard.py  task definitions and graders
-  bench/ws.py, bench/runs.py     workspace manifests / journal summaries
+  bench/snapshot.py, bench/task_journal.py  workspace manifests / journal summaries
   bench/map.py                   the contract index: which module owns what
 
 INVARIANTS
@@ -26,5 +26,5 @@ INVARIANTS
 WHERE TO CHANGE
   A new suite ............... its module (`tasks.py`, `edge.py`, `hard.py`) + `run.py` pool
   A new task in a suite .... that module's TASKS list and its `grade_*`
-  Workspace freezing ....... bench/ws.py
+  Workspace freezing ....... bench/snapshot.py
 """

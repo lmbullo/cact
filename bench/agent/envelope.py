@@ -59,6 +59,7 @@ BULK = frozenset({"text", "raw", "stdout", "stderr", "matches", "files", "entrie
 
 
 def _shown_count(shown):
+    """A `shown` value (count or (first, last)) -> the number of units delivered, or None."""
     if isinstance(shown, (list, tuple)) and len(shown) == 2:
         try:
             return max(0, int(shown[1]) - int(shown[0]) + 1)
@@ -71,6 +72,12 @@ def _shown_count(shown):
 
 
 def page_of(kind, value):
+    """The one paging contract for a verb result: {shown, total, offset, next, unit, has_more,
+    complete, ...}, or None when the result has no paging fields at all.
+
+    `next` comes back as a replayable argument object: {"start": N} for read, {"offset": N} for
+    every other pager. `complete` means this request was served; `has_more` means the result
+    continues."""
     if not isinstance(value, dict):
         return None
     fields = ("shown", "total", "total_lines", "total_files", "total_entries",
@@ -157,6 +164,7 @@ def page_of(kind, value):
 
 
 def normalize(tool, value, handle=None):
+    """Any verb result -> the canonical envelope: ok/op/kind/data/page/handle/notes/error."""
     if not isinstance(value, dict):
         return {"ok": True, "op": str(tool), "kind": str(tool), "data": {},
                 "page": None, "handle": handle, "notes": [], "error": None}

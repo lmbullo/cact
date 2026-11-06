@@ -18,7 +18,7 @@ INVARIANTS
   - Constants are TUI-facing. Benchmark defaults live in loop.Budget and run.py flags.
   - COMPACT_AT_TOKENS (85% of the 1M window) is what StateLoop compares the provider's real
     prompt token count against; OBS_CHARS=0 means the state card decides, not a char cap.
-  - `verifier` (checks.Verifier) is the production wiring: it owns the goal, the cheap
+  - `verifier` (check_plan.Verifier) is the production wiring: it owns the goal, the cheap
     subset, the throttle and the cache. `goal`/`health` stay accepted for callers that have
     a bare callable. ReplLoop has no verifier slot, so `build` hands it `goal_value`.
 
@@ -30,6 +30,7 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from .kernel import Kernel
@@ -37,7 +38,7 @@ from .llm import Client
 from .loop import Budget
 from .repl import ReplLoop
 from .state_loop import StateLoop
-from .tool_loop import TOOL_RULES, ToolLoop
+from .tool_loop import ToolLoop
 
 CONTEXT_WINDOW = 1_048_576
 MAX_OUTPUT = 393_216
@@ -45,12 +46,12 @@ COMPACT_AT = 0.85
 COMPACT_AT_TOKENS = int(CONTEXT_WINDOW * COMPACT_AT)
 OBS_CHARS = 0
 HISTORY = "action"
-import os
 
 MODE = os.environ.get("CODE_TUI_MODE", "state")
 
 
 def budget(steps: int, wall_s: float, output: int = MAX_OUTPUT) -> Budget:
+    """The production caps: `output` is clamped to MAX_OUTPUT, never raised past it."""
     return Budget(max_steps=steps, max_wall_s=wall_s, max_output_tokens=min(output, MAX_OUTPUT))
 
 
@@ -70,6 +71,7 @@ def build(
     health: Any = None,
     verifier: Any = None,
 ):
+    """The one production loop factory: `mode` picks StateLoop | ToolLoop | ReplLoop."""
     if mode == "state":
         return StateLoop(
             client,

@@ -16,6 +16,7 @@ WHAT IT IS
     gates.py     process gates, recall, reaping, state card, finish        run(check, root, kernel)
     turns.py     the turn machine, offline                                run(check)
     repl.py      the fenced-block dialect                                 run(check)
+    style.py     the tree is ruff-clean and every public name documented   run(check)
 
 ENTRY POINTS
   python3 bench/smoke.py    the only entry point; it decides the order

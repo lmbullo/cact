@@ -143,6 +143,7 @@ for _ch in CHECKSUM_ID:
 
 
 def build() -> None:
+    """(Re)create `harness_fixtures/` when missing; an existing tree only gets docs/CURRENT.md."""
     if HARNESS.exists():
         (HARNESS / "docs").mkdir(exist_ok=True)
         current = HARNESS / "docs" / "CURRENT.md"
@@ -192,10 +193,12 @@ NEW_COLOR = "#c0392b"
 
 
 def calls(run) -> list[dict]:
+    """Every tool call of a run, flattened across turns: the record `process()` grades."""
     return [call for turn in (getattr(run, "turns", None) or []) for call in (turn.get("calls") or [])]
 
 
 def tools(run) -> list[str]:
+    """The tool names in call order (duplicates kept); the cheap half of a process grade."""
     return [str(call.get("name")) for call in calls(run)]
 
 
@@ -289,6 +292,7 @@ def process(run, *, require=(), max_calls: int | None = None,
 
 
 def json_args(call: dict) -> str:
+    """A call's arguments as one sorted JSON string with `/` separators, for path matching."""
     return json.dumps(call.get("args") or {}, sort_keys=True, default=repr).replace("\\", "/")
 
 
@@ -308,6 +312,7 @@ def _section_pairs(answer: str) -> dict[str, int]:
 
 
 def grade_outline(answer: str, run) -> tuple[bool, str]:
+    """L1: every section id with its 1-based line, found without a shell reader."""
     got = _section_pairs(answer)
     missing = {ident: line for ident, line in SECTION_LINES.items() if got.get(ident) != line}
     problems = process(run, max_calls=10, no_exec_readers=True)
@@ -320,6 +325,7 @@ def grade_outline(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_search(answer: str, run) -> tuple[bool, str]:
+    """L2: every `path:line` hit for legacy|deprecated, found with the search tool."""
     text = _answer(answer)
     missing = [f"{path}:{line}" for path, line in SEARCH_HITS if f"{path}:{line}" not in text]
     problems = process(run, require=("search",), max_calls=10, no_exec_readers=True)
@@ -332,6 +338,7 @@ def grade_search(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_exec_batch(answer: str, run) -> tuple[bool, str]:
+    """L3: `one` then `two` in the answer, produced by one commands=[[...],[...]] batch."""
     text = _answer(answer)
     one, two = text.find("one"), text.find("two")
     problems = process(run, require=("exec",), max_calls=6, require_exec_commands=True)
@@ -344,6 +351,7 @@ def grade_exec_batch(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_edit_batch(answer: str, run) -> tuple[bool, str]:
+    """L4: both files carry NEW_COLOR and no OLD_COLOR, changed in one edit(edits=[...])."""
     root = Path(run.workspace)
     try:
         config = (root / "src" / "config.js").read_text(encoding="utf-8")
@@ -365,6 +373,7 @@ def grade_edit_batch(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_shell(answer: str, run) -> tuple[bool, str]:
+    """L5: the MARKER line count, computed through exec(shell=...)."""
     text = _answer(answer)
     problems = process(run, max_calls=8, require_exec_shell=True)
     ok = re.search(rf"(?<![\d.]){MARKER_COUNT}(?![\d])", text) is not None and not problems
@@ -376,6 +385,7 @@ def grade_shell(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_read_batch(answer: str, run) -> tuple[bool, str]:
+    """L6: the Notes heading and findLegacy, from one two-file read call."""
     text = _answer(answer)
     problems = process(run, require=("read",), max_calls=8, require_read_list=True, no_exec_readers=True)
     ok = "Notes" in text and "findLegacy" in text and not problems
@@ -387,6 +397,7 @@ def grade_read_batch(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_local_code(answer: str, run) -> tuple[bool, str]:
+    """L7: the checksum src/ledger.py computes, after actually reading that file."""
     text = _answer(answer)
     inspected = False
     for call in calls(run):
@@ -409,6 +420,7 @@ def grade_local_code(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_current_docs(answer: str, run) -> tuple[bool, str]:
+    """L8: DOC_FACT from docs/CURRENT.md, read once via a typed tool (no python file I/O)."""
     text = _answer(answer)
     problems = process(run, max_calls=6, no_exec_readers=True, max_repeats=0,
                        require_path=CURRENT_PATH, no_python_io=True,
@@ -423,6 +435,8 @@ def grade_current_docs(answer: str, run) -> tuple[bool, str]:
 
 @dataclass
 class HarnessTask:
+    """One tool-path task: grader, workspace, whether it writes, its goal and its prepare()."""
+
     id: str
     prompt: str
     grade: Callable[[str, object], tuple[bool, str]]
@@ -497,6 +511,7 @@ HARNESS_TASKS: list[HarnessTask] = [
 
 
 def by_id(task_id: str) -> HarnessTask:
+    """The HarnessTask with that id; KeyError when the id is not a harness task."""
     for task in HARNESS_TASKS:
         if task.id == task_id:
             return task

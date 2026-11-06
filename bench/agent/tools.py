@@ -11,7 +11,6 @@ WHAT IT IS
 ENTRY POINTS
   TYPE_TOOLS   the typed specs, in registry order
   TOOL_NAMES   the typed names (no "python")
-  spec(name)   one typed spec
 
 INVARIANTS
   - Generated, never hand-written: a verb added to `verbs.py` appears here with no further
@@ -46,10 +45,3 @@ TYPE_TOOLS: list[dict] = [
 ]
 
 TOOL_NAMES = tuple(tool["function"]["name"] for tool in TYPE_TOOLS)
-
-
-def spec(name: str) -> dict:
-    for tool in TYPE_TOOLS:
-        if tool["function"]["name"] == name:
-            return tool
-    raise KeyError(name)

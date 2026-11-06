@@ -25,6 +25,7 @@ from bench.smoke_support import FakeClient, FakeKernel, _cell, _reply
 
 
 def run(check):
+    """ReplLoop is a ToolLoop dialect: fences run, ANSWER finishes, no copied turn machine."""
     # --- the fenced-block dialect reuses that machine, not a copy of it -------------------
     check("repl: the loop reuses the turn machine", issubclass(repl.ReplLoop, tool_loop.ToolLoop))
     repl_code = "print('hi')"

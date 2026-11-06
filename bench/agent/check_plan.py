@@ -1,11 +1,11 @@
-"""The check plan and its Verifier: an ordered list of project commands, cheap checks first.
+"""check_plan: an ordered plan of project commands and the one `Verifier` that owns it.
 
 WHAT IT IS
   `CheckSpec.parse(raw)` reads the plan from a command string or a JSON list of
   `{name, cmd, cheap, scope}`; `run_plan(specs, cwd, paths)` runs it and returns the first
   failure as a `Check` plus the per-command results (or `None` when no spec applied),
   `run_specs` returns just the combined verdict, and a synthetic `passed` means every
-  command that ran passed.
+  command that ran passed. One command is check_run.run_check.
 
   `Verifier` is the single owner of a verification plan: the specs, the cheap subset, the
   `scope` filter, the 20s throttle window, the check cache handed to the kernel, and the
@@ -33,7 +33,7 @@ INVARIANTS
   - Order is the contract: put the cheap, fast checks (smoke, typecheck) first so a broken
     tree is reported before the slow suite runs. The first failure is returned and the rest
     are skipped.
-  - `unrunnable` from check.py survives the plan: a command that cannot run is a broken
+  - `unrunnable` from check_run.py survives the plan: a command that cannot run is a broken
     check, never a broken project.
   - `scope` is a list of path prefixes; when a caller passes `paths` (the cheap run), a
     spec runs only if one changed path is under its scope, so a docs-only edit does not
@@ -46,7 +46,7 @@ INVARIANTS
     stands in for the plan, and its results are never injected as `check_cache` entries
     (there is no command to key them by).
   - `legacy=True` makes `authoritative()` answer `(ok, None)`, so the loop's rejection has a
-    bare pass/fail and no failure lines. Production keeps it off.
+    bare pass/fail and no failure lines. Production keeps it off (CODE_TUI_LEGACY_CHECK).
   - A plan is data, never a shell string. detect-checks.ts detects the default plan
     (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts);
     server.ts passes it to worker.py as `--checks <json>`, and bench/live.py forwards
@@ -64,19 +64,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
-from .check import Check, run_check
+from .check_run import Check, run_check
 
 HEALTH_WINDOW = 20.0
 
 
 @dataclass
 class CheckSpec:
+    """One plan entry: a named command, whether it belongs to the cheap subset, and its scope."""
+
     name: str
     cmd: str
     cheap: bool = False
     scope: tuple[str, ...] = ()
 
     def applies(self, paths: Iterable[str] | None) -> bool:
+        """Does this spec cover the changed `paths`? No scope, or no path list, means yes."""
         if not self.scope or paths is None:
             return True
         for path in paths:
@@ -90,6 +93,7 @@ class CheckSpec:
 
     @staticmethod
     def parse(raw: Any) -> list["CheckSpec"]:
+        """A command string or a JSON-ish list of dicts -> specs; anything else is empty."""
         if isinstance(raw, str):
             return [CheckSpec(name="check", cmd=raw, cheap=False)] if raw.strip() else []
         if not isinstance(raw, list):
@@ -115,6 +119,7 @@ class CheckSpec:
 
 def run_plan(specs: Iterable[CheckSpec], cwd: str,
              paths: Iterable[str] | None = None) -> tuple[Check | None, dict[str, Check]]:
+    """Run the applicable specs in order; stop at the first failure. (None, {}) when none apply."""
     ran: list[CheckSpec] = []
     results: dict[str, Check] = {}
     for spec in specs:
@@ -140,6 +145,7 @@ def run_plan(specs: Iterable[CheckSpec], cwd: str,
 
 def run_specs(specs: Iterable[CheckSpec], cwd: str,
               paths: Iterable[str] | None = None) -> Check | None:
+    """run_plan's verdict only: the first failing Check, or a synthetic passed, or None."""
     return run_plan(specs, cwd, paths)[0]
 
 
@@ -175,10 +181,12 @@ class Verifier:
 
     @property
     def has_goal(self) -> bool:
+        """True when this Verifier has anything to enforce at finish time."""
         return bool(self.specs) or self.check is not None
 
     @property
     def cheap_specs(self) -> list[CheckSpec]:
+        """The health subset, copied."""
         return list(self._cheap)
 
     def should_run(self, paths: Iterable[str] | None, now: float) -> bool:
@@ -233,6 +241,7 @@ class Verifier:
         return check if check is not None else ok
 
     def cache(self) -> dict[str, dict]:
+        """{cmd: {text, ok}} for the kernel's `check_cache` python helper."""
         return self._cache
 
     def invalidate(self) -> None:

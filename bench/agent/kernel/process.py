@@ -71,6 +71,14 @@ from .run_prelude import RUN_PRELUDE
 
 
 class Kernel:
+    """The parent-side supervisor of one kernel child.
+
+    Spawns the child (bubblewrapped unless `allow_run`), sends one request line per cell, parses
+    the `@@K@@` reply into a `Cell`, enforces the per-cell deadline, restarts a dead or stale
+    child, and reaps the process groups its children started. `writable` decides whether the
+    file verbs may commit; `prelude` selects which helpers the child has.
+    """
+
     def __init__(self, root: Path, timeout: float = CELL_TIMEOUT, writable: bool = False,
                  prelude: str = "off", allow_run: bool = False, allow_shell: bool | None = None,
                  supervise: bool = True) -> None:
@@ -147,6 +155,7 @@ class Kernel:
             pass
 
     def start(self) -> None:
+        """Spawn the child in its own session; creates the obs log and the orphan journal."""
         if self.prelude != "off" and not self.obs_log:
             fd, self.obs_log = tempfile.mkstemp(prefix="cact-obs-", suffix=".jsonl")
             os.close(fd)
@@ -198,6 +207,7 @@ class Kernel:
             self.obs_log = None
 
     def stop(self) -> None:
+        """Kill the child and every process group its cells started (`keep_history` keeps _OBS)."""
         self._stop(keep_history=False)
 
     def _kill_group(self) -> None:
@@ -222,6 +232,7 @@ class Kernel:
                 "restarted with an empty namespace (earlier output survives in recall())")
 
     def run(self, code: str, check_cache: dict | None = None) -> Cell:
+        """One python cell -> one Cell; restarts the child on a timeout, a crash or a stale protocol."""
         if len(code) > MAX_CODE:
             return Cell.failure("kernel: code exceeds 20000 characters; split it into smaller cells",
                                 restarted=False)

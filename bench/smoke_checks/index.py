@@ -30,6 +30,7 @@ from bench.smoke_support import ROOT
 
 
 def run(check):
+    """The header index reaches an agent (`guide`), pages truthfully, and agrees with map.py."""
     # --- the contract index: every module explains itself --------------------------------
     rows = headers.index(ROOT)
     paged = headers.guide(ROOT, query="read", limit=1, offset=1)
@@ -45,7 +46,7 @@ def run(check):
     check("headers: every module header is complete", not gaps, str(gaps[:3]))
     hit = headers.guide(ROOT, query="check plan", limit=3)
     check("headers: a query names the owning module",
-          bool(hit["modules"]) and hit["modules"][0]["path"] == "bench/agent/checks.py",
+          bool(hit["modules"]) and hit["modules"][0]["path"] == "bench/agent/check_plan.py",
           str([r["path"] for r in hit["modules"]]))
     check("headers: an unknown module is a miss, not an exception",
           headers.guide(ROOT, path="no/such.py")["modules"] == [])

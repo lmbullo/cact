@@ -141,10 +141,6 @@ def index(root=None):
     return rows
 
 
-def documented(root=None):
-    return [row for row in index(root) if row["sections"]]
-
-
 def problems(root=None):
     """Rows whose header is missing a section. Empty means the tree conforms."""
     return [{"path": row["path"], "missing": row["missing"]}

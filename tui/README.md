@@ -287,7 +287,7 @@ bun test            # tests/: list, log, progress, prompt, view rendering, check
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character
 frames, so they exercise the same rows the terminal shows. A read-only cross-workspace view of
-the newest tasks (no server or key needed): `python3 ../bench/runs.py --recent 10`.
+the newest tasks (no server or key needed): `python3 ../bench/task_journal.py --recent 10`.
 
 ## 12. Diagnosis
 

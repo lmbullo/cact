@@ -94,6 +94,7 @@ BARE_RULES = """Write Python in one ```python block. Cells share a kernel; varia
 
 
 def history_entry(action: Action) -> str:
+    """One past action as the text a `history=full` run replays (fence or ANSWER line)."""
     if action.kind == "code":
         return f"```python\n{action.code}\n```"
     if action.kind == "answer":
@@ -102,6 +103,7 @@ def history_entry(action: Action) -> str:
 
 
 def observation(cell: Cell, cap: int = 0) -> str:
+    """The repl-mode observation block for one cell; over `cap` chars the middle is hidden."""
     parts = [f"[observation] exit={'raise' if cell.stderr else 'ok'} time={cell.duration_ms}ms"]
     if cell.timeout:
         parts.append("timeout: the cell was interrupted; the namespace and variables are intact")
@@ -124,6 +126,10 @@ def observation(cell: Cell, cap: int = 0) -> str:
 
 
 class ReplLoop(ToolLoop):
+    """ToolLoop whose action space is one ```python block per reply; `ANSWER:` or a bare reply
+    finishes. It inherits the turn machine (pairing, stop reasons, goals) and overrides only the
+    reply dialect."""
+
     BUDGET_NOTE = ("[runtime] The cell budget is exhausted. Reply with the final answer "
                    "as plain text and no code block.")
     CHECK_NOUN = "goal check"

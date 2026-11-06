@@ -29,12 +29,13 @@ import bench.agent.state_loop as state_loop
 import bench.agent.tools as tools
 import bench.agent.trace as trace
 import bench.agent.verbs as verbs
-import bench.runs as runs
-import bench.ws as ws
+import bench.snapshot as snapshot
+import bench.task_journal as task_journal
 from bench.agent.kernel import Cell
 
 
 def run(check):
+    """The pure helpers the loops depend on: reply parsing, card digests, budgets, verb specs."""
     # --- pure helpers --------------------------------------------------------------------
     action = reply.compile_reply("thinking\n```python\nprint(1)\n```\n")
     check("reply: fenced block", action.kind == "code" and "print(1)" in (action.code or ""))
@@ -57,8 +58,9 @@ def run(check):
     check("config: mode is a loop name", config.MODE in ("state", "tool", "repl"))
     check("llm: error type", issubclass(llm.LLMError, RuntimeError))
     check("trace: render is callable", callable(trace.render))
-    check("runs: verbs", "final_answer" in runs.VERBS)
-    check("ws: workspace helpers", callable(ws.manifest) and callable(ws.clone) and callable(ws.changed))
+    check("task_journal: verbs", "final_answer" in task_journal.VERBS)
+    check("snapshot: workspace helpers",
+          callable(snapshot.manifest) and callable(snapshot.clone) and callable(snapshot.changed))
     typed_names = tuple(name for name, meta in verbs.VERBS.items() if meta.get("typed", True))
     check("verbs: every typed tool has a spec",
           tools.TOOL_NAMES == typed_names

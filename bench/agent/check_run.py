@@ -1,4 +1,4 @@
-"""The goal check: run a project command, parse its failures, decide pass/fail.
+"""check_run: one project command -> one `Check`. The unit; the plan lives in check_plan.py.
 
 WHAT IT IS
   `run_check(cmd, cwd)` runs a shell command (tsc, bun test, pytest, ...) and turns the
@@ -20,12 +20,12 @@ INVARIANTS
     (bun `(fail)`, pytest `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines).
   - A goal that raises becomes `unrunnable`, not an exception in the loop.
   - Goals are callables, not command strings: tui/python/worker.py builds a
-    `checks.Verifier`, whose `authoritative()` runs the whole plan on every finish attempt.
-    Several commands (a cheap health subset plus the full suite) live in checks.py.
+    `check_plan.Verifier`, whose `authoritative()` runs the whole plan on every finish attempt.
+    Several commands (a cheap health subset plus the full suite) live in check_plan.py.
 
 WHERE TO CHANGE
   Recognise another test runner's failure lines ... _PATTERNS, _failures
-  Several checks / a cheap health subset ......... checks.py (CheckSpec, run_specs)
+  Several checks / a cheap health subset ......... check_plan.py (CheckSpec, run_specs)
   How a check is executed ........................ run_check (timeout, bash, cwd)
   What the model is told on failure .............. Check.text
 """
@@ -40,6 +40,8 @@ from typing import Any
 
 @dataclass
 class Check:
+    """One finished command run. `state` is passed | failed | unrunnable; nothing else."""
+
     cmd: str
     state: str
     exit_code: int | None = None
@@ -50,9 +52,11 @@ class Check:
 
     @property
     def ok(self) -> bool:
+        """True only for a run that exited 0."""
         return self.state == "passed"
 
     def text(self, limit: int = 3000) -> str:
+        """The model-facing line(s): verdict first, then the parsed failure lines or a tail."""
         if self.state == "passed":
             return f"{self.cmd}: passed ({self.duration_ms}ms)"
         if self.state == "unrunnable":
@@ -69,6 +73,7 @@ class Check:
         return f"{head}\n{detail}"
 
 
+# Test-runner failure lines, one pattern per dialect. Order matters: first match wins.
 _PATTERNS = (
     re.compile(r"^\s*\(fail\)\s*(.+)$"),
     re.compile(r"^\s*FAILED\s+(.+)$"),
@@ -80,6 +85,7 @@ _PATTERNS = (
 
 
 def _failures(stdout: str, stderr: str, limit: int = 20) -> list[dict]:
+    """De-duplicated {line, text} rows, stderr first, capped at `limit`."""
     hits: list[dict] = []
     seen: set[str] = set()
     for number, line in enumerate((stderr + "\n" + stdout).splitlines(), 1):
@@ -102,6 +108,7 @@ def _failures(stdout: str, stderr: str, limit: int = 20) -> list[dict]:
 
 
 def run_check(cmd: str, cwd: str, timeout: float = 600.0) -> Check:
+    """Run `cmd` in `cwd` through bash and classify it; never raises."""
     started = time.perf_counter()
     try:
         proc = subprocess.run(
@@ -125,6 +132,7 @@ def run_check(cmd: str, cwd: str, timeout: float = 600.0) -> Check:
 
 
 def evaluate(goal: Any) -> tuple[bool, Check | None]:
+    """Normalise a goal callable to (ok, Check|None); `None` means no goal, so (True, None)."""
     if goal is None:
         return True, None
     try:

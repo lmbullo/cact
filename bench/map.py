@@ -10,7 +10,7 @@ WHAT IT IS
 ENTRY POINTS
   python3 bench/map.py                     the map: one line per module
   python3 bench/map.py --query checks      ranked modules that own "checks", with their headers
-  python3 bench/map.py --module bench/agent/check.py     one module's full header
+  python3 bench/map.py --module bench/agent/check_plan.py  one module's full header
   python3 bench/map.py --json [--query Q]  the same data as JSON, for a program
   python3 bench/map.py --limit N           cap the rows for --query (default 6)
   python3 bench/map.py --check             exit 1 if a header is missing a section
@@ -43,6 +43,7 @@ from bench.agent import headers  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print the map, one query, or one header; `--check` is the header gate (exit 1 on a gap)."""
     parser = argparse.ArgumentParser(
         prog="bench/map.py",
         description="The repo contract index: module -> what it is, where to change it.")
@@ -70,12 +71,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(result, indent=2))
         return 0
-    if args.query or args.module:
-        print(result["text"])
-        return 0
     print(result["text"])
-    print("\n%d files, %d documented; --query TEXT finds an owner, --module PATH reads one header"
-          % (result["files"], result["documented"]))
+    if not (args.query or args.module):
+        print("\n%d files, %d documented; --query TEXT finds an owner, --module PATH reads one header"
+              % (result["files"], result["documented"]))
     return 0
 
 

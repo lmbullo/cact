@@ -12,7 +12,7 @@ ENTRY POINTS
   guide() / the header index ....... headers.py (also shipped to a kernel cell as a verb)
   ToolLoop / StateLoop / ReplLoop .. the loop modules; config.build() picks one
   Client, LLMError ................. llm.py
-  Check, run_check, evaluate ....... check.py; plans in checks.py
+  Check, run_check, evaluate ....... check_run.py; plans in check_plan.py
   Budget, RunResult, _usage_add .... loop.py
   Trace, render .................... trace.py
 

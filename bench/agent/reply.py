@@ -18,8 +18,8 @@ INVARIANTS
   - A recognised tool call with no runnable body is kind="none" with source="markup" — the
     loop's note then asks for a plain ```python block.
   - `ANSWER: <value>` wins only when there is no code block (`_blocks` runs first).
-  - Alias map (`ALIASES`, `CALL_NAMES`, `INT_PARAMS`, `BOOL_PARAMS`) is the only place that
-    knows model-specific spellings; extend it there.
+  - Alias map (`ALIASES`, `CALL_NAMES`) is the only place that knows model-specific
+    spellings; extend it there.
 
 WHERE TO CHANGE
   A model's new markup dialect .... MARKUP / TAG / INVOKE / PARAM + parse_markup
@@ -36,6 +36,9 @@ from typing import Any
 
 @dataclass
 class Action:
+    """One parsed reply: `kind` is code | answer | none, and an unparsable reply carries
+    `error`/`detail` so the loop can tell the model what was wrong."""
+
     kind: str
     code: str | None = None
     value: str | None = None
@@ -64,8 +67,6 @@ ALIASES = {
     "bash": "run", "shell": "run", "sh": "run", "terminal": "run", "command": "run",
     "think": None, "reasoning": None, "final_answer_placeholder": None,
 }
-INT_PARAMS = {"offset", "limit", "max_results", "timeout", "max_files"}
-BOOL_PARAMS = {"all", "regex", "raw", "overwrite"}
 
 
 def _strip(text: str) -> str:
@@ -86,6 +87,7 @@ def _literal(token: str, flags: str) -> Any:
 
 
 def _call_source(name: str, params: dict[str, Any], body: str) -> str:
+    """A markup invoke -> python source; "" when the name is unknown or the body is empty."""
     lowered = ALIASES.get(name.lower(), name.lower())
     if lowered is None:
         return ""
@@ -109,6 +111,7 @@ ORPHAN_PARAM = re.compile(r"<[^<>]*?parameter\s+name\s*=\s*[\"']", re.I)
 
 
 def parse_markup(text: str) -> Action | None:
+    """DSML/XML invoke blocks -> Action, or None when the reply carries no markup call."""
     if "DSML" not in text and "invoke name" not in text:
         return None
     blocks = list(INVOKE.finditer(text))
@@ -145,6 +148,7 @@ def parse_markup(text: str) -> Action | None:
 
 
 def _blocks(text: str) -> list[tuple[str, str]]:
+    """(opening fence, body) for every closed ```python block; an unclosed fence is dropped."""
     blocks: list[tuple[str, str]] = []
     for opening in FENCE_OPEN.finditer(text):
         ticks = opening.group(1)
@@ -158,6 +162,7 @@ def _blocks(text: str) -> list[tuple[str, str]]:
 
 
 def compile_reply(text: str) -> Action:
+    """The one entry point: fence -> markup -> ANSWER -> placeholder/orphan diagnostics -> none."""
     body = text or ""
     blocks = _blocks(body)
     if blocks:

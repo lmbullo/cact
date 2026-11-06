@@ -25,7 +25,7 @@ INVARIANTS
     when the process tools (`exec`/`git`/`run()`) are enabled. Production is always
     unattended: no human answers questions; typed modes build the kernel with
     `allow_shell=False`, so only repl has `run()`.
-  - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/checks.py.
+  - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/check_plan.py.
     One `checks.Verifier` owns the plan, so the goal re-runs it on every finish attempt and
     `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
     never ends the run by itself. The same object decides the `cheap` health run (the
@@ -58,7 +58,6 @@ import hashlib
 import json
 import os
 import signal
-import subprocess
 import sys
 import time
 import traceback
@@ -70,7 +69,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bench.agent import config  # noqa: E402
-from bench.agent.checks import CheckSpec, Verifier  # noqa: E402
+from bench.agent.check_plan import CheckSpec, Verifier  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
 from bench.agent.repl import REPL_RULES, RUN_NOTE  # noqa: E402
@@ -81,12 +80,14 @@ PREFIX = "@@TUI@@"
 
 
 def state_dir(workspace: Path) -> Path:
+    """The per-workspace state root: $XDG_STATE_HOME/code-tui/workspaces/<sha256(cwd)[:16]>."""
     root = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
     digest = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()[:16]
     return root / "code-tui" / "workspaces" / digest
 
 
 def history_brief(workspace: Path, limit: int = 4) -> str:
+    """The prompt prefix that tells a new task what the last few tasks in this workspace did."""
     path = state_dir(workspace) / "history.jsonl"
     if not path.exists():
         return ""
@@ -106,6 +107,7 @@ def history_brief(workspace: Path, limit: int = 4) -> str:
 
 
 def record_history(workspace: Path, prompt: str, result, files: list[str]) -> None:
+    """Append one history.jsonl row (last 50 kept) so the next task sees what changed."""
     path = state_dir(workspace) / "history.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {
@@ -123,6 +125,7 @@ def record_history(workspace: Path, prompt: str, result, files: list[str]) -> No
 
 
 def emit(payload: dict[str, Any]) -> None:
+    """Write one `@@TUI@@` JSON line to stdout: the only channel server.ts reads."""
     sys.stdout.write(PREFIX + json.dumps(payload, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -139,27 +142,35 @@ You are running unattended. No human will answer questions or approve actions.
 
 
 class StreamingKernel(Kernel):
+    """A Kernel that emits a `cell.start` event before each cell, so the TUI can show it live."""
+
     def __init__(self, *args: Any, emit_event, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._emit_event = emit_event
         self._cell_no = 0
 
     def run(self, code: str, check_cache: dict | None = None):
+        """One python cell, announced as `cell.start` before it runs."""
         self._cell_no += 1
         self._emit_event({"kind": "cell.start", "cell": self._cell_no, "tool": "python", "code": code})
         return super().run(code, check_cache=check_cache)
 
     def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None):
+        """One typed verb call, announced as `cell.start` with its tool and args."""
         self._cell_no += 1
         self._emit_event({"kind": "cell.start", "cell": self._cell_no, "tool": tool, "args": args or {}})
         return super().call(tool, args, check_cache=check_cache)
 
 
 class EventTrace:
+    """The Trace duck type that streams each turn event instead of writing a file; drops summaries
+    (the final event carries those)."""
+
     def __init__(self, emit_event) -> None:
         self._emit_event = emit_event
 
     def write(self, record: dict) -> None:
+        """Stream one turn record (the fields the TUI renders); the summary record is dropped."""
         if record.get("summary"):
             return
         data = {
@@ -182,10 +193,12 @@ class EventTrace:
         self._emit_event({"kind": "turn", "turn": int(record.get("turn") or 0), "data": data})
 
     def close(self) -> None:
+        """No-op: there is no file to close, the events were streamed as they happened."""
         pass
 
 
 def main() -> int:
+    """Run one task end to end and stream `@@TUI@@` events; 0 on a clean finish, 1 on failure."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--prompt-file", required=True)
@@ -255,6 +268,7 @@ def main() -> int:
     kernel: StreamingKernel | None = None
 
     def stop_kernel(_signum, _frame) -> None:
+        """SIGTERM/SIGINT: stop the kernel child (so its process groups die) and exit 143."""
         if kernel is not None:
             kernel.stop()
         raise SystemExit(143)

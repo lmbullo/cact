@@ -1,29 +1,30 @@
-"""Workspace snapshots: freeze a tree into a sha256 manifest, clone it, diff against it.
+"""snapshot: freeze a tree into a sha256 manifest, clone it, diff against it.
 
 WHAT IT IS
-  `freeze(src, dst)` copies a tree and writes `dst.manifest.json`; `diff(dst)` reports
+  `freeze(src, dst)` copies a tree and writes `dst.manifest.json`; `changed(run)` reports
   added/modified/deleted relative to that manifest; `clone(src, dst)` copies without a
-  manifest for throwaway runs. `bench/ws/tui-base` and `tui-broken` are frozen this way.
+  manifest for throwaway runs. `bench/ws/tui-base` and `bench/ws/tui-broken` are frozen this
+  way. (`bench/ws/` itself is generated output; this module used to be `bench/ws.py`, which
+  shadowed that directory name.)
 
 ENTRY POINTS
-  python3 -m bench.ws freeze SRC DST     clone, then write DST.manifest.json
-  python3 -m bench.ws clone  SRC DST     copy only (no manifest)
-  python3 -m bench.ws diff   DST         added/modified/deleted vs DST.manifest.json
-  manifest(root, write=True) -> dict     {"root": ..., "files": {rel: sha256[:16]}}
-  clone(src, dst)                        copy, ignoring generated dirs, symlinking node_modules
+  python3 -m bench.snapshot freeze SRC DST     clone, then write DST.manifest.json
+  python3 -m bench.snapshot clone  SRC DST     copy only (no manifest)
+  python3 -m bench.snapshot diff   DST         added/modified/deleted vs DST.manifest.json
+  manifest(root, write=True) -> dict           {"root": ..., "files": {rel: sha256[:16]}}
+  clone(src, dst)                              copy, ignoring generated dirs, symlinking node_modules
   changed(run) -> {"added", "modified", "deleted"}
 
 INVARIANTS
   - Hashes are truncated to 16 hex chars; the manifest is the reference state, so a frozen
-    workspace must never be edited in place — clone it first (`bench.ws.clone`).
-  - `IGNORE`/the parts filter skips node_modules, .git, dist, build, __pycache__, .cache,
-    .next, .bun, coverage. A new generated directory must be added in both places or every
-    diff will be noise.
+    workspace must never be edited in place — clone it first (`snapshot.clone`).
+  - `IGNORE_PARTS` is the one list of generated directories, used by both the copytree
+    filter and `_files`; a new generated directory goes there once or every diff is noise.
   - Symlinks are skipped: a symlinked fixture will not appear in the manifest.
 
 WHERE TO CHANGE
-  Ignore rules ......... IGNORE + the parts set in `_files`
-  Manifest format ...... `manifest`, `diff` (used by bench/live.py)
+  Ignore rules ......... IGNORE_PARTS
+  Manifest format ...... `manifest`, `changed` (used by bench/live.py)
 """
 from __future__ import annotations
 
@@ -33,25 +34,27 @@ import shutil
 import sys
 from pathlib import Path
 
-IGNORE = shutil.ignore_patterns(
-    "node_modules", ".git", "dist", "build", "__pycache__", ".cache", ".next", ".bun", "coverage",
-)
+# One list, two uses: the copy filter and the manifest walk must agree or diffs gain noise.
+IGNORE_PARTS = ("node_modules", ".git", "dist", "build", "__pycache__", ".cache", ".next", ".bun",
+                "coverage")
+IGNORE = shutil.ignore_patterns(*IGNORE_PARTS)
 
 
 def _files(root: Path) -> dict[str, str]:
+    """{relpath: sha256[:16]} for every regular file not under an IGNORE_PARTS directory."""
     rows: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root).as_posix()
-        if any(part in {"node_modules", ".git", "dist", "build", "__pycache__", ".cache", ".next", ".bun", "coverage"}
-               for part in Path(rel).parts):
+        if any(part in IGNORE_PARTS for part in Path(rel).parts):
             continue
         rows[rel] = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
     return rows
 
 
 def manifest(root: Path, write: bool = True) -> dict:
+    """Hash the tree; write `<root>.manifest.json` next to it unless write=False."""
     rows = _files(root)
     data = {"root": str(root.resolve()), "files": rows}
     if write:
@@ -60,6 +63,7 @@ def manifest(root: Path, write: bool = True) -> dict:
 
 
 def clone(src: Path, dst: Path) -> None:
+    """Copy `src` to `dst` (replacing `dst`), symlinking node_modules and carrying a manifest."""
     src, dst = src.resolve(), dst.resolve()
     if dst.exists():
         shutil.rmtree(dst)
@@ -73,6 +77,7 @@ def clone(src: Path, dst: Path) -> None:
 
 
 def changed(run: Path) -> dict:
+    """Three sorted relpath lists against `<run>.manifest.json`; all empty when there is none."""
     base_path = Path(str(run.resolve()) + ".manifest.json")
     if not base_path.exists():
         return {"added": [], "modified": [], "deleted": []}
@@ -85,8 +90,9 @@ def changed(run: Path) -> dict:
 
 
 def main() -> int:
+    """CLI: freeze|clone|diff. Exit 2 on usage or an unknown action."""
     if len(sys.argv) < 3:
-        print("usage: python3 -m bench.ws freeze|clone|diff SRC DST", file=sys.stderr)
+        print("usage: python3 -m bench.snapshot freeze|clone|diff SRC DST", file=sys.stderr)
         return 2
     action, src = sys.argv[1], Path(sys.argv[2])
     if action == "freeze":

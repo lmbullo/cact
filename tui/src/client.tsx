@@ -49,7 +49,7 @@ import {
 } from "@opentui/core";
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ServerInfo, Snapshot, Task, TaskEvent, TaskStatus, WsMessage } from "./types";
+import type { ServerInfo, Snapshot, Task, TaskEvent, WsMessage } from "./types";
 import {
   buildRows,
   orderTasks,
@@ -57,8 +57,6 @@ import {
   selectedRowIndex,
   taskProgress,
   stepSelection,
-  taskHandle,
-  type ListRow,
 } from "./list-model";
 import { C, PROMPT_MAX_ROWS, clip } from "./theme";
 import { Rule, SectionHeader, TaskRow } from "./board-view";

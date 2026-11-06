@@ -29,6 +29,7 @@ import bench.agent.state_loop as state_loop
 
 
 def run(check, root, kernel):
+    """The journalled file action space in a writable kernel: read/write/edit/undo/diff/map/guide."""
     # --- kernel: the action space an agent actually gets ---------------------------------
     typed_kernel = Kernel(root, timeout=20, writable=True, prelude="all", allow_run=True,
                           allow_shell=False)

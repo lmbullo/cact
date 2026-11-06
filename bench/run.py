@@ -55,7 +55,7 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from bench.agent.checks import Verifier
+    from bench.agent.check_plan import Verifier
     from bench.agent.kernel import Kernel
     from bench.agent.llm import Client
     from bench.agent.loop import Budget
@@ -69,7 +69,7 @@ if __package__ in (None, ""):
     from bench.agent.trace import Trace, render
     from bench import tasks as bench_tasks
 else:
-    from .agent.checks import Verifier
+    from .agent.check_plan import Verifier
     from .agent.kernel import Kernel
     from .agent.llm import Client
     from .agent.loop import Budget
@@ -82,6 +82,7 @@ else:
     from . import sandbox as bench_sandbox
     from .agent.trace import Trace, render
     from . import tasks as bench_tasks
+
 
 def _map_text(root: Path) -> str:
     lines = []
@@ -114,6 +115,7 @@ TRACES = HERE / "traces"
 
 
 def digest(root: Path, budget: int = 60_000) -> str:
+    """The whole tree as one text block for --context full; over `budget` each file is head+tail."""
     blocks, used = [], 0
     for path in sorted(root.rglob("*")):
         if not path.is_file() or "__pycache__" in path.parts or path.name.startswith("."):
@@ -133,6 +135,7 @@ def digest(root: Path, budget: int = 60_000) -> str:
 
 
 def workspace(task) -> Path:
+    """A fresh copy of the task's fixtures under bench/.tmp/<id>/fixtures, built by its prepare()."""
     base = HERE / ".tmp"
     base.mkdir(exist_ok=True)
     dest = base / task.id / "fixtures"
@@ -147,6 +150,7 @@ def workspace(task) -> Path:
 
 
 def main() -> int:
+    """The CLI: one row per task, then a summary; exit 0 only when every selected task passed."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--key", default=os.environ.get("DEEPSEEK_API_KEY", ""))
     ap.add_argument("--model", default="deepseek-flash")
@@ -156,7 +160,6 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--wall", type=float, default=3600.0)
     ap.add_argument("--max-output", type=int, default=393216)
-    ap.add_argument("--read-chars", type=int, default=16000)
     ap.add_argument("--repl-rules", default="full", choices=["full", "bare", "none"])
     ap.add_argument("--allow-run", default="on", choices=["off", "on"])
     ap.add_argument("--cell-timeout", type=float, default=0.0)
@@ -220,61 +223,61 @@ def main() -> int:
             prefix = "WORKSPACE\n" + digest(ws, args.context_chars) + "\n\n"
         else:
             prefix = _map_text(ws) + "\n\n" if args.map == "inline" else ""
-        if True:
-            allow_run = args.allow_run == "on"
-            timeout = args.cell_timeout or (120.0 if allow_run else 15.0)
-            lib = args.repl_lib
-            if args.mode in ("tool", "state") and lib == "off":
-                lib = "all"
-            kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=lib,
-                            allow_run=allow_run,
-                            allow_shell=args.mode not in ("tool", "state"))
-            try:
-                base = (TOOL_RULES if args.mode in ("tool", "state")
-                        else BARE_TOOL_RULES if args.mode == "bare"
-                        else {"full": REPL_RULES, "bare": BARE_RULES, "none": ""}[args.repl_rules])
-                rules = base
-                if args.mode not in ("tool", "state") and lib == "all":
-                    rules = rules + LIB_NOTE
-                elif args.mode not in ("tool", "state") and lib == "mut":
-                    rules = rules + LIB_MUT_NOTE
-                if allow_run and args.repl_rules != "none" and args.mode not in ("tool", "state"):
-                    rules = rules + (RUN_NOTE_MUT if lib == "mut" else RUN_NOTE)
-                check = getattr(task, "check", None)
-                verifier = None
-                if check and args.mode != "bare":
-                    verifier = Verifier(check=lambda: check(ws), cwd=str(ws),
-                                        cheap_enabled=args.health == "on")
-                if args.mode in ("tool", "state"):
-                    loop = (StateLoop if args.mode == "state" else ToolLoop)(
-                        client, kernel, budget,
-                        rules=rules + prefix,
-                        goal_stops=True,
-                        obs_chars=args.obs_chars,
-                        verifier=verifier,
-                    )
-                elif args.mode == "bare":
-                    loop = ToolLoop(
-                        client, kernel, budget,
-                        rules=rules + prefix,
-                        tools=[PYTHON_TOOL],
-                        goal=None,
-                        goal_stops=False,
-                        obs_chars=args.obs_chars,
-                    )
-                else:
-                    loop = ReplLoop(
-                        client, kernel, budget,
-                        rules=rules + prefix,
-                        stop=args.repl_stop,
-                        history=args.repl_history,
-                        obs_chars=args.obs_chars,
-                        goal=verifier.goal_value if verifier is not None else None,
-                        goal_stops=True,
-                    )
-                result = loop.run(task.id, task.prompt, Trace(trace_path))
-            finally:
-                kernel.stop()
+        allow_run = args.allow_run == "on"
+        timeout = args.cell_timeout or (120.0 if allow_run else 15.0)
+        lib = args.repl_lib
+        if args.mode in ("tool", "state") and lib == "off":
+            lib = "all"
+        kernel = Kernel(ws, timeout=timeout, writable=mutate, prelude=lib,
+                        allow_run=allow_run,
+                        allow_shell=args.mode not in ("tool", "state"))
+        try:
+            base = (TOOL_RULES if args.mode in ("tool", "state")
+                    else BARE_TOOL_RULES if args.mode == "bare"
+                    else {"full": REPL_RULES, "bare": BARE_RULES, "none": ""}[args.repl_rules])
+            rules = base
+            if args.mode not in ("tool", "state") and lib == "all":
+                rules = rules + LIB_NOTE
+            elif args.mode not in ("tool", "state") and lib == "mut":
+                rules = rules + LIB_MUT_NOTE
+            if allow_run and args.repl_rules != "none" and args.mode not in ("tool", "state"):
+                rules = rules + (RUN_NOTE_MUT if lib == "mut" else RUN_NOTE)
+            check = getattr(task, "check", None)
+            verifier = None
+            if check and args.mode != "bare":
+                # Bind the loop variables: the goal must grade THIS task's workspace.
+                verifier = Verifier(check=lambda check=check, ws=ws: check(ws), cwd=str(ws),
+                                    cheap_enabled=args.health == "on")
+            if args.mode in ("tool", "state"):
+                loop = (StateLoop if args.mode == "state" else ToolLoop)(
+                    client, kernel, budget,
+                    rules=rules + prefix,
+                    goal_stops=True,
+                    obs_chars=args.obs_chars,
+                    verifier=verifier,
+                )
+            elif args.mode == "bare":
+                loop = ToolLoop(
+                    client, kernel, budget,
+                    rules=rules + prefix,
+                    tools=[PYTHON_TOOL],
+                    goal=None,
+                    goal_stops=False,
+                    obs_chars=args.obs_chars,
+                )
+            else:
+                loop = ReplLoop(
+                    client, kernel, budget,
+                    rules=rules + prefix,
+                    stop=args.repl_stop,
+                    history=args.repl_history,
+                    obs_chars=args.obs_chars,
+                    goal=verifier.goal_value if verifier is not None else None,
+                    goal_stops=True,
+                )
+            result = loop.run(task.id, task.prompt, Trace(trace_path))
+        finally:
+            kernel.stop()
 
         for turn in result.turns:
             c = turn.get("cache") or {}

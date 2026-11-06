@@ -5,7 +5,7 @@ WHAT IT IS
   The honest test. It clones `bench/ws/tui-base` to `bench/ws/runs/<tag>`, writes
   `<tag>.prompt.txt`, spawns `tui/python/worker.py` against it, records `<tag>.events.jsonl`
   (the worker's `@@TUI@@` lines), then runs the check itself and diffs the tree against the
-  base. `bench/runs.py` reads the result back.
+  base. `bench/task_journal.py` reads the result back.
 
 ENTRY POINTS
   python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "..." \
@@ -14,7 +14,7 @@ ENTRY POINTS
   load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env}
 
   The base must already exist: `bench/ws/` is gitignored, so build it first with
-  `python3 -m bench.ws freeze tui bench/ws/tui-base`.
+  `python3 -m bench.snapshot freeze tui bench/ws/tui-base`.
 
 INVARIANTS
   - `--tag` names a new directory under bench/ws/runs/. That tree and its journals are
@@ -24,7 +24,7 @@ INVARIANTS
     changes its messages, this breaks first.
   - `--legacy` toggles the worker's legacy env flags (`CODE_TUI_LEGACY_TIMEOUT`,
     `CODE_TUI_LEGACY_CHECK`) so old behaviour stays reproducible.
-  - `--check` is a single command; `--checks` is a JSON plan (see bench/agent/checks.py)
+  - `--check` is a single command; `--checks` is a JSON plan (see bench/agent/check_plan.py)
     and wins when set. The worker treats the plan as its goal and runs the `cheap` subset
     after mutating cells.
   - The check runs twice by design: once inside the agent as its goal, once here as the
@@ -46,16 +46,20 @@ import sys
 import time
 from pathlib import Path
 
-from bench.agent.check import run_check
-from bench import ws
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the package imports
+    sys.path.insert(0, str(ROOT))
+
+from bench import snapshot  # noqa: E402
+from bench.agent.check_run import run_check  # noqa: E402
+
 PREFIX = "@@TUI@@"
 VERBS = ("map", "read", "outline", "search", "grep", "write", "edit", "splice", "apply", "commit",
          "exec", "git", "run", "diff", "undo", "changes", "help", "final_answer")
 
 
 def load_key() -> str:
+    """DEEPSEEK_API_KEY from the env, else ~/.config/code-tui/{env,.env}; "" when absent."""
     if os.environ.get("DEEPSEEK_API_KEY", "").strip():
         return os.environ["DEEPSEEK_API_KEY"].strip()
     for name in ("env", ".env"):
@@ -69,6 +73,7 @@ def load_key() -> str:
 
 
 def main() -> int:
+    """Clone --base, drive the worker, journal the events, run the check and diff the tree."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", required=True)
     parser.add_argument("--tag", required=True)
@@ -83,7 +88,7 @@ def main() -> int:
 
     base = Path(args.base).resolve()
     run = ROOT / "bench" / "ws" / "runs" / args.tag
-    ws.clone(base, run)
+    snapshot.clone(base, run)
     prompt_path = run.parent / f"{args.tag}.prompt.txt"
     prompt_path.write_text(args.prompt)
     events_path = run.parent / f"{args.tag}.events.jsonl"
@@ -144,7 +149,7 @@ def main() -> int:
         "restarts": obs.count("empty namespace"),
         "timeouts": obs.count("timeout: the cell"),
         "verbs": verbs,
-        "changed": ws.changed(run),
+        "changed": snapshot.changed(run),
         "check": None,
     }
     if args.check:

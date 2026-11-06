@@ -38,12 +38,14 @@ from typing import Callable
 
 FIX = Path(__file__).parent / "fixtures"
 
+
 def _fixture_files() -> list[Path]:
     return [
         p
         for p in FIX.rglob("*")
         if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith(".")
     ]
+
 
 def _ground_truth() -> dict:
     rows = list(csv.DictReader((FIX / "ledger.csv").open(encoding="utf-8")))
@@ -60,7 +62,8 @@ def _ground_truth() -> dict:
             arg_expr = ast.unparse(node.args[0])
             break
 
-    note_lines = [l for l in (FIX / "notes.md").read_text(encoding="utf-8").splitlines() if l.strip()]
+    note_lines = [line for line in (FIX / "notes.md").read_text(encoding="utf-8").splitlines()
+                  if line.strip()]
     todo = sum(p.read_text(encoding="utf-8").count("TODO") for p in _fixture_files())
 
     return {
@@ -74,53 +77,74 @@ def _ground_truth() -> dict:
         "todo_count": todo,
     }
 
+
 GT = _ground_truth()
 
+
 def answer_line(text: str) -> str:
+    """The last `ANSWER: <value>` line, else the trimmed reply; the read suite's extraction."""
     hits = re.findall(r"(?im)^\s*ANSWER:\s*(.+?)\s*$", text or "")
     if hits:
         return hits[-1].strip()
     return (text or "").strip()
 
+
 def _has_int(text: str, n: int) -> bool:
+    """True when `n` appears as a standalone integer (no digit or dot on either side)."""
     return re.search(rf"(?<![\d.]){n}(?![\d])", text) is not None
 
+
 def grade_count(answer: str, run) -> tuple[bool, str]:
+    """T1: the number of ledger.csv rows with amount > 100."""
     value = answer_line(answer)
     ok = _has_int(value, GT["rows_over_100"])
     detail = f"got {value!r}; expected {GT['rows_over_100']}"
     return ok, detail
 
+
 def grade_arg_expr(answer: str, run) -> tuple[bool, str]:
+    """T2: app.py's first parse_row argument, whitespace-insensitive."""
     compact = re.sub(r"\s+", "", answer or "")
     ok = re.sub(r"\s+", "", GT["arg_expr"]) in compact
     detail = f"expected {GT['arg_expr']!r}; answer {answer_line(answer)!r}"
     return ok, detail
 
+
 def grade_checksum(answer: str, run) -> tuple[bool, str]:
+    """T3: the file defining checksum plus checksum(7), both required."""
     value = answer_line(answer)
     ok = _has_int(value, GT["checksum_7"]) and GT["checksum_file"] in (answer or "").lower()
     detail = f"expected {GT['checksum_file']} + {GT['checksum_7']}; got {value!r}"
     return ok, detail
 
+
 def grade_last_line(answer: str, run) -> tuple[bool, str]:
+    """T4: the last non-blank line of notes.md, whitespace- and case-insensitive."""
     norm = re.sub(r"\s+", " ", answer or "").strip().lower()
     ok = re.sub(r"\s+", " ", GT["notes_last"]).strip().lower() in norm
     detail = f"expected {GT['notes_last']!r}; answer {answer_line(answer)!r}"
     return ok, detail
 
+
 def grade_todo(answer: str, run) -> tuple[bool, str]:
+    """T5: the count of the literal string TODO across every fixture file."""
     value = answer_line(answer)
     ok = _has_int(value, GT["todo_count"])
     detail = f"got {value!r}; expected {GT['todo_count']}"
     return ok, detail
 
+
 @dataclass
 class Task:
+    """One benchmark task: id, prompt, grader and the shape label the summary table shows.
+
+    `grade(answer, run)` returns (ok, detail) and must never raise."""
+
     id: str
     prompt: str
     grade: Callable[[str, object], tuple[bool, str]]
     shape: str
+
 
 TASKS: list[Task] = [
     Task(
@@ -157,13 +181,17 @@ TASKS: list[Task] = [
     ),
 ]
 
+
 def by_id(task_id: str) -> Task:
+    """The Task with that id across both suites; KeyError when the id is not a task."""
     for task in ALL_TASKS:
         if task.id == task_id:
             return task
     raise KeyError(task_id)
 
+
 def grade_rename(answer: str, run) -> tuple[bool, str]:
+    """M1: PAGE is gone, PAGE_SIZE exists and still equals 4096 (the tree is executed)."""
     root = Path(run.workspace)
     try:
         src = (root / "lib.py").read_text(encoding="utf-8")
@@ -179,6 +207,7 @@ def grade_rename(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_row_total(answer: str, run) -> tuple[bool, str]:
+    """M2: row_total sums USD amounts, and the existing checksum behaviour is untouched."""
     root = Path(run.workspace)
     try:
         ns: dict = {}
@@ -203,6 +232,7 @@ def grade_row_total(answer: str, run) -> tuple[bool, str]:
 
 
 def grade_skip_legal(answer: str, run) -> tuple[bool, str]:
+    """M3: app.py on a probe CSV skips legal rows and still prints one float on the last line."""
     root = Path(run.workspace)
     probe = root / "__probe.csv"
     probe.write_text(

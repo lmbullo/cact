@@ -17,6 +17,7 @@ WHAT IT IS
     gates     process gates, recall, orphan reaping, apply/commit, the state card
     turns     the turn machine: staged finishes, stop vocabulary, tool-call pairing
     repl      the fenced-block dialect reuses that machine
+    style     the tree lints clean under ruff.toml and every public name is documented
 
   python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
 
@@ -47,14 +48,17 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
+if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the package imports
     sys.path.insert(0, str(ROOT))
 
-from bench.smoke_checks import files, gates, helpers, index, plans, protocol, repl, suites, turns, verbs
-from bench.smoke_support import check, kernel_for, summary
+from bench.smoke_checks import (  # noqa: E402
+    files, gates, helpers, index, plans, protocol, repl, style, suites, turns, verbs,
+)
+from bench.smoke_support import check, kernel_for, summary  # noqa: E402
 
 
 def main() -> int:
+    """Run every group in order and print the pass/fail line; 0 only when all checks pass."""
     suites.run(check)
     helpers.run(check)
     index.run(check)
@@ -70,6 +74,7 @@ def main() -> int:
 
     turns.run(check)
     repl.run(check)
+    style.run(check)
     return summary()
 
 

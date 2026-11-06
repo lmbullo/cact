@@ -26,6 +26,7 @@ from bench.agent.kernel import PROTOCOL, Kernel
 
 
 def run(check, root):
+    """A child speaking a stale PROTOCOL is restarted; the current one is accepted."""
     # --- protocol: a stale child is rejected, the current one is accepted -----------------
     def _fake_kernel(protocol):
         script = (

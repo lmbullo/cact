@@ -39,15 +39,16 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
+if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the package imports
     sys.path.insert(0, str(ROOT))
 
-from bench.agent.kernel import Cell, Kernel
+from bench.agent.kernel import Cell, Kernel  # noqa: E402
 
 FAILED: list[str] = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
+    """Print one `ok`/`FAIL` line; a failure also records its name for `summary()`."""
     print(f"{'ok  ' if ok else 'FAIL'} {name}" + (f"  ({detail})" if detail and not ok else ""))
     if not ok:
         FAILED.append(name)
@@ -107,6 +108,7 @@ class FakeClient:
         self.requests: list[list[dict]] = []
 
     def complete(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 0) -> dict:
+        """The next scripted reply; raises when the script is exhausted, so an extra turn is visible."""
         self.requests.append(json.loads(json.dumps(messages)))
         if not self.replies:
             raise AssertionError("the loop asked for a reply after the script ran out")
@@ -131,12 +133,14 @@ class FakeKernel:
         self.calls: list[tuple[str, dict]] = []
 
     def run(self, code: str, check_cache: dict | None = None) -> Cell:
+        """The scripted Cell for this code (an empty one when unscripted); `raises` makes it blow up."""
         self.codes.append(code)
         if code in self.raises:
             raise RuntimeError("kernel exploded")
         return self.cells.get(code) or _cell()
 
     def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None) -> Cell:
+        """The scripted Cell for this typed tool, stamped with the tool name; records the call."""
         self.calls.append((tool, dict(args or {})))
         if tool in self.raises:
             raise RuntimeError("kernel exploded")

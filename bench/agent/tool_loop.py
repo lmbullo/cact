@@ -5,7 +5,7 @@ WHAT IT IS
   from `verbs.VERBS` (guide/map/read/session_diff/search/recall/outline/edit/splice/write/apply/exec/git)
   plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is dispatched to
   `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return the same
-  `Cell`; a `Verifier` (checks.py) decides whether the task may finish and what the cheap
+  `Cell`; a `Verifier` (check_plan.py) decides whether the task may finish and what the cheap
   `[check]` line says.
 
   One `run()` is a sequence of *turns*; one turn is one reply with zero or more tool calls.
@@ -90,7 +90,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .check import Check, evaluate
+from .check_run import Check, evaluate
 from .kernel import Kernel
 from .llm import Client, LLMError
 from .loop import Budget, RunResult, _usage_add
@@ -144,6 +144,7 @@ Every mutation is journalled through write, edit, splice, delete, mkdir or apply
 Earlier cells keep their full output in _OBS. The typed recall tool searches it (including turns a fold removed) and returns matching snippets plus the handle to page the full text; search is for the tree, recall is for the session. The typed session_diff tool is the journal view of the current session; git diff is the working tree, and session_diff()/changes()/undo()/commit() remain python helpers.
 """
 
+
 @dataclass
 class FinishState:
     """The staged-then-accepted answer of one run.
@@ -165,10 +166,12 @@ class FinishState:
 
     @property
     def accepted(self) -> bool:
+        """True once the finish was accepted (`terminal` set); the turn ends there."""
         return self.terminal is not None
 
     def stage(self, answer: Any, turn: int | None = None, *, silent: bool = False,
               content: str | None = None) -> None:
+        """Hold a `final_answer` value until a later reply accepts it; records the staging turn."""
         self.staged = answer
         self.staged_turn = turn
         self.silent = silent
@@ -184,6 +187,7 @@ class FinishState:
         self.content = None
 
     def accept(self, answer: str) -> None:
+        """Promote the staged answer to `terminal`: the turn is over and `answer` is final."""
         self.staged = None
         self.staged_turn = None
         self.silent = False
@@ -210,6 +214,7 @@ class CallRecord:
     skipped: bool = False
 
     def as_dict(self) -> dict:
+        """The record as it goes into a trace file and `run.turns`."""
         out = {
             "index": self.index,
             "name": self.name,
@@ -250,6 +255,13 @@ class Tally:
 
 
 class ToolLoop:
+    """The turn machine: tool calls -> kernel cells -> paired tool results -> a staged finish.
+
+    Owns the finish protocol (staging, goal rejection, LLM_FAILED), the stop vocabulary, the
+    call/tool-message pairing and the budget. StateLoop and ReplLoop only override the reply
+    dialect and the observation rendering.
+    """
+
     # The shared turns policy is parameterised where a second loop (ReplLoop) words it
     # differently; keep the wording here so repl.py owns only its reply format.
     BUDGET_NOTE = ("[runtime] The step budget is exhausted. Reply with a short final "
@@ -585,6 +597,7 @@ class ToolLoop:
                                   tally, seen, step)
 
     def run(self, task_id: str, prompt: str, trace: Any = None) -> RunResult:
+        """Drive the turns until a stop reason fires; always writes the summary record and returns."""
         b = self.budget
         t0 = time.perf_counter()
         messages: list[dict] = []
@@ -647,7 +660,6 @@ class ToolLoop:
                     "calls": tally.calls,
                     "llm_calls": tally.llm_calls,
                     "errors": tally.errors,
-                    "misses": 0,
                     "repeats": tally.repeats,
                     "drift": self._drift_count(),
                     "usage": usage,
@@ -663,7 +675,6 @@ class ToolLoop:
             steps=tally.steps,
             calls=tally.calls,
             errors=tally.errors,
-            misses=0,
             repeats=tally.repeats,
             usage=usage,
             wall_ms=wall_ms,

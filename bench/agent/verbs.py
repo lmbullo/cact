@@ -13,8 +13,7 @@ WHAT IT IS
 ENTRY POINTS
   VERBS          name -> {function, summary, schema, mutates, typed?, requires_run?}
   TOOL_NAMES     the typed tool names (no `python`; that is the escape hatch)
-  schema(name)   the parameters object for one verb
-  summary(name)  the provider-facing description for one verb
+  Look one up straight from VERBS[name]; there is no accessor layer.
 
 INVARIANTS
   - Stdlib-only and import-free: kernel/process.py imports it in the parent and ships its JSON
@@ -38,8 +37,6 @@ WHERE TO CHANGE
   What the model is told ............ `summary` (provider tool description)
 """
 from __future__ import annotations
-
-NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 
 VERBS: dict[str, dict] = {
     "guide": {
@@ -346,11 +343,3 @@ VERBS: dict[str, dict] = {
 }
 
 TOOL_NAMES = tuple(name for name, meta in VERBS.items() if meta.get("typed", True))
-
-
-def schema(name: str) -> dict:
-    return VERBS[name]["schema"]
-
-
-def summary(name: str) -> str:
-    return VERBS[name]["summary"]

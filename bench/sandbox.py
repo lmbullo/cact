@@ -30,20 +30,18 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable
 
-from .agent.check import Check, run_check
+from .agent.check_run import Check, run_check
 from .harness import HarnessTask
 
 HERE = Path(__file__).parent
 SANDBOX = HERE / "sandbox_fixtures"
 HIDDEN = HERE / "sandbox_hidden"
 DOC_PATH = "docs/CURRENT.md"
-FREE_SHIPPING_CENTS = 4500
-ZONE_SURCHARGE = {"north": 0, "south": 150, "west": 275}
 
 
 def _write(path: Path, text: str) -> None:
@@ -54,6 +52,7 @@ def _write(path: Path, text: str) -> None:
 
 
 def build() -> None:
+    """(Re)create `sandbox_fixtures/` and `sandbox_hidden/`; existing files are never overwritten."""
     _write(SANDBOX / ".gitignore", "__pycache__/\n*.pyc\n")
     _write(SANDBOX / "README.md", """# Tiny pricing workspace
 
@@ -156,11 +155,12 @@ def prepare(workspace: Path) -> None:
         ["git", "commit", "-q", "-m", "fixture: pricing workspace"],
     ]
     for command in commands:
-        subprocess.run(command, cwd=workspace, env={**__import__("os").environ, **env},
+        subprocess.run(command, cwd=workspace, env={**os.environ, **env},
                        check=True, capture_output=True, text=True)
 
 
 def _hidden_check(workspace: Path):
+    """Run the held-out quote tests (bench/sandbox_hidden/) against one workspace copy."""
     return run_check(
         f"{sys.executable} -m unittest discover -s {HIDDEN} -p 'test_*.py'",
         str(workspace), timeout=120.0,
@@ -168,6 +168,7 @@ def _hidden_check(workspace: Path):
 
 
 def check(workspace: Path):
+    """The S1 goal: hidden tests pass AND the fixture commit was replaced by a real one."""
     result = _hidden_check(workspace)
     if not result.ok:
         return result
@@ -193,6 +194,7 @@ def _git_commit(run) -> bool:
 
 
 def grade_feature(answer: str, run) -> tuple[bool, str]:
+    """S1: the process grade, the typed git commit, and the hidden suite, all required."""
     from .harness import process
 
     problems = process(
@@ -229,6 +231,7 @@ TASKS: list[HarnessTask] = [S1_FEATURE]
 
 
 def by_id(task_id: str) -> HarnessTask:
+    """The sandbox task with that id; KeyError when the id is not a sandbox task."""
     for task in TASKS:
         if task.id == task_id:
             return task

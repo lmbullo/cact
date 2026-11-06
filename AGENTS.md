@@ -20,12 +20,13 @@ Fix the lower layer in the same change that breaks it.
 python3 bench/map.py --check                 # gate: every module header is complete
 python3 bench/map.py --query "<topic>"      # which module owns this
 python3 bench/map.py --module <path>        # one module's header whole
+python3 -m ruff check .                     # gate: the code contract (ruff.toml)
 python3 bench/smoke.py                      # offline contract check, no key, no network
 ```
 
 Then read only the header and the line range you need (`read(path, section=...)` inside a code
 cell, `read`/`outline`/`search` as tools). Do not read a 1000-line module to learn its entry
-points; the header already says them.
+points; the header says them and every public name carries a one-line docstring.
 
 ## 1. What this repo is
 
@@ -66,6 +67,11 @@ These are architecture, not style. A change that breaks one is a regression even
   `error.code: "bad_arguments"`, plus the signature hint), refused mutations (`wrong_call`) and
   check failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`). Do not replace a
   structured answer with prose only a human can parse.
+- **Legibility is enforced, not requested.** Three cheap offline gates: `bench/map.py --check`
+  for the module header, `ruff.toml` (E/F/W/B, blank-line convention included) for the code,
+  and a one-line contract docstring on every public function and class. A public name without
+  a docstring is a defect; so is a name one character away from another (`check` vs `checks`,
+  `run` vs `runs`, `ws.py` next to `ws/`). Names come in prefix families, never near-duplicates.
 - **Design the tool for the job.** `exec` takes argv + cwd, not a command string: no quoting, no
   `cd` prefix, no shell grammar. `search` takes `include`/`context`, not a pipeline. When the
   common path is a typed tool, the shell stops being the catch-all. Use `exec(shell=...)` only
@@ -85,7 +91,7 @@ These are architecture, not style. A change that breaks one is a regression even
 | `bench/agent/state_loop.py` | The production loop: tool call → kernel cell → typed observation or state card, context compaction |
 | `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
 | `bench/agent/tool_loop.py` | The turn machine: `final_answer`, goal checks, stop reasons, call pairing |
-| `bench/agent/checks.py` | The check plan and `Verifier`: goal, cheap subset, scope filter, throttle, cache |
+| `bench/agent/check_plan.py` | The check plan and `Verifier`: goal, cheap subset, scope filter, throttle, cache (one command: `check_run.py`) |
 | `bench/run.py` | Benchmark CLI: suites, modes, budgets, traces, results table |
 | `bench/smoke.py` + `bench/smoke_checks/` | The offline contract check; one group per area |
 | `bench/HARD.md` | Measured evidence for why the envelope exists; read before simplifying the tool surface |
@@ -153,7 +159,7 @@ These are architecture, not style. A change that breaks one is a regression even
    graded input, not documentation: do not rewrite it as prose.
 9. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
    `bench/ws/` (frozen workspaces + `runs/` journals) is gitignored measurement output: rebuild
-   `tui-base` with `python3 -m bench.ws freeze tui bench/ws/tui-base`, and let `bench/live.py`
+   `tui-base` with `python3 -m bench.snapshot freeze tui bench/ws/tui-base`, and let `bench/live.py`
    create `runs/<tag>`; do not expect either in a fresh clone.
 10. **Generated, not source:** `bench/.tmp/`, `bench/.cache/`, `bench/ws/`, `tui/node_modules/`,
     and the TUI state root (`~/.local/state/code-tui/` by default). `bench/edge_fixtures/`,
@@ -182,7 +188,8 @@ Run in this order. A failure is a contract change, not a flaky test.
 | Command | Covers | Expected |
 |---|---|---|
 | `python3 bench/map.py --check` | every module header has its four sections | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, `guide()` | exit 0 |
+| `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
+| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, `guide()`, ruff | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
 | `cd tui && bun test` | rendering/detection tests, 6 files | 13 pass; React `act(...)` warnings are expected noise |
@@ -206,15 +213,18 @@ Needs network and a key. Without one, stop at the offline gates and say so.
 | A process/git gate | `kernel/run_prelude.py` (`_mutating_command`, `_HINT`, `RUN_NOTE`) | `smoke_checks/gates.py` |
 | Observation shape/paging | `envelope.py`, `state_loop._observe`, `repl.observation` | smoke envelopes + a run |
 | Finish protocol or stop reason | `tool_loop.ToolLoop.run` (a reply dialect overrides `_reply`, see `repl.py`) | `smoke_checks/turns.py` |
-| A check command / plan | `checks.py` (`CheckSpec.parse`, `Verifier`), `tui/src/detect-checks.ts` | smoke plans + `bun test` |
+| A check command / plan | `check_run.py` (one command), `check_plan.py` (`CheckSpec.parse`, `Verifier`), `tui/src/detect-checks.ts` | smoke plans + `bun test` |
 | A benchmark task | `tasks.py` (read/mutation), `edge.py`, `harness.py`, `sandbox.py`, then a recorded run | suite import + trace |
 | Grading semantics | the `grade_*` functions in the same module | re-run the suite |
 | Model/temperature/cache | `llm.Client`, `run.py` flags, TUI env | a live run |
 | TUI board/log/keys | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts` | `bun test` |
 | TUI queue/journal/API | `tui/src/server.ts`, `tui/src/types.ts` | `bun test`, `bench/live.py` |
 
-Adding a module means adding its four-section header before its first line of code, then
-`python3 bench/map.py --check`. Adding a kernel helper means also adding the matching rule text
+Adding a module means adding its four-section header before its first line of code, a one-line
+contract docstring on every public function and class, then `python3 bench/map.py --check` and
+`python3 -m ruff check .`. Name it so a `search` for the concept finds one family of files
+(`check_run.py` / `check_plan.py`), never a name one character away from an existing module.
+Adding a kernel helper means also adding the matching rule text
 to `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`, or the model will not
 know it exists. If it replaces a mutating shell verb, add it to `_RUN_SHELL_MUTATORS` /
 `_RUN_GIT_MUTATORS` and `_HINT` too.
@@ -222,6 +232,9 @@ know it exists. If it replaces a mutating shell verb, add it to `_RUN_SHELL_MUTA
 ## 7. Working rules
 
 - State the contract, the entry point and the failure mode. Delete tutorials.
+- Every public function and class carries a one-line docstring: that line is the contract an
+  agent reads through `inspect`, `help(tool)` and `outline`. It states what the thing does, not
+  how. A private helper gets one when its name is not obvious.
 - Prefer one call that does the job over a pipeline of calls; prefer a typed tool over
   `exec(shell=...)`; prefer deleting a duplicate catalog over syncing two copies.
 - A doc claim must be executable or checkable. If you cannot verify it, cut it.

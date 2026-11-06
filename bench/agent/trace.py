@@ -25,24 +25,33 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+
 class Trace:
+    """One JSONL file per run: `write(record)` per turn, `close()` at the end."""
+
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._fh = open(self.path, "w", encoding="utf-8")
 
     def write(self, record: dict) -> None:
+        """Append one record and flush, so a killed run still leaves readable evidence."""
         self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._fh.flush()
 
     def close(self) -> None:
+        """Close the file; a Trace is not reusable afterwards."""
         self._fh.close()
 
+
 def _clip(text: str, n: int) -> str:
+    """One line, at most `n` chars, with the elision marked as `…(+N)`."""
     text = (text or "").replace("\n", "\\n")
     return text if len(text) <= n else text[:n] + f"…(+{len(text) - n})"
 
+
 def render(path: str | Path, reasoning_chars: int = 420, env_chars: int = 380) -> str:
+    """A trace file as text: one block per turn, then the `== stop=...` summary line."""
     out: list[str] = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         rec = json.loads(line)
@@ -75,7 +84,7 @@ def render(path: str | Path, reasoning_chars: int = 420, env_chars: int = 380) -
                 out.append(f"    err  : {_clip(obs['stderr'], env_chars)}")
         if rec.get("content"):
             out.append(f"    say  : {_clip(rec['content'], reasoning_chars)}")
-        for call, result in zip(rec.get("tool_calls") or [], rec.get("results") or []):
+        for call, result in zip(rec.get("tool_calls") or [], rec.get("results") or [], strict=False):
             fn = call.get("function") or {}
             out.append(f"    call : {fn.get('name')}({_clip(fn.get('arguments', ''), 200)})")
             s = result.get("summary") or {}

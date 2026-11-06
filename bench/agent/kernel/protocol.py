@@ -12,7 +12,8 @@ WHAT IT IS
 
 ENTRY POINTS
   CellRequest(...).to_wire() -> dict           the one JSON line written to the child
-  CellReply.from_wire(dict), .protocol_ok      parse a reply, compare its version
+  CellReply.from_wire(dict)                     parse a reply (the version is checked by
+                                               process.Kernel._protocol_error on arrival)
   ExtendNotice.from_wire(dict)                 the deadline extension
   Cell.failure(message, ...)                   the one restart/error constructor
   Cell.from_reply(reply, duration_ms=...)      the one success constructor; normalizes a
@@ -73,6 +74,7 @@ class CellRequest:
     check_cache: dict = field(default_factory=dict)
 
     def to_wire(self) -> dict:
+        """The one JSON object written as a line to the child: protocol, timeout, kind, body."""
         payload = {"protocol": self.protocol, "timeout": float(self.timeout), "kind": self.kind}
         if self.kind == "call":
             payload["tool"] = self.tool
@@ -108,6 +110,7 @@ class CellReply:
 
     @classmethod
     def from_wire(cls, data: dict) -> "CellReply":
+        """Parse one `@@K@@` payload, defaulting every absent field."""
         return cls(
             stdout=str(data.get("stdout") or ""),
             stderr=str(data.get("stderr") or ""),
@@ -128,10 +131,6 @@ class CellReply:
             protocol=data.get("protocol"),
         )
 
-    @property
-    def protocol_ok(self) -> bool:
-        return self.protocol == PROTOCOL
-
 
 @dataclass
 class ExtendNotice:
@@ -142,6 +141,7 @@ class ExtendNotice:
 
     @classmethod
     def from_wire(cls, data: dict) -> "ExtendNotice":
+        """Parse the interim `{"extend": seconds}` line; seconds=None means it was not one."""
         seconds = data.get("extend")
         return cls(seconds=None if seconds is None else float(seconds),
                    protocol=data.get("protocol"))
@@ -149,6 +149,9 @@ class ExtendNotice:
 
 @dataclass
 class Cell:
+    """What the loops consume from one finished cell: output, the journal view, reads, runs, and
+    the failed/rejected split."""
+
     stdout: str
     stderr: str
     result: str | None

@@ -39,6 +39,7 @@ There is no root `package.json`, no `pyproject.toml`, no CI. The only install st
 cact/
 ├── AGENTS.md                 short contract for agents (read before editing)
 ├── README.md                 this file: full reference
+├── ruff.toml                 the code contract: E/F/W/B + blank lines, fixtures excluded
 ├── bench/
 │   ├── run.py                benchmark CLI (script and `-m bench.run` modes)
 │   ├── tasks.py              READ T1-T5 (text answers) + MUTATION M1-M3 (grade the tree)
@@ -47,13 +48,13 @@ cact/
 │   ├── sandbox.py            SANDBOX S1: docs -> inspect -> atomic edit -> tests -> git commit
 │   ├── hard.py               HARD H1-H4 with a held-out oracle; numbers in bench/HARD.md
 │   ├── hard_runner.py        runs a held-out test dir against a workspace
-│   ├── ws.py                 freeze/clone/diff a workspace via sha256 manifests
+│   ├── snapshot.py           freeze/clone/diff a workspace via sha256 manifests
 │   ├── live.py               run ONE task through tui/python/worker.py and journal it
 │   ├── smoke.py              offline contract runner, one call per group below
 │   ├── smoke_support.py      its harness: check(), fakes, temp workspace, kernel_for()
-│   ├── smoke_checks/         suites, helpers, index, plans, protocol, files, verbs, gates, turns, repl
+│   ├── smoke_checks/         suites, helpers, index, plans, protocol, files, verbs, gates, turns, repl, style
 │   ├── map.py                header-index CLI (`--query`, `--module`, `--json`, `--check`)
-│   ├── runs.py               summarise a task journal; `--recent` spans workspaces
+│   ├── task_journal.py       summarise a task journal; `--recent` spans workspaces
 │   ├── fixtures/             small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/        broken tests, 20k-line log, invalid utf-8, shadowed import
 │   ├── harness_fixtures/     HTML-in-JS, regex hits, local checksum, current docs, edit targets
@@ -84,8 +85,8 @@ cact/
 │       ├── state_loop.py     StateLoop = ToolLoop + typed observations/state cards, compaction
 │       ├── envelope.py       normalized typed observation: data/page/handle/notes/error
 │       ├── reply.py          parse model text into an Action (markup repair, fences, ANSWER:)
-│       ├── check.py          run_check(): runs tsc/pytest/bun test, extracts failures
-│       ├── checks.py         the check plan and Verifier (goal + cheap health subset)
+│       ├── check_run.py      run_check(): runs tsc/pytest/bun test, extracts failures
+│       ├── check_plan.py     the check plan and Verifier (goal + cheap health subset)
 │       ├── trace.py          Trace JSONL writer + render()
 │       ├── headers.py        header index (index/guide/problems); shipped to kernel cells
 │       └── config.py         production defaults + build() factory (CODE_TUI_MODE)
@@ -225,12 +226,12 @@ Stop vocabulary (`tool_loop.STOPS`):
 | `TRUNCATED` / `BAD_ARGS` | cut-off or unparsable call; nothing ran | continues |
 | `LLM_FAILED` | primary model call raised `LLMError` | `failed` |
 
-`check.py::run_check` wraps tsc / bun test / pytest output into a `Check` with parsed failure
+`check_run.py::run_check` wraps tsc / bun test / pytest output into a `Check` with parsed failure
 lines and distinguishes `unrunnable` (broken check) from `failed` (real failure).
 
 ## 6. Check plan
 
-`bench/agent/checks.py` holds an ordered list of `{name, cmd, cheap, scope}` and the `Verifier`
+`bench/agent/check_plan.py` holds an ordered list of `{name, cmd, cheap, scope}` and the `Verifier`
 that owns it: the cheap subset, the `scope` filter, the 20s throttle, the check cache and `Check`
 rendering. Results cache until the next mutating cell: a matching `run()`/`exec` is answered
 from `check_cache` (`kind: "check_cached"`) instead of spawning the same command twice.
@@ -268,7 +269,7 @@ oracle is outside the workspace.
 ```bash
 python3 bench/map.py
 python3 bench/map.py --query checks
-python3 bench/map.py --module bench/agent/check.py
+python3 bench/map.py --module bench/agent/check_plan.py
 python3 bench/map.py --json --query checks
 python3 bench/map.py --check
 
@@ -297,12 +298,12 @@ Defaults: 200 steps / 3600s per task. The TUI uses 300 / 1800s / 120s per cell.
 
 ```bash
 python3 bench/smoke.py                 # offline contract check
-python3 -m bench.ws freeze SRC DST     # clone + write DST.manifest.json
-python3 -m bench.ws diff  DST          # added/modified/deleted vs the manifest
+python3 -m bench.snapshot freeze SRC DST   # clone + write DST.manifest.json
+python3 -m bench.snapshot diff  DST        # added/modified/deleted vs the manifest
 python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "make typecheck pass" \
         --check "bun run typecheck" --legacy r3
-python3 bench/runs.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
-python3 bench/runs.py --recent 10      # newest tasks across every workspace
+python3 bench/task_journal.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
+python3 bench/task_journal.py --recent 10  # newest tasks across every workspace
 ```
 
 `live.py` is the honest end-to-end test: it clones `bench/ws/tui-base`, drives
@@ -313,7 +314,7 @@ python3 bench/runs.py --recent 10      # newest tasks across every workspace
 
 ```bash
 cd tui && bun install
-bun run typecheck      # tsc --noEmit
+bun run typecheck      # tsc --noEmit; noUnusedLocals/noUnusedParameters are on
 bun test               # 13 tests, 6 files
 ./bin/code             # inside the target project; starts/reuses its server
 ./bin/code-stop        # SIGTERM the server for this directory
@@ -378,8 +379,8 @@ The agent's Python kernel is `python3` from `PATH` (`CODE_TUI_PYTHON` overrides)
 | A benchmark task | `tasks.py`, `edge.py`, `harness.py` or `sandbox.py`, then a recorded run |
 | Grading semantics | the `grade_*` functions in the same module |
 | Model, temperature, caching | `llm.Client`, `run.py` flags, TUI env |
-| Check parsing | `check.py::_PATTERNS`, `run_check`, `evaluate` |
-| Check plan / cheap health | `checks.py` (`CheckSpec.parse`, `Verifier`, `run_plan`/`run_specs`, `scope`), `tui/src/detect-checks.ts` |
+| Check parsing | `check_run.py::_PATTERNS`, `run_check`, `evaluate` |
+| Check plan / cheap health | `check_plan.py` (`CheckSpec.parse`, `Verifier`, `run_plan`/`run_specs`, `scope`), `tui/src/detect-checks.ts` |
 | Board, log, prompt | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts` |
 | Queue, cancellation, journal format | `tui/src/server.ts` |
 | What the TUI sends the agent | `tui/python/worker.py` (AUTONOMOUS, rules, budgets, status mapping) |
@@ -395,9 +396,10 @@ The agent's Python kernel is `python3` from `PATH` (`CODE_TUI_PYTHON` overrides)
   added to `package.json` is picked up without a restart.
 - `bench/ws/tui-base` and `tui-broken` are frozen snapshots with manifests — clone before
   editing. `bench/ws/` is gitignored: recreate `tui-base` with
-  `python3 -m bench.ws freeze tui bench/ws/tui-base`.
+  `python3 -m bench.snapshot freeze tui bench/ws/tui-base`.
 - Tests are TS only (`bun test` = 13 tests, 6 files). React `act(...)` warnings are expected
-  noise. Python has no test framework: `bench/smoke.py` is the offline contract check.
+  noise. Python has no test framework: `bench/smoke.py` is the offline contract check, and its
+  `style` group runs `ruff.toml` plus the "every public name has a docstring" check.
 - Commit style: `area(scope): lowercase summary`, e.g.
   `bench(agent/kernel): add grep, write, edit` or `tui(tests): add log and prompt tests`.
 

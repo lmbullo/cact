@@ -26,6 +26,7 @@ import bench.tasks as tasks
 
 
 def run(check):
+    """Every suite imports, its task ids/counts are intact, and its ground truth is computed."""
     # --- suites are importable, their ground truth is intact -----------------------------
     check("tasks: read suite", len(tasks.TASKS) == 5, str(len(tasks.TASKS)))
     check("tasks: mutation suite", len(tasks.MUTATION_TASKS) == 3, str(len(tasks.MUTATION_TASKS)))
@@ -35,10 +36,12 @@ def run(check):
     check("sandbox: one mutable feature probe",
           len(sandbox.TASKS) == 1 and sandbox.by_id("S1_feature").mutates,
           str(len(sandbox.TASKS)))
+
     class _PathRun:
         errors = 0
         repeats = 0
         turns = [{"calls": [{"name": "read", "args": {"path": harness.CURRENT_PATH}}]}]
+
     class _GuessRun:
         errors = 0
         repeats = 0

@@ -108,6 +108,7 @@ _VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recal
 
 
 def merge_ranges(ranges) -> list[list[int]]:
+    """Overlapping/adjacent (a, b) ranges -> sorted disjoint [[a, b], ...]."""
     out: list[list[int]] = []
     for a, b in sorted((max(1, int(a)), int(b)) for a, b in ranges if int(b) >= int(a)):
         if out and a <= out[-1][1] + 1:
@@ -118,6 +119,7 @@ def merge_ranges(ranges) -> list[list[int]]:
 
 
 def gaps(ranges, total: int) -> list[list[int]]:
+    """The line ranges of 1..total that `ranges` does not cover."""
     merged = merge_ranges(ranges)
     out: list[list[int]] = []
     cursor = 1
@@ -131,10 +133,12 @@ def gaps(ranges, total: int) -> list[list[int]]:
 
 
 def covered(ranges) -> int:
+    """How many distinct lines the merged ranges cover."""
     return sum(b - a + 1 for a, b in merge_ranges(ranges))
 
 
 def clip(text: str, limit: int) -> str:
+    """`text` cut to `limit` chars with an explicit `[+N chars]` marker."""
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n...[+{len(text) - limit} chars]"
@@ -168,6 +172,7 @@ def digest_card(text: str, budget: int, handle: str, errors: bool = False) -> tu
 
 
 def digest(text: str, budget: int, handle: str) -> str:
+    """digest_card's text only: head + elision notice naming `handle` + tail."""
     return digest_card(text, budget, handle)[0]
 
 
@@ -365,6 +370,9 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
 
 
 class StateLoop(ToolLoop):
+    """ToolLoop plus state cards: typed observations verbatim, process output digested, coverage
+    tracked per file, and the context folded at `context_budget` prompt tokens."""
+
     def __init__(
         self,
         *args,

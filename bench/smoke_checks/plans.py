@@ -4,7 +4,7 @@ WHAT IT IS
   The checks-engine contract: a spec's `scope` filters the cheap run, the plan short-circuits
   on the first failure, the goal re-runs the whole plan every attempt, the cache fills from a
   run and drops on a mutation, and `--health off` disables the cheap subset. Then the read
-  coverage arithmetic (merge/gaps/covered/delivered_ranges) and `check.run_check`'s three
+  coverage arithmetic (merge/gaps/covered/delivered_ranges) and `check_run.run_check`'s three
   states: passed, failed, unrunnable.
 
 ENTRY POINTS
@@ -19,31 +19,32 @@ INVARIANTS
     digested card shows, which is the whole point of that function.
 
 WHERE TO CHANGE
-  A plan/verifier behaviour .............. bench/agent/checks.py (this file only scores it)
+  A plan/verifier behaviour .............. bench/agent/check_plan.py (this file only scores it)
   Coverage arithmetic .................... state_loop.merge_ranges / gaps / delivered_ranges
   The check states ....................... check.run_check
 """
 from __future__ import annotations
 
-import bench.agent.check as check_mod
-import bench.agent.checks as checks
+import bench.agent.check_plan as check_plan
+import bench.agent.check_run as check_mod
 import bench.agent.state_loop as state_loop
 from bench.smoke_support import workspace
 
 
 def run(check):
+    """The check plan and the Verifier, read coverage, and check_run's three states."""
     # --- plans and coverage --------------------------------------------------------------
     root = workspace()
-    specs = checks.CheckSpec.parse([
+    specs = check_plan.CheckSpec.parse([
         {"name": "bench", "cmd": "true", "cheap": True, "scope": ["bench"]},
         {"name": "tui", "cmd": "true", "cheap": True, "scope": ["tui"]},
     ])
     check("checks: scope filters by changed path",
           [spec.name for spec in specs if spec.applies(["tui/src/x.ts"])] == ["tui"])
-    plan, results = checks.run_plan(specs, str(root), ["tui/src/x.ts"])
+    plan, results = check_plan.run_plan(specs, str(root), ["tui/src/x.ts"])
     check("checks: plan runs only the scoped spec",
           plan is not None and plan.cmd == "tui" and list(results) == ["true"], str(plan))
-    verifier = checks.Verifier(specs, str(root))
+    verifier = check_plan.Verifier(specs, str(root))
     check("verifier: the plan is its goal", verifier.has_goal)
     check("verifier: cheap subset is the cheap specs",
           [spec.name for spec in verifier.cheap_specs] == ["bench", "tui"],
@@ -51,10 +52,10 @@ def run(check):
     check("verifier: scope decides whether the cheap run applies",
           verifier.should_run(["tui/src/x.ts"], 0.0) is True
           and verifier.should_run(["tui/src/x.ts"], 19.9) is False
-          and verifier.should_run(["tui/src/x.ts"], checks.HEALTH_WINDOW) is True,
+          and verifier.should_run(["tui/src/x.ts"], check_plan.HEALTH_WINDOW) is True,
           "throttle window")
     check("verifier: a docs-only change runs no scoped cheap spec",
-          checks.Verifier(specs, str(root)).should_run(["README.md"], 0.0) is False)
+          check_plan.Verifier(specs, str(root)).should_run(["README.md"], 0.0) is False)
     results = verifier.run(["tui/src/x.ts"])
     check("verifier: run returns per-command results",
           list(results) == ["true"] and results["true"].ok, str(list(results)))
@@ -66,28 +67,28 @@ def run(check):
           verifier.cache() == {} and verifier.last is None)
 
     marker = root / "second-ran"
-    short = checks.CheckSpec.parse([
+    short = check_plan.CheckSpec.parse([
         {"name": "first", "cmd": "false", "cheap": True},
         {"name": "second", "cmd": f"touch {marker}", "cheap": True},
     ])
-    short_verifier = checks.Verifier(short, str(root))
+    short_verifier = check_plan.Verifier(short, str(root))
     short_results = short_verifier.run()
     check("verifier: the first failure short-circuits the plan",
           list(short_results) == ["false"] and not marker.exists()
           and short_verifier.last.state == "failed", str(list(short_results)))
 
     counter = root / "goal-runs"
-    goal_specs = checks.CheckSpec.parse([{"name": "count", "cmd": f"printf x >> {counter}"}])
-    goal_verifier = checks.Verifier(goal_specs, str(root))
+    goal_specs = check_plan.CheckSpec.parse([{"name": "count", "cmd": f"printf x >> {counter}"}])
+    goal_verifier = check_plan.Verifier(goal_specs, str(root))
     first_ok, first_check = goal_verifier.authoritative()
     second_ok, _ = goal_verifier.authoritative()
     check("verifier: the goal runs the whole plan on every attempt",
           first_ok and second_ok and counter.read_text() == "xx"
           and first_check.state == "passed", counter.read_text())
-    legacy_ok, legacy_check = checks.Verifier(goal_specs, str(root), legacy=True).authoritative()
+    legacy_ok, legacy_check = check_plan.Verifier(goal_specs, str(root), legacy=True).authoritative()
     check("verifier: the legacy goal answers a bare bool",
           legacy_ok is True and legacy_check is None, str(legacy_ok))
-    oracle = checks.Verifier(check=lambda: check_mod.Check(cmd="oracle", state="passed"),
+    oracle = check_plan.Verifier(check=lambda: check_mod.Check(cmd="oracle", state="passed"),
                              cwd=str(root), cheap_enabled=False)
     check("verifier: a bare check is the goal",
           oracle.has_goal and oracle.authoritative()[0] is True)

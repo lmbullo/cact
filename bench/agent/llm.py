@@ -36,13 +36,21 @@ from pathlib import Path
 import urllib.error
 import urllib.request
 
+
 class LLMError(RuntimeError):
-    pass
+    """A primary model call failed; the loop turns it into stop="LLM_FAILED", not a crash."""
+
 
 CACHE_DIR = os.environ.get("BENCH_LLM_CACHE", str(Path(__file__).resolve().parent.parent / ".cache" / "llm"))
 
 
 class Client:
+    """One chat-completions endpoint (DeepSeek by default) with retries and a disk reply cache.
+
+    `complete(messages, tools=None, max_tokens=8192)` returns the provider's message dict; an
+    identical request replays from `cache_dir` with local_cache=True, so offline reruns are free.
+    """
+
     def __init__(
         self,
         api_key: str,
@@ -73,6 +81,7 @@ class Client:
         tools: list[dict] | None = None,
         max_tokens: int = 8192,
     ) -> dict:
+        """One model reply, from the cache when the exact request was seen before; never streams."""
         body: dict = {
             "model": self.model,
             "messages": messages,

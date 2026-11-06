@@ -21,7 +21,7 @@ INVARIANTS
     grades rather than an installed copy.
 
 WHERE TO CHANGE
-  Failure-line shape ... keep it in sync with check.py::_PATTERNS
+  Failure-line shape ... keep it in sync with check_run.py::_PATTERNS
   Test discovery ....... the unittest loader in main()
 """
 from __future__ import annotations
@@ -33,6 +33,7 @@ from pathlib import Path
 
 
 def main(argv: list[str]) -> int:
+    """Run the held-out tests in argv[1] against the cwd; one `FAILED` line per failure."""
     hidden = Path(argv[1]).resolve()
     sys.path.insert(0, os.getcwd())
     sys.path.insert(0, str(hidden))
