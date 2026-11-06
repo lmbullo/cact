@@ -66,8 +66,9 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
 | `bench/agent/verbs.py` | The typed verb registry: name, JSON schema, summary, mutates, implementing function. `tools.py` builds the provider specs from it; the child gets it as `KERNEL_VERBS` for dispatch and `help()` |
 | `bench/agent/tools.py` | `TYPE_TOOLS` generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
 | `bench/agent/headers.py` | The header index: `index()`, `guide()`, `problems()`. Shipped as source to every kernel child, so `python3 bench/map.py` and the `guide()` verb run the same code |
-| `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, output digests, context compaction |
-| `bench/harness.py` | The tool-path evals L1-L7 (HTML analysis via map/read/outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum); each grades the call record as well as the answer |
+| `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → typed observation or state card, context compaction |
+| `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
+| `bench/harness.py` | The tool-path evals L1-L8 (HTML analysis via map/read/outline, regex search, exec batch, atomic edit batch, explicit shell, batched read, local checksum, docs grounding); each grades the call record as well as the answer |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into: `final_answer`, the goal check plan, the `[check]` health line, stop reasons |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `bench/HARD.md` | Why the envelope exists: hard-suite results against `--mode bare` |
@@ -111,7 +112,9 @@ prefer deleting a duplicated catalog over keeping two copies in sync.
    the file digest; asking for a contained range again returns `already_read` with the
    `_OBS[n]` handle. `read(..., repeat=True)` re-delivers it, so the model can always get the
    text back. `_commit` invalidates the file's entry; an external write is caught by the
-   digest. This is context hygiene, not a read cap. `has_more` means the file continues after
+   digest. This is context hygiene, not a read cap. A typed result is normalized into
+   `Cell.envelope` (`page`/`data`/`handle`); the card renders it verbatim and only
+   python/exec output is digested. `has_more` means the file continues after
    `shown`; `truncated` means the default page limits cut the requested output—an explicit
    `start`/`end` before EOF is complete and only has `has_more`.
 3b. **Map and search skip generated trees.** `map`/`search` use `_walk`, which applies the
@@ -183,7 +186,7 @@ framework: `bench/smoke.py` plus a real benchmark task is the whole story, e.g.
 
 ```bash
 DEEPSEEK_API_KEY=... python3 bench/run.py --suite edge --tasks E1_tests --mode state --traces
-DEEPSEEK_API_KEY=... python3 bench/run.py --suite harness --mode state  # tool-path evals L1-L7
+DEEPSEEK_API_KEY=... python3 bench/run.py --suite harness --mode state  # tool-path evals L1-L8
 ```
 
 which needs network and a key; without one, fall back to the smoke checks above plus reading

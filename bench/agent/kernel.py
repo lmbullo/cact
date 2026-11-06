@@ -36,10 +36,11 @@ ENTRY POINTS
     .run(code, check_cache=None)   one Python cell -> Cell
     .call(tool, args, check_cache=None)  one typed verb -> the same Cell pipeline
     .stop()    SIGKILL the process group, reap exec/run groups, delete the observation log
-  Cell: stdout, stderr, result, final, duration_ms, restarted, answer, runs, obs_index,
+  Cell: stdout, stderr, result, final, duration_ms, envelope, restarted, answer, runs, obs_index,
         mutated, changed, deltas, delta, timeout, reads, tool, failed, rejected
     .failure(message, ...) the one restart/error constructor
-    .from_reply(reply, duration_ms=...) the one success constructor
+    .from_reply(reply, duration_ms=...) the one success constructor (normalizes a typed
+                                       result into `Cell.envelope`)
   Inside the kernel namespace: PRELUDE's typed verbs (map/read/search/outline/edit/
         splice/write/apply) and helpers guide()/grep()/recall()/verbs()/diff()/changes()/
         undo()/commit()/help(); RUN_PRELUDE adds exec_argv() (the typed `exec` tool) and
@@ -119,7 +120,8 @@ INVARIANTS
     child computes the value. Both reset `_READS_CELL`/`_CELL_CHANGED`, journal mutations,
     record `_OBS`, and return the same `CellReply` (with `tool` naming the typed verb). The
     driver writes the helper's stdout/stderr/text/hunk into the cell buffers, so the state
-    card digests typed results exactly like printed output.
+    card renders a typed result verbatim from `Cell.envelope`; only python/exec output is
+    digested.
   - Before dispatch the driver binds the args to the verb function's live signature
     (`inspect.signature().bind(**args)`). An unknown keyword or a missing argument is a
     `kind: "bad_args"` result with `error.code: "bad_arguments"` and a `use: help(tool)`
@@ -164,6 +166,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .envelope import normalize
 from .verbs import VERBS
 
 # --- protocol: one typed request/response pair over the `@@K@@` line ----------------------
@@ -344,6 +347,7 @@ for line in sys.stdin:
                             # counts and paging so it does not restate the hit table.
                             summary.pop("matches", None)
                         if value.get("kind") in ("outline", "outlines", "maps"):
+                            summary["shown"] = len(value.get("entries") or value.get("files") or [])
                             summary.pop("entries", None)
                             summary.pop("files", None)
                         if value.get("kind") in ("recall", "guide"):
@@ -459,7 +463,7 @@ _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
 
 
-def guide(query=None, path=None, limit=3, chars=20000):
+def guide(query=None, path=None, limit=10, chars=20000):
     fn = _HEADERS.get("guide")
     if fn is None:
         return {"ok": False, "error": {"code": "no_index",
@@ -892,10 +896,15 @@ def map(path=".", max_files=120, include=None, offset=0):
         rows = [entry] if wanted(rel) else []
         text = "  lines  path\n" + "\n".join(
             "%6d  %s" % (item["lines"], item["path"]) for item in rows)
-        return {"ok": True, "kind": "map", "root": rel, "files": rows,
-                "count": len(rows), "total_files": len(rows),
-                "shown": [1, len(rows)] if rows else [],
-                "next": None, "has_more": False, "text": text}
+        result = {"ok": True, "kind": "map", "root": rel, "files": rows,
+                  "count": len(rows), "total_files": len(rows),
+                  "shown": [1, len(rows)] if rows else [],
+                  "next": None, "has_more": False, "text": text}
+        if not rows and includes:
+            result["include_unmatched"] = includes
+            result["note"] = "the explicit file does not match include: " + ", ".join(includes)
+            result["text"] = text + "\nnote: " + result["note"]
+        return result
 
     base = target
     entries = []
@@ -909,6 +918,8 @@ def map(path=".", max_files=120, include=None, offset=0):
             continue
         entries.append({"path": rel, "lines": len(body.splitlines()), "bytes": len(body)})
     total = len(entries)
+    unmatched = [pat for pat in includes
+                 if not any(_include_match(entry["path"], pat) for entry in entries)]
     dirs = {}
     for entry in entries:
         parts = entry["path"].split("/")
@@ -931,11 +942,17 @@ def map(path=".", max_files=120, include=None, offset=0):
     end = start + len(page)
     text = "  lines  path\n" + "\n".join(
         "%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
-    return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-            "files": page, "count": total, "total_files": total, "dirs_matched": dirs,
-            "shown": [start + 1, end] if page else [],
-            "next": {"offset": end, "unit": "file"} if end < total else None,
-            "has_more": end < total, "text": text}
+    if unmatched:
+        text += "\nnote: include matched no file: " + ", ".join(unmatched)
+    result = {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
+              "files": page, "count": total, "total_files": total, "dirs_matched": dirs,
+              "include_unmatched": unmatched,
+              "shown": [start + 1, end] if page else [],
+              "next": {"offset": end, "unit": "file"} if end < total else None,
+              "has_more": end < total, "text": text}
+    if unmatched:
+        result["note"] = "include matched no file: " + ", ".join(unmatched)
+    return result
 
 
 def _outline_doc(node):
@@ -1107,6 +1124,11 @@ def outline(path, max_entries=200):
                 entries.append({"line": number, "kind": "comment", "name": line.strip()[:160]})
 
     entries.sort(key=lambda item: item["line"])
+    for index, item in enumerate(entries):
+        item["end"] = (entries[index + 1]["line"] - 1
+                       if index + 1 < len(entries) else len(lines))
+        if item["end"] < item["line"]:
+            item["end"] = item["line"]
     total_entries = len(entries)
     limit = max(1, int(max_entries or 1))
     truncated = total_entries > limit
@@ -1115,8 +1137,11 @@ def outline(path, max_entries=200):
         text = "# %s: no structural lines; use read() or search()" % rel
     else:
         header = ("# %s (%d of %d)\n" % (rel, len(entries), total_entries)) if truncated else ""
-        text = header + "\n".join("%d: %s %s" % (item["line"], item["kind"], item["name"])
-                                   for item in entries)
+        text = header + "\n".join(
+            "%d-%d: %s %s" % (item["line"], item["end"], item["kind"], item["name"])
+            if item["end"] > item["line"]
+            else "%d: %s %s" % (item["line"], item["kind"], item["name"])
+            for item in entries)
     return _Result({"ok": True, "kind": "outline", "path": rel, "entries": entries,
                     "total_lines": len(lines), "total_entries": total_entries,
                     "truncated": truncated,
@@ -1384,9 +1409,18 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                 truncated = True
     result = _grep_result(hits, occurrences, truncated, max_chars,
                           offset=skip, total=matched_lines)
+    notes = []
     if include_ignored:
-        result["include_ignored"] = True
-        result["note"] = "include is only used for directory paths; the explicit file was searched"
+        notes.append("include is only used for directory paths; the explicit file was searched")
+    if includes and not explicit_file:
+        unmatched = [pat for pat in includes
+                     if not any(_include_match(_os.path.relpath(full, _ROOT), pat) for full in files)]
+        if unmatched:
+            result["include_unmatched"] = unmatched
+            notes.append("include matched no file: " + ", ".join(unmatched))
+    if notes:
+        result["note"] = "; ".join(notes)
+        result["text"] = str(result.get("text") or "") + "\nnote: " + result["note"]
     return result
 
 
@@ -2410,6 +2444,7 @@ class Cell:
     result: str | None
     final: str | None
     duration_ms: int
+    envelope: dict | None = None
     restarted: bool = False
     answer: str | None = None
     runs: list[str] | None = None
@@ -2435,10 +2470,15 @@ class Cell:
     @classmethod
     def from_reply(cls, reply: CellReply, *, duration_ms: int) -> "Cell":
         """The one success constructor: a validated reply becomes the loop's Cell."""
+        envelope = None
+        if reply.tool:
+            envelope = normalize(reply.tool, _json_result(reply.result),
+                                 "_OBS[%s]" % reply.obs_index if reply.obs_index is not None else None)
         return cls(
             stdout=_cap(reply.stdout),
             stderr=_cap(reply.stderr),
             result=reply.result,
+            envelope=envelope,
             final=reply.final,
             duration_ms=duration_ms,
             restarted=False,
@@ -2455,6 +2495,18 @@ class Cell:
             failed=reply.failed,
             rejected=reply.rejected,
         )
+
+
+def _json_result(result):
+    if isinstance(result, dict):
+        return result
+    if not isinstance(result, str):
+        return {}
+    try:
+        value = json.loads(result)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _cap(text: str, limit: int = MAX_OUTPUT) -> str:

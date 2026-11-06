@@ -176,7 +176,26 @@ def render(rows, chars=900):
     return "\n\n".join(blocks)
 
 
-def guide(root=None, query=None, path=None, limit=3, chars=20000):
+def _non_indexed_note(root, query, rows):
+    """A query that names a real non-source file is not an index miss; say where to look."""
+    base = root or os.getcwd()
+    indexed = {row["path"] for row in rows}
+    text = str(query).lower()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        names = []
+    for name in names:
+        stem = os.path.splitext(name)[0]
+        if name in indexed or stem.lower() not in text:
+            continue
+        if os.path.isfile(os.path.join(base, name)):
+            return ("%s is not in the contract index (only Python/TS source headers are); "
+                    "use map() to list files, outline() for structure, search() for text" % name)
+    return None
+
+
+def guide(root=None, query=None, path=None, limit=10, chars=20000):
     """Answer "which module owns this?" over the headers.
 
     No query, no path -> one line per source file (the map). `path` -> that module's header.
@@ -204,17 +223,23 @@ def guide(root=None, query=None, path=None, limit=3, chars=20000):
             if score:
                 scored.append((score, row["path"], row))
         scored.sort(key=lambda item: (-item[0], item[1]))
-        hits = [item[2] for item in scored[:max(1, int(limit))]]
-        if not hits:
-            return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
-                    "shown": 0, "total": 0, "next": None,
-                    "text": "no documented module matches %r; try map() or search()" % str(query)}
+        note = _non_indexed_note(root, query, rows)
+        limit = max(1, int(limit))
+        hits = [item[2] for item in scored[:limit]]
         public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in hits]
+        lines = ["%s  (%s, %d lines)  %s" % (
+            row["path"], row["language"], row["lines"], row["title"] or "<no header>")
+            for row in public]
+        if len(scored) > len(public):
+            lines.append("(showing %d of %d; pass limit= to see more)" % (len(public), len(scored)))
+        if note:
+            lines.insert(0, note)
+        if not lines:
+            lines = ["no documented module matches %r; try map() or search()" % str(query)]
+        nxt = {"offset": len(public), "unit": "module"} if len(scored) > len(public) else None
         return {"ok": True, "kind": "guide", "query": str(query), "modules": public,
-                "shown": len(public), "total": len(public), "next": None,
-                "text": "\n".join("%s  (%s, %d lines)  %s" % (
-                    row["path"], row["language"], row["lines"], row["title"] or "<no header>")
-                    for row in public)}
+                "shown": len(public), "total": len(scored), "next": nxt,
+                "note": note, "text": "\n".join(lines)}
     public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]
     return {"ok": True, "kind": "guide", "modules": public,
             "shown": len(public), "total": len(public), "next": None,

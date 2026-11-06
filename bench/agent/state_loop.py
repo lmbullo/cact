@@ -6,10 +6,11 @@ WHAT IT IS
   cell's result is rendered as a state card instead of a transcript:
 
     [state]  turn, elapsed, prompt tokens, and the files this cell changed
-    [tool]   the typed tool that ran, when the call was not a python cell
-    [diff]   the exact hunks this cell changed (empty when nothing changed)
-    [stderr] / [stdout]  digested: head, error lines, tail, plus an _OBS[n] handle
-    [result] the last expression, clipped
+    [observe]/[page]  a typed verb's envelope: op/status, shown/total/next/unit/complete
+    [data]   the typed result's text, verbatim (typed verbs page; the card does not clip them)
+    [note] / [error]  explicit notes and the structured rejection
+    [stderr] / [stdout]  for python/exec only: head, error lines, tail, plus an _OBS[n] handle
+    [result] the last expression, clipped (python only; a typed observation is already data)
 
   Plus a ledger and a fold:
     coverage  every read() records the line ranges it delivered in `Cell.reads`; the renderer
@@ -40,9 +41,13 @@ ENTRY POINTS
     verifier / last_check            the cheap check rendered as the `[check]` line
 
 INVARIANTS
-  - Coverage is data, never a guess. The loop opens no file and inverse-parses nothing: an
-    undigested card delivered exactly `Cell.reads`, a digested card delivered only the numbered
-    lines `render_observation` kept (head / error lines / tail). A raw read is never guessed,
+  - A typed observation is delivered whole. `Cell.envelope` is the normalized contract
+    (`bench/agent/envelope.py`); the card renders `page`/`data` and never applies the output
+    digest to it, because the verb already paged. Only python/exec output is digested, and
+    that digest always names the `_OBS[n]` handle it left.
+  - Coverage is data, never a guess. The loop opens no file and inverse-parses nothing: a
+    verbatim typed card delivered exactly `Cell.reads`; a digested python/exec card delivered
+    only the numbered lines `render_observation` kept. A raw read is never guessed,
     and a digested batch read is split by its `# path` headers so one file's line numbers are
     never credited to another.
   - A restart is never silent: `Cell.restarted` puts an explicit `[state] kernel restarted`
@@ -82,18 +87,21 @@ STATE_RULES = TOOL_RULES + """
 STATE CARDS
 Every tool result is a state card, not a terminal transcript:
   [state]  the turn, its cost, and the files this cell changed
-  [tool]   the typed tool that ran, when the call was not a python cell
-  [diff]   the exact hunks this cell changed; empty when nothing changed
-  [stderr] and [stdout] are bounded: when the text is large you get the head, the tail, the error lines and a handle
-  [result] the last expression, clipped
+  [observe] and [page] are the typed envelope: op/status, shown/total/next/unit/complete
+  [data] is the typed result's text, already paged by the verb; [note]/[error] are structured
+  [stderr] and [stdout] (python/exec only) are bounded: head, tail, error lines and an _OBS[n] handle
+  [result] the last python expression, clipped; a typed result never repeats its text here
   [read]   the file ranges this cell delivered; anything past them is not in your context
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(next unread: N)` on that line is the first uncovered line, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read [page] before [data]: `next` is the next cursor in `unit`, and `complete` says whether that page is the whole result. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(next unread: N)` on that line is the first uncovered line, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
 _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
+# Typed verbs already page and name their own loss. The card renders their observation
+# verbatim; only process/python output is digested, because only it has no paging contract.
+_VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall", "git"})
 
 
 def merge_ranges(ranges) -> list[list[int]]:
@@ -230,7 +238,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
     so `[read] path a-b/total (next N)` and the `reads:` fold line cannot drift from the card.
     """
     parts = [f"[state] step={steps} elapsed={cell.duration_ms}ms prompt_tokens={prompt_tokens}"]
-    if getattr(cell, "tool", None):
+    if getattr(cell, "tool", None) and not getattr(cell, "envelope", None):
         parts.append(f"[tool] {cell.tool}")
     if cell.changed:
         parts.append(f"[state] changed: {', '.join(cell.changed)}")
@@ -249,15 +257,45 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
     handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
     body: list[str] = []
     digested = False
+    typed = bool(getattr(cell, "tool", None))
+    verbatim = typed and cell.tool in _VERBATIM_TOOLS
+    env = getattr(cell, "envelope", None)
+    if typed and env:
+        page = env.get("page")
+        status = "error" if not env.get("ok", True) else "ok"
+        parts.append(f"[observe] {cell.tool} {status} handle={handle}")
+        if page:
+            bits = [f"shown={page.get('shown')}", f"total={page.get('total')}"]
+            if page.get("unit"):
+                bits.append(f"unit={page['unit']}")
+            if page.get("offset") is not None:
+                bits.append(f"offset={page['offset']}")
+            if page.get("next") is not None:
+                bits.append(f"next={page['next']}")
+            bits.append("complete=" + ("true" if page.get("complete") else "false"))
+            parts.append("[page] " + " ".join(bits))
+        for note in env.get("notes") or []:
+            parts.append("[note] " + str(note))
+        if not env.get("ok", True) and env.get("error"):
+            err = env["error"]
+            parts.append("[error] %s: %s%s" % (
+                err.get("code") or "error", err.get("message") or "",
+                ("; use " + str(err["use"])) if err.get("use") else ""))
     if cell.stderr:
-        rendered, cut = digest_card(cell.stderr, output_budget, handle, errors=True)
-        digested = digested or cut
-        body.append("[stderr]\n" + clip(rendered, output_budget))
+        if verbatim:
+            body.append("[error]\n" + cell.stderr)
+        else:
+            rendered, cut = digest_card(cell.stderr, output_budget, handle, errors=True)
+            digested = digested or cut
+            body.append("[stderr]\n" + clip(rendered, output_budget))
     if cell.stdout:
-        rendered, cut = digest_card(cell.stdout, output_budget, handle)
-        digested = digested or cut
-        body.append("[stdout]\n" + clip(rendered, output_budget))
-    if cell.result is not None:
+        if verbatim:
+            body.append("[data]\n" + cell.stdout)
+        else:
+            rendered, cut = digest_card(cell.stdout, output_budget, handle)
+            digested = digested or cut
+            body.append("[stdout]\n" + clip(rendered, output_budget))
+    if cell.result is not None and not typed:
         body.append("[result] " + clip(cell.result, 1500))
     visible = "\n".join(body)
     shown = delivered_ranges(cell.reads, visible, digested)

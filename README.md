@@ -34,7 +34,8 @@ must not break.
 | `bench/agent/kernel.py` | The driver + `PRELUDE` that implement the action space, plus `Kernel.run(code)` and `Kernel.call(tool, args)` over one Cell pipeline |
 | `bench/agent/verbs.py` | The typed verb registry (schema + summary + mutates + function); `tools.py` builds the provider specs from it and the child gets it as `KERNEL_VERBS` for dispatch and `help()` |
 | `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
-| `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → state card, with output digests and context compaction |
+| `bench/agent/state_loop.py` | The loop production actually uses: tool call → kernel cell → typed observation or state card, with context compaction |
+| `bench/agent/envelope.py` | The one typed-result shape (`ok/op/kind/data/page/handle/notes/error`); page is the paging contract |
 | `bench/agent/tool_loop.py` | The turn machine those cards plug into (`final_answer`, goal checks, stop reasons) |
 | `bench/run.py` | The benchmark CLI: suites, modes, budgets, traces, the results table |
 | `tui/python/worker.py` | The seam between the TUI and `bench`: builds the loop, streams `@@TUI@@` JSON lines to the server |
@@ -49,7 +50,7 @@ cact/
 │   ├── run.py               benchmark CLI (also `python3 -m bench.run`)
 │   ├── tasks.py             READ suite T1-T5 (answer in text) + MUTATION suite M1-M3 (grade the workspace)
 │   ├── edge.py              EDGE suite E1-E10; generates edge_fixtures/ on import when missing
-│   ├── harness.py           HARNESS suite L1-L7: grades the answer and the tool path
+│   ├── harness.py           HARNESS suite L1-L8: grades the answer and the tool path
 │   ├── hard.py              HARD suite H1-H4 with a held-out oracle; `bench/HARD.md` has the numbers
 │   ├── hard_runner.py       runs a held-out test directory against a workspace (the hard oracle)
 │   ├── ws.py                freeze/clone/diff a workspace via sha256 manifests
@@ -60,7 +61,7 @@ cact/
 │   │                        calls, files touched); `--recent` spans every workspace
 │   ├── fixtures/            the small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/       the awkward workspace: broken tests, 20k-line log, invalid utf-8, shadowed import
-│   ├── harness_fixtures/    the HARNESS workspace: HTML-in-JS, regex hits, a local checksum, two edit targets
+│   ├── harness_fixtures/    the HARNESS workspace: HTML-in-JS, regex hits, a local checksum, current docs, two edit targets
 │   ├── hard_fixtures/       the H1-H4 workspaces; the H3 CSV is generated and gitignored
 │   ├── hard_hidden/         the held-out test tree for H1/H2/H4, outside every workspace
 │   ├── traces/              recorded evidence: <task>.<mode>.jsonl + summary.<mode>.json, hard/, sweep/
@@ -74,7 +75,8 @@ cact/
 │       ├── loop.py          shared types only: Budget, RunResult, usage accounting
 │       ├── repl.py          ReplLoop = ToolLoop + fenced python blocks; observations, RUN_NOTE
 │       ├── tool_loop.py     ToolLoop (typed verbs + the `python` escape hatch), goal checks, stop reasons
-│       ├── state_loop.py    StateLoop = ToolLoop + state cards, read coverage, fold compaction
+│       ├── state_loop.py    StateLoop = ToolLoop + typed observations/state cards, coverage, compaction
+│       ├── envelope.py      normalized typed observation: data/page/handle/notes/error
 │       ├── reply.py         parse model text into an Action (markup repair, fences, ANSWER:)
 │       ├── check.py         run_check(): runs tsc/pytest/bun test, extracts failures into a Check
 │       ├── checks.py        the check plan and Verifier (goal + cheap health subset)
@@ -128,8 +130,9 @@ bench/run.py                        tui/bin/code
   `check_cache`), read one `@@K@@` `CellReply` line back, and return a `Cell` (`stdout`,
   `stderr`, `result`, `final`, `duration_ms`, `restarted`, `answer`, `runs`, `obs_index`,
   `mutated`, `changed`, `deltas`, `delta`, `timeout`, `reads`, `tool`, `failed`,
-  `rejected`). The typed call and the Python cell share every step after dispatch, so a
-  typed edit is journalled, covered and digested exactly like a printed cell. The typed
+  `rejected`, `envelope`). The typed call and the Python cell share the journal/coverage
+  pipeline, but a typed result is normalized into an observation envelope and delivered
+  verbatim; only python/exec output is digested. The typed
   process tool is `exec` — `argv`, `commands=[[...]]` or the explicit `shell=<string>`; the
   typed `git` tool covers status/diff/show/log/files/add/commit/push/remote/branch without a
   pager.
@@ -277,7 +280,7 @@ export DEEPSEEK_API_KEY=...            # or --key
 python3 bench/run.py                                   # read suite, state mode, fixtures/
 python3 bench/run.py --suite all --mode state          # read + mutation, production loop
 python3 bench/run.py --suite edge --tasks E1_tests,E6_repair --mode state --traces
-python3 bench/run.py --suite harness --mode state      # tool-path evals L1-L7
+python3 bench/run.py --suite harness --mode state      # tool-path evals L1-L8
 python3 bench/run.py --suite hard --mode state         # envelope vs `--mode bare`; see bench/HARD.md
 python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-lib all
 ```

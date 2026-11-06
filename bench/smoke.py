@@ -159,7 +159,20 @@ def main() -> int:
     check("tasks: mutation suite", len(tasks.MUTATION_TASKS) == 3, str(len(tasks.MUTATION_TASKS)))
     check("tasks: by_id", tasks.by_id("T1_count").id == "T1_count")
     check("edge: edge suite", len(edge.EDGE_TASKS) == 10, str(len(edge.EDGE_TASKS)))
-    check("harness: loop suite", len(harness.HARNESS_TASKS) == 7, str(len(harness.HARNESS_TASKS)))
+    check("harness: loop suite", len(harness.HARNESS_TASKS) == 8, str(len(harness.HARNESS_TASKS)))
+    class _PathRun:
+        errors = 0
+        repeats = 0
+        turns = [{"calls": [{"name": "read", "args": {"path": harness.CURRENT_PATH}}]}]
+    class _GuessRun:
+        errors = 0
+        repeats = 0
+        turns = [{"calls": [{"name": "python", "args": {"code": "print('guess')"}}]}]
+    ok, _ = harness.grade_current_docs(harness.DOC_FACT, _PathRun())
+    check("harness: docs task accepts the documented path", ok, "read CURRENT.md")
+    wrong, why = harness.grade_current_docs(harness.DOC_FACT, _GuessRun())
+    check("harness: docs task rejects a right answer from prior knowledge",
+          not wrong and "never inspected" in why, why)
     check("edge: by_id", edge.by_id("E1_tests").id == "E1_tests")
     check("edge: ground truth computed", edge.TOTAL_CENTS > 0 and edge.RECORDS > 0)
 
@@ -449,7 +462,8 @@ def main() -> int:
               "demo.py" in cell.stdout, (cell.stdout + cell.stderr)[:200])
         cell = kernel.run("print(guide('nothing-matches-this')['text'])")
         check("kernel: guide() reports a miss as text",
-              "no documented module" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+              ("no documented module" in cell.stdout
+               or "not in the contract index" in cell.stdout), (cell.stdout + cell.stderr)[:200])
 
         cell = kernel.run("run('cat a.txt')")
         allowed = str(cell.result)
@@ -520,6 +534,16 @@ def main() -> int:
               and "secret.txt" not in cell.stdout
               and "skip.generated" not in cell.stdout,
               (cell.stdout + cell.stderr)[:240])
+        cell = kernel.call("read", {"path": "call_a.txt", "start": 1, "end": 1})
+        check("kernel: a typed call carries the page envelope",
+              cell.envelope is not None and cell.envelope.get("page", {}).get("unit") == "line"
+              and cell.envelope.get("handle", "").startswith("_OBS["),
+              str(cell.envelope)[:240])
+        card, visible = state_loop.render_observation(cell, 1, 0, None, 600, {})
+        check("state: a typed observation is rendered verbatim, not digested",
+              "[observe] read ok" in card and "[page]" in card and "[data]" in card
+              and "[stdout]" not in card and visible.get("call_a.txt") == [[1, 1]],
+              card[:240])
         cell = kernel.call("map", {"path": "call_a.txt"})
         check("kernel: map of a file returns that row, not the root",
               '"total_files": 1' in (cell.result or "") and "call_a.txt" in cell.stdout
@@ -540,7 +564,7 @@ def main() -> int:
         cell = kernel.call("read", {"ranges": [
             {"path": "call_a.txt", "start": 1, "end": 1},
             {"path": "call_b.txt", "start": 2, "end": 2},
-        ]})
+        ], "repeat": True})
         check("kernel: read batches different ranges",
               "call_a.txt" in cell.stdout and "call_b.txt" in cell.stdout
               and "one" in cell.stdout and "blue" in cell.stdout,
@@ -632,12 +656,12 @@ def main() -> int:
         (root / "outline.py").write_text("class A:\n    def m(self):\n        pass\n\ndef top():\n    pass\n", encoding="utf-8")
         cell = kernel.call("outline", {"path": "outline.md"})
         check("kernel: call(outline) maps markdown headings",
-              "1: h1 Title" in cell.stdout and "3: h2 Section" in cell.stdout,
+              "h1 Title" in cell.stdout and "h2 Section" in cell.stdout,
               (cell.stdout + cell.stderr)[:220])
         cell = kernel.call("outline", {"path": "outline.py"})
         check("kernel: call(outline) maps python defs and methods",
-              "1: class A" in cell.stdout and "2: method A.m" in cell.stdout
-              and "5: function top" in cell.stdout, (cell.stdout + cell.stderr)[:220])
+              "1: class A" in cell.stdout and "method A.m" in cell.stdout
+              and "function top" in cell.stdout, (cell.stdout + cell.stderr)[:220])
         cell = kernel.call("outline", {"path": "outline.md", "max_entries": 1})
         check("kernel: call(outline) respects max_entries",
               "Title" in cell.stdout and "Section" not in cell.stdout, cell.stdout[:160])

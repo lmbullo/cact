@@ -1,10 +1,11 @@
 """The harness suite: tasks that grade how the agent uses its tools, not only the answer.
 
 WHAT IT IS
-  Seven small workspace tasks aimed at the architecture that the recent TUI runs exercised:
+  Eight small workspace tasks aimed at the architecture that the recent TUI runs exercised:
   map or read an HTML-in-JS file, search with a real regex, run a batch of argv
   commands, apply one atomic edit batch, use the explicit shell escape hatch, read several
-  files in one call, and read the project's own checksum instead of inventing one. Every
+  files in one call, read the project's own checksum instead of inventing one, and find a
+  fact in the workspace's current docs instead of a model's priors. Every
   task grades the final answer *and* the tool-call record, so a correct answer found by the
   wrong path (shell `cat`, one edit per line, `bash -lc` in argv) fails.
 
@@ -14,6 +15,8 @@ ENTRY POINTS
   build()                       (re)create harness_fixtures/ when missing
   calls(run), tools(run)        flatten the per-call records of one run
   process(run, ...)             the reusable tool-use assertion -> list[str] of violations
+                                (`require_path`, `no_python_io`, `max_repeats`, `first_in`
+                                make the path, not just the answer, part of the grade)
 
 INVARIANTS
   - Ground truth is read from `harness_fixtures/` at import: section ids and lines, search
@@ -32,6 +35,7 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,7 +109,19 @@ THEME_CSS = """/* Brand */
 
 CONFIG_JS = """export const BRAND_COLOR = '#111111'
 export const SITE_NAME = 'harness'
+export const VERSION = '0.0.0'
 """
+
+CURRENT_MD = """# Current workspace contract
+
+This file is the source of truth for this checkout, not a model's training data.
+
+- Release gate: BLUE-ORCHID-731
+- Verifier: python3 tools/check_current.py --strict
+- The next version is VERSION = '2.4.1'
+"""
+CURRENT_PATH = "docs/CURRENT.md"
+DOC_FACT = "BLUE-ORCHID-731"
 
 EVENTS_LOG = """alpha MARKER first
 beta
@@ -128,6 +144,10 @@ for _ch in CHECKSUM_ID:
 
 def build() -> None:
     if HARNESS.exists():
+        (HARNESS / "docs").mkdir(exist_ok=True)
+        current = HARNESS / "docs" / "CURRENT.md"
+        if not current.exists():
+            current.write_text(CURRENT_MD, encoding="utf-8")
         return
     (HARNESS / "src").mkdir(parents=True)
     (HARNESS / "docs").mkdir()
@@ -137,6 +157,7 @@ def build() -> None:
     (HARNESS / "src" / "theme.css").write_text(THEME_CSS, encoding="utf-8")
     (HARNESS / "src" / "config.js").write_text(CONFIG_JS, encoding="utf-8")
     (HARNESS / "docs" / "notes.md").write_text(NOTES_MD, encoding="utf-8")
+    (HARNESS / "docs" / "CURRENT.md").write_text(CURRENT_MD, encoding="utf-8")
     (HARNESS / "data" / "events.log").write_text(EVENTS_LOG, encoding="utf-8")
     (HARNESS / "src" / "ledger.py").write_text(LEDGER_PY, encoding="utf-8")
     (HARNESS / "README.md").write_text("# Harness fixture\n\nOne page, one search, one log.\n", encoding="utf-8")
@@ -201,8 +222,16 @@ def _reader_programs(call: dict) -> list[str]:
 def process(run, *, require=(), max_calls: int | None = None,
             no_exec_readers: bool = False, require_exec_commands: bool = False,
             require_exec_shell: bool = False, require_read_list: bool = False,
-            require_edit_batch: bool = False, max_errors: int | None = 0) -> list[str]:
-    """Return process violations; an empty list means the task used the intended path."""
+            require_edit_batch: bool = False, max_errors: int | None = 0,
+            require_path: str | None = None, no_python_io: bool = False,
+            max_repeats: int | None = None, first_in=()) -> list[str]:
+    """Return process violations; an empty list means the task used the intended path.
+
+    Besides tool requirements, this can require a particular path to have been inspected,
+    forbid python file I/O and shell readers, reject duplicate calls, and fix the first tool
+    family. That is how a docs-grounding task distinguishes reading the current checkout from
+    answering from priors.
+    """
     calls_ = calls(run)
     names = [str(call.get("name")) for call in calls_]
     problems: list[str] = []
@@ -238,7 +267,25 @@ def process(run, *, require=(), max_calls: int | None = None,
             problems.append("did not use one edit(edits=[...]) batch")
     if max_errors is not None and int(getattr(run, "errors", 0) or 0) > max_errors:
         problems.append(f"had {getattr(run, 'errors', 0)} rejected/failed calls; limit {max_errors}")
+    if max_repeats is not None and int(getattr(run, "repeats", 0) or 0) > max_repeats:
+        problems.append(f"repeated an identical call {getattr(run, 'repeats', 0)} time(s); limit {max_repeats}")
+    if first_in and names and names[0] not in first_in:
+        problems.append(f"first call was {names[0]!r}; expected one of {list(first_in)}")
+    if require_path:
+        needle = str(require_path).replace("\\", "/").lstrip("./")
+        if not any(needle in json_args(call) for call in calls_):
+            problems.append(f"never inspected {needle}")
+    if no_python_io:
+        pattern = re.compile(r"\b(open|read_text|read_bytes|Path)\s*\(")
+        bad = [call for call in calls_ if call.get("name") == "python"
+               and pattern.search(str((call.get("args") or {}).get("code") or ""))]
+        if bad:
+            problems.append("used python file I/O instead of the typed readers")
     return problems
+
+
+def json_args(call: dict) -> str:
+    return json.dumps(call.get("args") or {}, sort_keys=True, default=repr).replace("\\", "/")
 
 
 def _answer(answer: str) -> str:
@@ -357,6 +404,19 @@ def grade_local_code(answer: str, run) -> tuple[bool, str]:
     return ok, "; ".join(detail) or "read the project checksum"
 
 
+def grade_current_docs(answer: str, run) -> tuple[bool, str]:
+    text = _answer(answer)
+    problems = process(run, max_calls=6, no_exec_readers=True, max_repeats=0,
+                       require_path=CURRENT_PATH, no_python_io=True,
+                       first_in=("map", "guide", "read", "search", "outline"))
+    ok = DOC_FACT in text and not problems
+    detail = []
+    if DOC_FACT not in text:
+        detail.append(f"expected {DOC_FACT} from {CURRENT_PATH}; got {text[:100]!r}")
+    detail.extend(problems)
+    return ok, "; ".join(detail) or f"read {CURRENT_PATH}, not priors"
+
+
 @dataclass
 class HarnessTask:
     id: str
@@ -419,6 +479,14 @@ HARNESS_TASKS: list[HarnessTask] = [
         "generic CRC or a guess.",
         grade_local_code,
         "read/analyze: use the project's code, not an invented checksum",
+    ),
+    HarnessTask(
+        "L8_current_docs",
+        f"Read this workspace's current documentation and report the release gate phrase. "
+        f"The answer is in {CURRENT_PATH}; do not rely on prior knowledge, a shell reader, "
+        "or a guess. Use exactly one pass over the docs and cite the file.",
+        grade_current_docs,
+        "docs-grounding: read the current contract, no shell/python file I/O",
     ),
 ]
 
