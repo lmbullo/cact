@@ -18,11 +18,12 @@ task board in front of it.
 There is no root `package.json`, no `pyproject.toml`, no CI. The only install step is
 `bun install` inside `tui/`.
 
-Coding agents: run `python3 bench/map.py` first — it indexes the header of every source
-module (what it is, entry points, invariants, where to change it), `--query <topic>` names the
-owner of a topic and `--check` fails when a header is incomplete. `AGENTS.md` is the short
-version of this file plus the rules that must not break. Inside the agent's kernel the same
-index is the `guide()` verb.
+Coding agents: call the typed `guide(query)` first, or run `python3 bench/map.py` outside a
+cell — both index the header of every source module (what it is, entry points, invariants,
+where to change it). `guide` is the in-kernel verb; `bench/map.py --query <topic>` is the CLI
+equivalent and `--check` fails when a header is incomplete. The typed `map` tool lists files;
+it is not the header index. `AGENTS.md` is the short version of this file plus the rules that
+must not break.
 
 ---
 
@@ -110,7 +111,7 @@ bench/run.py                        tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: the workspace verbs — map/read/search/recall/outline/edit/
+          ├─ PRELUDE: the workspace verbs — guide/map/read/search/recall/outline/edit/
           │           splice/write/apply — plus the python helpers guide/grep/
           │           diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
@@ -163,8 +164,8 @@ bench/run.py                        tui/bin/code
   is one call; pass `regex=false` for a literal substring. Match and context lines are exact
   (not clipped), adjacent context is merged so each line appears once, and the result carries
   counts/locators while stdout carries the text (the card never sends the hit table twice). `map(path, include='*.md')` lists files with line
-  counts and an include filter matched against the full relative path or basename
-  (`*.md` is any depth; `bench/*.md` is one level), skipping `.gitignore`/generated trees, and
+  counts and an include filter (a literal is an exact relative path; a glob matches the full
+  path or basename: `*.md` any depth, `bench/*.md` one level), skipping `.gitignore`/generated trees, and
   pages with `shown`/`next`/`has_more`, so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
   and headings inside a JS template literal, and CSS section comments, so the common
   component file is navigable without shell `grep`/`sed`.

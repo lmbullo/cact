@@ -42,9 +42,24 @@ from __future__ import annotations
 NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 
 VERBS: dict[str, dict] = {
+    "guide": {
+        "function": "guide",
+        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked module rows, path gives one module's whole header. Read-only and in-kernel (no bench/map.py process).",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "path": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1},
+                "chars": {"type": "integer", "minimum": 0},
+            },
+            "additionalProperties": False,
+        },
+    },
     "map": {
         "function": "map",
-        "summary": "List the files under a directory with line counts, without shell ls/find; path takes one path or a list, include matches the full relative path or basename (``*.md`` is any depth; ``bench/*.md`` is one level), ignored trees are skipped, and shown/next/has_more page a large list. A file path returns that one row.",
+        "summary": "List the files under a directory with line counts, without shell ls/find; path takes one path or a list, a literal include is an exact relative path and a glob matches the full path or basename (``*.md`` is any depth; ``bench/*.md`` is one level), ignored trees are skipped, and shown/next/has_more page a large list. A file path returns that one row. For 'which module owns this' use guide(), not map().",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -56,7 +71,7 @@ VERBS: dict[str, dict] = {
                 "offset": {"type": "integer", "minimum": 0,
                            "description": "0-based index into the matched file list."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                            "description": "Glob(s) matched against the full relative path or basename; '*.md' is any depth, 'bench/*.md' is one level."},
+                            "description": "Literal = exact relative path; glob = full path or basename ('*.md' any depth, 'bench/*.md' one level)."},
             },
             "additionalProperties": False,
         },
@@ -89,7 +104,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search files for a regex (default) or a literal. stdout is path:line:text with exact hit text and merged context; the result adds count/shown/total/offset/next/occurrences/truncated, keeps no duplicate hit table, and becomes locators above max_chars. include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
+        "summary": "Search files for a regex (default) or a literal. stdout is path:line:text with exact hit text and merged context; the result adds shown/total/offset/next/truncated, keeps no duplicate hit table, and becomes locators above max_chars (text_elided=true). include matches the full relative path or basename (so '*.py' is any depth; 'bench/*.py' is one level), and path takes one path or a list.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -99,7 +114,7 @@ VERBS: dict[str, dict] = {
                 "regex": {"type": "boolean", "default": True,
                           "description": "Treat pattern as a regular expression (default true). Set false for a literal substring."},
                 "include": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                            "description": "Glob(s) matched against the full relative path or basename, e.g. '*.py' (any depth) or 'bench/*.py' (one level)."},
+                            "description": "Literal = exact relative path; glob = full path or basename ('*.py' any depth, 'bench/*.py' one level)."},
                 "context": {"type": "integer", "minimum": 0,
                             "description": "Lines before and after each hit; 0 returns the matching line only."},
                 "ignore_case": {"type": "boolean"},
@@ -205,7 +220,7 @@ VERBS: dict[str, dict] = {
     },
     "apply": {
         "function": "apply",
-        "summary": "Apply a unified diff, possibly across several files, in one journal entry.",
+        "summary": "Apply a unified diff, possibly across several files, in one journal entry. Prefer edit(edits=[...]) for ordinary atomic replacements; use apply when you already have a real unified diff.",
         "mutates": True,
         "schema": {
             "type": "object",

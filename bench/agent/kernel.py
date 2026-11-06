@@ -327,7 +327,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -458,12 +458,12 @@ _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
 
 
-def guide(query=None, path=None, limit=6):
+def guide(query=None, path=None, limit=6, chars=900):
     fn = _HEADERS.get("guide")
     if fn is None:
         return {"ok": False, "error": {"code": "no_index",
                 "message": "the header index is not loaded; use map() and grep() instead"}}
-    return fn(_ROOT, query=query, path=path, limit=limit)
+    return fn(_ROOT, query=query, path=path, limit=limit, chars=chars)
 
 
 _ROOT = _os.getcwd()
@@ -547,6 +547,23 @@ def _glob_match(path, pattern):
             out.append(_re.escape(ch))
             i += 1
     return _re.fullmatch("".join(out), path) is not None
+
+
+def _include_match(name, pattern):
+    name = str(name).replace("\\", "/").lstrip("./")
+    pattern = str(pattern).replace("\\", "/").lstrip("./")
+    if any(ch in pattern for ch in "*?["):
+        return _glob_match(name, pattern) or _glob_match(name.rsplit("/", 1)[-1], pattern)
+    # A literal include is an exact relative path; only a glob is a basename-anywhere
+    # pattern. This keeps include=["README.md"] to the root README.
+    return name == pattern
+
+
+def _include_patterns(include):
+    value = _coerce_paths(include)
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value] if value else []
 _HINT = {
     "cat": "read(path)", "head": "read(path, offset=1, limit=N)",
     "tail": "read(path, offset=total-N)", "less": "read(path)",
@@ -859,12 +876,10 @@ def map(path=".", max_files=120, include=None, offset=0):
         return {"ok": False, "error": {"code": "outside_root", "path": rel}}
     if not _os.path.exists(target):
         return {"ok": True, "kind": "miss", "path": rel}
-    includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
+    includes = _include_patterns(include)
 
     def wanted(name):
-        return not includes or any(_glob_match(name, pat) or
-                                   _glob_match(_os.path.basename(name), pat)
-                                   for pat in includes)
+        return not includes or any(_include_match(name, pat) for pat in includes)
 
     if _os.path.isfile(target):
         try:
@@ -899,13 +914,24 @@ def map(path=".", max_files=120, include=None, offset=0):
         for depth in range(1, len(parts)):
             key = "/".join(parts[:depth])
             dirs[key] = dirs.get(key, 0) + 1
+    if total == 0:
+        try:
+            nonempty = next(_os.scandir(base), None) is not None
+        except OSError:
+            nonempty = False
+        if nonempty:
+            return {"ok": False, "kind": "map", "root": _os.path.relpath(base, _ROOT),
+                    "count": 0, "total_files": 0, "dirs_matched": {},
+                    "error": {"code": "empty_index",
+                              "message": "directory has entries but the filter yielded no files",
+                              "use": "check include, or call map without include"}}
     start = max(0, int(offset or 0))
     page = entries[start:start + max(1, int(max_files or 1))]
     end = start + len(page)
     text = "  lines  path\n" + "\n".join(
         "%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
     return {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-            "files": page, "count": total, "total_files": total, "dirs": dirs,
+            "files": page, "count": total, "total_files": total, "dirs_matched": dirs,
             "shown": [start + 1, end] if page else [],
             "next": {"offset": end} if end < total else None,
             "has_more": end < total, "text": text}
@@ -961,7 +987,7 @@ def outline(path, max_entries=200):
             rel = str(item.get("path") or "")
             chunks.append("# " + rel + "\n" + str(item.get("text") or ""))
         return {"ok": all(bool(item.get("ok")) for item in results), "kind": "outlines",
-                "files": results, "count": len(results), "text": "\n\n".join(chunks)}
+                "files": results, "file_count": len(results), "text": "\n\n".join(chunks)}
     target, rel = _resolve(path)
     if target is None:
         return _Result({"ok": False, "kind": "wrong_call", "path": rel,
@@ -1061,14 +1087,21 @@ def outline(path, max_entries=200):
                 entries.append({"line": number, "kind": "comment", "name": line.strip()[:160]})
 
     entries.sort(key=lambda item: item["line"])
-    entries = entries[:int(max_entries)]
+    total_entries = len(entries)
+    limit = max(1, int(max_entries or 1))
+    truncated = total_entries > limit
+    entries = entries[:limit]
     if not entries:
         text = "# %s: no structural lines; use read() or search()" % rel
     else:
-        text = "\n".join("%d: %s %s" % (item["line"], item["kind"], item["name"])
-                         for item in entries)
+        header = ("# %s (%d of %d)\n" % (rel, len(entries), total_entries)) if truncated else ""
+        text = header + "\n".join("%d: %s %s" % (item["line"], item["kind"], item["name"])
+                                   for item in entries)
     return _Result({"ok": True, "kind": "outline", "path": rel, "entries": entries,
-                    "total_lines": len(lines), "text": text})
+                    "total_lines": len(lines), "total_entries": total_entries,
+                    "truncated": truncated,
+                    "next": {"offset": len(entries)} if truncated else None,
+                    "text": text})
 
 
 def _coerce_paths(path):
@@ -1187,7 +1220,8 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
         handle = "_OBS[%d]['stdout']" % int(hit["obs"])
         note = ("already delivered in this session; use read(%r, start=%d, end=%d, repeat=True) "
                 "to receive it again, or print(%s)" % (rel, start, stop, handle))
-        result.update({"already_read": True, "handle": handle, "text": "# " + note})
+        result.update({"already_read": True, "delivered": False,
+                       "handle": handle, "text": "# " + note})
         return _Result(result)
     entry = _READS_CELL.setdefault(rel, {"ranges": [], "total": total})
     entry["ranges"].append([start, stop])
@@ -1232,8 +1266,8 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
     full = "\n".join(lines)
     total = len(hits) if total is None else int(total)
     common = {"ok": True, "kind": "matches", "matches": hits,
-              "occurrences": occurrences, "truncated": truncated,
-              "count": len(hits), "shown": len(hits), "total": total, "offset": int(offset),
+              "truncated": truncated, "shown": len(hits), "total": total,
+              "offset": int(offset),
               "next": {"offset": int(offset) + len(hits)} if int(offset) + len(hits) < total else None}
     if max_chars and len(full) > int(max_chars):
         # A broad context search can exceed the card budget and lose its middle. Deliver
@@ -1242,7 +1276,7 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
         locators = "\n".join(
             "%s:%s: %s" % (hit["path"], hit["line"], hit.get("text") or "")
             for hit in hits)
-        common.update({"locator_mode": True, "text_chars": len(full),
+        common.update({"text_elided": True, "text_chars": len(full),
                        "note": "broad result: locators only; pass max_chars=0 for full text"})
         common["text"] = locators
         return _Result(common)
@@ -1284,7 +1318,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
                     "error": {"code": "bad_regex", "message": str(exc),
                               "use": "search(pattern, regex=False) for a literal substring"}}
     needle = pattern.lower() if ignore_case else pattern
-    includes = include if isinstance(include, (list, tuple, set)) else ([include] if include else [])
+    includes = _include_patterns(include)
     explicit_file = _os.path.isfile(target)
     include_ignored = bool(includes and explicit_file)
     files = [target] if explicit_file else list(_walk(target))
@@ -1296,9 +1330,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
     for full in files:
         full_rel = _os.path.relpath(full, _ROOT)
         if includes and not explicit_file:
-            if not any(_glob_match(full_rel, pat) or
-                       _glob_match(_os.path.basename(full_rel), pat)
-                       for pat in includes):
+            if not any(_include_match(full_rel, pat) for pat in includes):
                 continue
         try:
             body = _read_text(full)

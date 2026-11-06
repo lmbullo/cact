@@ -336,7 +336,7 @@ the same classifier, so a program cannot shell out around the gate. The kernel p
 returns an `already_read` pointer unless `repeat=True`), `search()` (`grep()` is the python
 alias; exact lines with merged context), `outline()` (headings/defs with line numbers),
 `guide()`, `map()` (`include` filters by glob; ignored trees are skipped), `write()`, `edit()`, `splice()`,
-`apply()`; typed `recall()` searches earlier cell output; `exec()` and `git()` arrive with the
+`apply()`; typed `guide()` answers header queries, typed `recall()` searches earlier cell output; `exec()` and `git()` arrive with the
 process prelude, so they are absent when `CODE_TUI_ALLOW_RUN=0`. Mutations are journalled
 together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program
 launched through `exec`/`run()` can still write files: the journal is a typed-helper contract,

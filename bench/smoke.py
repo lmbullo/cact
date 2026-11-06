@@ -589,7 +589,7 @@ def main() -> int:
         cell = kernel.call("search", {"pattern": "row", "path": "many.txt",
                                       "context": 1, "max_chars": 100})
         check("kernel: broad search falls back to locators",
-              '"locator_mode": true' in (cell.result or "")
+              '"text_elided": true' in (cell.result or "")
               and "row" in cell.stdout and "text_chars" in (cell.result or "")
               and '"total": 30' in (cell.result or ""),
               (cell.result or "")[:260])
