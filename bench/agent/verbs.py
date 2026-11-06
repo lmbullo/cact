@@ -117,7 +117,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap). include filters directory walks; a file path is searched as given.",
+        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges. include filters directory walks; a file path is searched as given.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -158,7 +158,7 @@ VERBS: dict[str, dict] = {
     },
     "outline": {
         "function": "outline",
-        "summary": "Return a file's structure with line numbers (Markdown headings; Python classes/functions/methods; TS/JS defs and tests; HTML sections/headings inside JS template literals; CSS section comments). path may be a list. Use it before reading a long file, then read only the ranges you need.",
+        "summary": "Return a file's structure with line ranges (Markdown headings, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS templates, CSS section comments). A Markdown heading ends at the next same-or-shallower heading, so its range covers its subtree. path may be a list.",
         "mutates": False,
         "schema": {
             "type": "object",

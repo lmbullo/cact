@@ -1125,10 +1125,23 @@ def outline(path, max_entries=200):
 
     entries.sort(key=lambda item: item["line"])
     for index, item in enumerate(entries):
-        item["end"] = (entries[index + 1]["line"] - 1
-                       if index + 1 < len(entries) else len(lines))
-        if item["end"] < item["line"]:
-            item["end"] = item["line"]
+        # A Markdown parent owns its subtree: h2 "Commands" ends at the next heading of the
+        # same or shallower level, not at its first h3 child. For other structures the next
+        # entry is the boundary.
+        match = _re.match(r"^h([1-6])$", str(item.get("kind") or ""))
+        if match:
+            level = int(match.group(1))
+            following = next(
+                (other for other in entries[index + 1:]
+                 if (m := _re.match(r"^h([1-6])$", str(other.get("kind") or "")))
+                 and int(m.group(1)) <= level),
+                None,
+            )
+            end = (following["line"] - 1) if following else len(lines)
+        else:
+            end = (entries[index + 1]["line"] - 1
+                   if index + 1 < len(entries) else len(lines))
+        item["end"] = max(item["line"], end)
     total_entries = len(entries)
     limit = max(1, int(max_entries or 1))
     truncated = total_entries > limit
@@ -1310,9 +1323,15 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
             lines.append("%s:%s%s %s" % (path, number, ":" if is_hit else "-", text))
     full = "\n".join(lines)
     total = len(hits) if total is None else int(total)
+    by_file = {}
+    for hit in hits:
+        path = hit.get("path")
+        entry = by_file.setdefault(path, {"count": 0, "lines": []})
+        entry["count"] += 1
+        entry["lines"].append(int(hit["line"]))
     common = {"ok": True, "kind": "matches", "matches": hits,
               "truncated": truncated, "shown": len(hits), "total": total,
-              "offset": int(offset),
+              "offset": int(offset), "by_file": by_file,
               "next": {"offset": int(offset) + len(hits), "unit": "hit"} if int(offset) + len(hits) < total else None}
     if int(offset) >= total and not hits:
         common["note"] = "end of results (offset %d >= total %d)" % (int(offset), total)
@@ -1323,9 +1342,11 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
         locators = "\n".join(
             "%s:%s: %s" % (hit["path"], hit["line"], hit.get("text") or "")
             for hit in hits)
-        common.update({"text_elided": any(hit.get("before") or hit.get("after") for hit in hits),
-                       "text_chars": len(full),
-                       "note": "broad result: max_chars is a locator threshold, not a cap; max_chars=0 disables locator mode"})
+        elided = any(hit.get("before") or hit.get("after") for hit in hits)
+        common.update({"text_elided": elided, "text_chars": len(full)})
+        if elided:
+            common["note"] = ("broad result: max_chars is a locator threshold, not a cap; "
+                              "max_chars=0 disables locator mode")
         common["text"] = locators
         return _Result(common)
     common["text"] = full

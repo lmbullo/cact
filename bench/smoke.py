@@ -662,6 +662,10 @@ def main() -> int:
         check("kernel: call(outline) maps markdown headings",
               "h1 Title" in cell.stdout and "h2 Section" in cell.stdout,
               (cell.stdout + cell.stderr)[:220])
+        cell = kernel.call("outline", {"path": "outline.md"})
+        check("kernel: a Markdown parent heading owns its subtree",
+              "1-4: h1 Title" in cell.stdout and "3-4: h2 Section" in cell.stdout,
+              cell.stdout[:200])
         cell = kernel.call("outline", {"path": "outline.py"})
         check("kernel: call(outline) maps python defs and methods",
               "1: class A" in cell.stdout and "method A.m" in cell.stdout
@@ -823,7 +827,7 @@ def main() -> int:
               and ranges[0][0] == 1 and ranges[-1][1] == 900,
               f"{ranges} covered={state_loop.covered(ranges or [])}")
         check("state: the digested card still names the ranges and the handle",
-              "[read] huge.txt" in card and "next unread" in card, card[:160])
+              "[read] huge.txt" in card and "unread:" in card, card[:160])
         raw_text = "\n".join(f"row {n}" for n in range(1, 401))
         raw_cell = Cell(stdout=raw_text, stderr="", result=None, final=None, duration_ms=1,
                         reads={"raw.txt": {"ranges": [[1, 2]], "total": 2}})

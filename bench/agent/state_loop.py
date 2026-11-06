@@ -91,10 +91,11 @@ Every tool result is a state card, not a terminal transcript:
   [data] is the typed result's text, already paged by the verb; [note]/[error] are structured
   [stderr] and [stdout] (python/exec only) are bounded: head, tail, error lines and an _OBS[n] handle
   [result] the last python expression, clipped; a typed result never repeats its text here
-  [read]   the file ranges this cell delivered; anything past them is not in your context
+  [read]   the file ranges this cell delivered and the holes still unread
+  [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is the next cursor in `unit`, and `complete` says whether that page is the whole result. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(next unread: N)` on that line is the first uncovered line, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read [page] before [data]: `next` is the next cursor in `unit`, and `complete` says whether that page is the whole result. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: a-b, ...)` on that line lists the holes, while `read(...).next.offset` is the page cursor. Page the rest with read(path, start=next.offset). `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
@@ -277,6 +278,22 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
             parts.append("[page] " + " ".join(bits))
         for note in env.get("notes") or []:
             parts.append("[note] " + str(note))
+        by_file = (env.get("data") or {}).get("by_file")
+        if cell.tool == "search" and by_file and page and not page.get("complete"):
+            for path, info in list(by_file.items())[:6]:
+                numbers = info.get("lines") or []
+                ranges = []
+                for number in numbers:
+                    number = int(number)
+                    if ranges and number <= ranges[-1][1] + 1:
+                        ranges[-1][1] = number
+                    else:
+                        ranges.append([number, number])
+                where = ", ".join("%d-%d" % (a, b) if a != b else str(a)
+                                  for a, b in ranges[:6])
+                if len(ranges) > 6:
+                    where += ", ..."
+                parts.append("[hits] %s %s: %s" % (path, info.get("count"), where))
         if not env.get("ok", True) and env.get("error"):
             err = env["error"]
             parts.append("[error] %s: %s%s" % (
@@ -304,7 +321,12 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
         total = int((cell.reads.get(path) or {}).get("total") or 0)
         session = (coverage or {}).get(path) or {}
         missing = gaps(list(session.get("ranges") or []) + ranges, total)
-        tail = f" (next unread: {missing[0][0]})" if missing else ""
+        tail = ""
+        if missing:
+            shown_gaps = ", ".join("%d-%d" % (a, b) for a, b in missing[:3])
+            if len(missing) > 3:
+                shown_gaps += ", ..."
+            tail = f" (unread: {shown_gaps})"
         text = ", ".join(f"{a}-{b}" for a, b in merge_ranges(ranges))
         parts.append(f"[read] {path} {text}/{total}{tail}")
     parts.extend(body)

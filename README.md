@@ -164,29 +164,29 @@ bench/run.py                        tui/bin/code
   repair instruction and the turn keeps its paired tool message. A structured `ok: false` is
   `Cell.rejected`, not `Cell.failed`: it renders `exit: "error"` and counts in the run's
   errors, so a wrong argument shape is visible instead of hiding behind `ok: true`.
-- **Search is regex by default:** `search` uses the grep mental model, so `legacy|deprecated`
-  is one call; pass `regex=false` for a literal substring. Match and context lines are exact
-  (not clipped), adjacent context is merged so each line appears once, and the result carries
-  counts/locators while stdout carries the text (the card never sends the hit table twice). `map(path, include='*.md')` lists files with line
-  counts and an include filter (a literal is an exact relative path; a glob matches the full
-  path or basename: `*.md` any depth, `bench/*.md` one level), skipping `.gitignore`/generated trees, and
-  pages with `shown`/`next`/`has_more`, so a repo walk does not need shell `ls`/`find`; `outline` also maps HTML sections
-  and headings inside a JS template literal, and CSS section comments, so the common
-  component file is navigable without shell `grep`/`sed`.
-- **A read is a ledger, not a firehose:** `read(start/end)` is the canonical range; with no
-  range it returns the whole file only while it fits 400 lines / 20 KB, else `next.offset`
-  and `has_more`.
+- **Search: regex by default.** `search` uses the grep mental model, so `legacy|deprecated`
+  is one call; pass `regex=false` for a literal substring. Match text is exact, adjacent
+  context is merged so each line appears once, and `path:line:text` (hit) vs `path:line-text`
+  (context) is the separator. A paged result carries `[hits] path count: lines` so the next
+  move is a `read`, not offset arithmetic.
+- **Map: files, not headers.** `map(path, include='*.md')` lists files with line counts;
+  a literal include is an exact relative path and a glob matches the full path or basename
+  (`*.md` any depth, `bench/*.md` one level). Ignored/generated trees are skipped, unmatched
+  include patterns are named, and `shown`/`next`/`has_more` page the list. Use `guide` for
+  source contracts, not `map`.
+- **Outline: structure with subtree ranges.** `outline` maps Markdown headings, Python
+  classes/functions/methods, TS/JS definitions, HTML sections/headings inside JS templates,
+  and CSS section comments. A Markdown heading's range ends at the next same-or-shallower
+  heading, so a parent includes its children. Read the range, not the heading line.
+- **Read: a ledger, not a firehose.** `read(start/end)` is the canonical range; with no range
+  it returns the whole file only while it fits 400 lines / 20 KB, else `next`/`has_more`.
   `truncated` means the default page limit cut the requested output; an explicit
-  `start`/`end` that stops before EOF is complete and only has `has_more`.
-  `read(path=[...])` applies one window to several files;
-  `read(ranges=[{path,start,end},...])` batches different windows. `result.next.offset` is the
-  page cursor, while a state card's `[read] ... (next unread: N)` is the first line not yet covered.
-  A range already delivered in the session returns a pointer to the earlier `_OBS` output;
-  `repeat=True` re-delivers it. `Cell.reads` records
-  the delivered ranges as `{path: {ranges, total}}`, which the state card renders as
-  `[read] path ranges/total`. Coverage is pure data: the loop opens no file and inverse-parses
-  no card — an undigested card counts exactly the ranges `read()` recorded, a digested one only
-  the numbered lines it kept. Coverage is guidance, not a finish gate: reads through
+  `start`/`end` that stops before EOF is complete and only has `has_more`. `read(path=[...])`
+  applies one window to several files; `read(ranges=[{path,start,end},...])` batches
+  different windows. A range already delivered this session returns a pointer to the earlier
+  `_OBS` output; `repeat=True` re-delivers it. `Cell.reads` records `{path: {ranges, total}}`;
+  the card prints `[read] path ranges/total (unread: holes)`, and `[page]` carries
+  `shown/total/next/unit/complete`. Coverage is guidance, not a finish gate: reads through
   python `open()` (or `run()` in repl/bare) are equally valid and are not tracked.
 - **Session recall:** every cell's full stdout/stderr/result stays in the kernel's `_OBS`
   list, persisted to disk and reloaded after a restart. `recall(pattern)` searches it —

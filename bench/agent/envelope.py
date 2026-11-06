@@ -141,7 +141,7 @@ def normalize(tool, value, handle=None):
     elif note:
         out["notes"] = [str(note)]
     for key in ("include_ignored", "include_unmatched", "text_elided", "occurrences",
-                "text_chars", "already_read", "delivered", "path", "root", "count",
+                "text_chars", "already_read", "delivered", "path", "root", "count", "by_file",
                 "total", "total_lines", "total_files", "total_entries", "exit_code",
                 "files", "results"):
         if key in value and key not in BULK and value[key] is not None:
