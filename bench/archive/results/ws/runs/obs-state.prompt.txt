@@ -1,0 +1,1 @@
+Run the full test suite with run('bun test', timeout=180) and print the entire result dict without slicing or truncating it. Then report the failing test names.

@@ -21,6 +21,7 @@ target-version = "py310"
 line-length = 100
 
 exclude = [
+    "bench/archive",
     "bench/.tmp",
     "bench/.cache",
     "bench/ws",

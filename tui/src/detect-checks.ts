@@ -11,8 +11,10 @@
  * INVARIANTS
  *  - Explicit configuration wins: `CODE_TUI_CHECKS` (JSON list) then `CODE_TUI_CHECK` (one
  *    command). An empty `CODE_TUI_CHECK` disables verification.
- *  - Otherwise: `bench/smoke.py` at the root, plus `typecheck`/`test` (or `build` when
- *    neither exists) from the root and `tui/package.json`.
+ *  - Otherwise: `bench/smoke.py` and `ruff.toml` at the root, plus `lint`, `typecheck`,
+ *    `format:check` and `test` (or `build` when neither exists) from the root and
+ *    `tui/package.json`. Lint and format are cheap: a mutating cell cannot leave the tree
+ *    in a state the project itself would reject.
  *  - The package manager follows the lockfile: bun.lock/bun.lockb -> bun, package-lock.json
  *    -> npm, default bun. A `tests/` directory is a bun test target only for a bun project;
  *    npm projects need a `test` script.
@@ -34,7 +36,7 @@ export type CheckEnv = {
 };
 
 /** The verification plan for one workspace: CODE_TUI_CHECKS, else CODE_TUI_CHECK, else the
- * package manager's test/typecheck scripts, else bench/smoke.py. Empty means no goal. */
+ * project's lint/typecheck/format/test scripts plus smoke and ruff. Empty means no goal. */
 export function detectChecks(root: string, env: CheckEnv = process.env as CheckEnv): CheckSpec[] {
   const explicit = env.CODE_TUI_CHECKS;
   if (explicit !== undefined) {
@@ -63,6 +65,7 @@ export function detectChecks(root: string, env: CheckEnv = process.env as CheckE
     if (!out.some((item) => item.cmd === cmd)) out.push({ name, cmd, cheap, scope });
   };
   if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true, ["bench"]);
+  if (existsSync(join(root, "ruff.toml"))) add("lint", "python3 -m ruff check .", true, []);
   const prefix = (dir: string, command: string) =>
     dir === root ? command : `cd ${relative(root, dir)} && ${command}`;
   for (const dir of [root, join(root, "tui")]) {
@@ -84,7 +87,9 @@ export function detectChecks(root: string, env: CheckEnv = process.env as CheckE
           ? "npm"
           : "bun";
     const run = (script: string) => (runner === "npm" ? `npm run ${script}` : `bun run ${script}`);
+    if (scripts.lint) add("lint", prefix(dir, run("lint")), true, scope);
     if (scripts.typecheck) add("typecheck", prefix(dir, run("typecheck")), true, scope);
+    if (scripts["format:check"]) add("format", prefix(dir, run("format:check")), true, scope);
     if (scripts.test) add("test", prefix(dir, run("test")), false, scope);
     else if (runner === "bun" && existsSync(join(dir, "tests"))) {
       add("test", prefix(dir, "bun test"), false, scope);

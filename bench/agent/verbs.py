@@ -56,6 +56,19 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    "skill": {
+        "function": "skill",
+        "summary": "Load a project procedure on demand from .agent/skills/<name>.md. skill() lists the names; skill(name) returns that procedure's text. Read-only and cheap: use it when the task names a project workflow instead of guessing the steps.",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Skill name without the .md suffix."},
+                "root": {"type": "string", "description": "Workspace root (default '.')."},
+            },
+            "additionalProperties": False,
+        },
+    },
     "map": {
         "function": "map",
         "summary": "List the files under a directory with line counts, without shell ls/find; path takes one path or a list, a literal include is an exact relative path and a glob matches the full path or basename (``*.md`` is any depth; ``bench/*.md`` is one level), ignored trees are skipped, and shown/next/has_more page a large list. A file path returns that one row. For 'which module owns this' use guide(), not map().",

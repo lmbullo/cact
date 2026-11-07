@@ -1,4 +1,4 @@
-"""Offline self-check for the agent and the benchmark: no network, no API key, no fixtures
+"""Offline self-check for the agent and the evals: no network, no API key, no fixtures
 touched.
 
 WHAT IT IS
@@ -7,7 +7,7 @@ WHAT IT IS
   dependency order. The checks themselves live in `bench/smoke_checks/` (one module per
   area, each with its own header) and share the harness in `bench/smoke_support.py`.
 
-    suites    every suite imports; task counts and ids are intact
+    evals     the eval registry is intact and a fast loop subset passes
     helpers   pure helpers: reply parsing, card digests, budgets, generated verb specs
     index     the header index and `bench/guide.py --check`
     docs      every repository path a document names still exists
@@ -38,7 +38,7 @@ INVARIANTS
 
 WHERE TO CHANGE
   A new kernel helper or Cell field ....... bench/smoke_checks/files.py or verbs.py
-  A new suite or task count ............... bench/smoke_checks/suites.py
+  A new eval case or registry count ....... bench/smoke_checks/evals.py
   A new check group ....................... add bench/smoke_checks/<area>.py and call it here
   The harness, fakes or fixtures ........... bench/smoke_support.py
 """
@@ -53,14 +53,14 @@ if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the
     sys.path.insert(0, str(ROOT))
 
 from bench.smoke_checks import (  # noqa: E402
-    docs, files, gates, helpers, index, plans, protocol, repl, style, suites, turns, verbs,
+    docs, evals, files, gates, helpers, index, plans, protocol, repl, style, turns, verbs,
 )
 from bench.smoke_support import check, kernel_for, summary  # noqa: E402
 
 
 def main() -> int:
     """Run every group in order and print the pass/fail line; 0 only when all checks pass."""
-    suites.run(check)
+    evals.run(check)
     helpers.run(check)
     index.run(check)
     docs.run(check)

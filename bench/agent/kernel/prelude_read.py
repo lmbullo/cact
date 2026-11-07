@@ -1,10 +1,11 @@
-"""prelude_read: delivery — read(), grep(), search(), recall().
+"""prelude_read: delivery — read(), grep(), search(), recall(), skill().
 
 WHAT IT IS
   Fragment 4/5 of `PRELUDE` (see prelude.py). The largest surface an agent uses:
   `read()` (ranges, batching, section=, the repeated-read pointer), `grep()`/`search()` (regex
   by default, merged context, locators above a char budget, count mode, section aggregation),
-  and `recall()` (the session-side search over `_OBS`). Plus the shared result builders
+  and `recall()` (the session-side search over `_OBS`), plus `skill()` (list or load one
+  project procedure from `.agent/skills/`). Plus the shared result builders
   `_count_result`, `_grep_result`, `_section_bounds`, `_range_count`,
   `_section_search_result`, `_coerce_paths`.
 
@@ -13,6 +14,7 @@ ENTRY POINTS
   grep(pattern, path=".", max_results=50, regex=True, include=None, context=0, ...)
   search(...)          the typed verb (same engine as grep)
   recall(pattern, limit=10, context=100) / recall_tool(...)   the typed session search
+  skill(name=None, root=".")   list .agent/skills/, or load one procedure
   Inside: _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
 
 INVARIANTS
@@ -31,6 +33,7 @@ WHERE TO CHANGE
   The search result shape .......... _grep_result, _count_result, _section_search_result
   The section aggregation .......... _section_bounds, _section_search_result
   Batching ......................... _coerce_paths, read
+  Skill discovery/loading .......... skill
 """
 from __future__ import annotations
 
@@ -550,6 +553,30 @@ def recall_tool(pattern, limit=10, context=100):
     return {"ok": True, "kind": "recall", "items": items,
             "shown": len(items), "total": len(items), "next": None,
             "scanned": scanned, "count": len(items), "note": note, "text": text}
+
+
+def skill(name=None, root="."):
+    # On-demand procedures: .agent/skills/<name>.md, discovered at call time so a run can
+    # add one without editing the tool schema. Listing is cheap; loading is one file.
+    base = _os.path.join(root, ".agent", "skills")
+    try:
+        names = sorted(n[:-3] for n in _os.listdir(base) if n.endswith(".md"))
+    except OSError:
+        names = []
+    if name is None:
+        text = "\n".join("- " + n for n in names) if names else "no skills in .agent/skills/"
+        return {"ok": True, "kind": "skills", "items": names, "shown": len(names),
+                "total": len(names), "note": None if names else "no skills", "text": text}
+    path = _os.path.join(base, str(name) + ".md")
+    try:
+        with _open(path, encoding="utf-8", errors="replace") as fh:
+            body = fh.read()
+    except OSError:
+        return {"ok": False, "kind": "skills", "error": {"code": "unknown_skill",
+                "message": "no skill %r" % (name,), "available": names,
+                "use": "skill() lists; skill(name) loads one"}}
+    return {"ok": True, "kind": "skill", "name": str(name), "text": body,
+            "chars": len(body), "path": path}
 
 
 """

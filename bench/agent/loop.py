@@ -8,16 +8,17 @@ WHAT IT IS
   semantics. `tools.py` now generates the provider specs from `verbs.VERBS`.
 
 ENTRY POINTS
-  Budget(max_steps, max_output_tokens, max_wall_s)
+  Budget(max_steps, max_output_tokens, max_wall_s, max_total_tokens)
   RunResult ... what run.py, worker.py and trace.py consume
   _usage_add(acc, usage) ... sums provider usage, including cache hit/miss
 
 INVARIANTS
   - This module holds shared types only. There is no loop here: ToolLoop is the turn
     machine, StateLoop adds state cards, ReplLoop is the fenced-block alternate.
-  - The benchmark defaults below are overridden by run.py flags and by config.budget for
+  - The benchmark defaults below are overridden by eval flags and by config.budget for
     production; do not tune production from here. The live caps are `max_steps`,
-    `max_wall_s` and `max_output_tokens`; a field no loop reads does not belong in Budget.
+    `max_wall_s`, `max_output_tokens` and `max_total_tokens` (0 = unlimited). Every cap is
+    read by a loop; a field no loop reads does not belong in Budget.
   - `_usage_add` is additive and tolerates missing provider fields, including cache hits.
   - `RunResult.error` is the provider/loop failure detail for a stop that has no final answer
     (LLM_FAILED is the first user); an empty string means no separate detail.
@@ -36,11 +37,12 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Budget:
-    """The three caps every loop enforces: turns, output tokens and wall-clock seconds."""
+    """The caps every loop enforces: turns, output tokens, wall-clock seconds and total tokens."""
 
     max_steps: int = 200
     max_output_tokens: int = 393216
     max_wall_s: float = 3600.0
+    max_total_tokens: int = 0
 
 
 @dataclass

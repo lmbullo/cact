@@ -1,0 +1,1 @@
+Add one sentence to README.md, then run 'bun run typecheck' yourself with run() to verify, then finish.

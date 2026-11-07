@@ -1,0 +1,39 @@
+{
+  "tag": "gate-cache",
+  "legacy": "none",
+  "status": "done",
+  "stop": "DONE",
+  "steps": 7,
+  "usage": {
+    "prompt_tokens": 43438,
+    "completion_tokens": 917,
+    "total_tokens": 44355,
+    "reasoning_tokens": 258,
+    "prompt_cache_hit_tokens": 37120,
+    "prompt_cache_miss_tokens": 6318,
+    "local_hits": 0
+  },
+  "wall_s": 20.5,
+  "restarts": 0,
+  "timeouts": 0,
+  "verbs": {
+    "map": 0,
+    "read": 2,
+    "grep": 0,
+    "write": 0,
+    "edit": 1,
+    "run": 4,
+    "diff": 1,
+    "undo": 0,
+    "changes": 0,
+    "final_answer": 1
+  },
+  "changed": {
+    "added": [],
+    "modified": [
+      "README.md"
+    ],
+    "deleted": []
+  },
+  "check": null
+}

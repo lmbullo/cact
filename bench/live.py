@@ -2,19 +2,20 @@
 journal everything, then check and diff it.
 
 WHAT IT IS
-  The honest test. It clones `bench/ws/tui-base` to `bench/ws/runs/<tag>`, writes
+  The honest test. It clones `bench/archive/results/ws/tui-base` to `bench/ws/runs/<tag>`, writes
   `<tag>.prompt.txt`, spawns `tui/python/worker.py` against it, records `<tag>.events.jsonl`
   (the worker's `@@TUI@@` lines), then runs the check itself and diffs the tree against the
   base. `bench/task_journal.py` reads the result back.
 
 ENTRY POINTS
-  python3 bench/live.py --base bench/ws/tui-base --tag r4 --prompt "..." \
+  python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt "..." \
           --check "bun run typecheck" [--checks '[{"name":"smoke","cmd":"...","cheap":true}]']
           [--legacy r1|r3|both]
   load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env}
 
   The base must already exist: `bench/ws/` is gitignored, so build it first with
-  `python3 -m bench.snapshot freeze tui bench/ws/tui-base`.
+  `python3 -m bench.snapshot freeze tui bench/ws/tui-base` or point --base at the archived
+  `bench/archive/results/ws/tui-base`.
 
 INVARIANTS
   - `--tag` names a new directory under bench/ws/runs/. That tree and its journals are

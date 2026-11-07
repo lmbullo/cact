@@ -165,6 +165,11 @@ the worker:
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per reply (clamped to 393216) |
 | `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
 | `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `exec`, `git`, `run()` and runs the kernel under bwrap |
+| `CODE_TUI_AUTONOMY` | `1` | `0` disables the unattended-ask gate (`NEEDS_INPUT`) |
+| `CODE_TUI_DOCS` | `1` | `0` removes the `docs(url)` documentation tool |
+| `CODE_TUI_SUBAGENTS` | unset | `1` exposes `delegate` with a read-only child loop |
+| `CODE_TUI_SKEPTIC` | unset | `1` adds a read-only reviewer before a finish is accepted |
+| `CODE_TUI_TOOLS` | — | Path to a JSON custom-tool manifest |
 | `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
 | `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |
 | `CODE_TUI_LEGACY_CHECK` | unset | `1` makes the goal return a bare pass/fail, not a parsed `Check` |
@@ -182,8 +187,10 @@ available; a worker started without one fails immediately with a clear event.
 
 When a task starts the server detects a plan (an ordered list of named commands):
 `CODE_TUI_CHECKS` if set, else `CODE_TUI_CHECK` as a single entry, else
-`python3 bench/smoke.py` (when the workspace has one) plus `typecheck`/`test` (or `build` when
-neither exists) from the root and `tui/package.json`. The plan is re-detected per task, so a
+`python3 bench/smoke.py` and `python3 -m ruff check .` (each when the workspace has the file)
+plus `lint`, `typecheck`, `format:check` and `test` (or `build` when neither exists) from the
+root and `tui/package.json`. `lint` and `format:check` are cheap, so a mutating cell cannot leave
+the tree in a state the project itself would reject. The plan is re-detected per task, so a
 script an earlier task added is picked up without restarting the server. The runner follows the
 lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). The plan is passed to the
 worker as `--checks <json>`, where one `check_plan.Verifier` owns it.
@@ -254,7 +261,7 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 ```bash
 bun run typecheck   # tsc --noEmit
 bun test            # tests/: list, log, progress, prompt, view rendering, check detection
-                    # 13 tests, 6 files; React act(...) warnings are expected noise
+                    # 15 tests, 6 files; React act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

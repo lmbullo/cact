@@ -83,6 +83,13 @@ try:
     ns["_VERB_META"] = json.loads(os.environ.get("KERNEL_VERBS") or "{}")
 except Exception:
     ns["_VERB_META"] = {}
+# Per-run experiment tools: the parent ships extra verb metadata and source. They are merged
+# after the built-ins so a manifest can add a name but never silently replace a gate.
+try:
+    for _name, _meta in (json.loads(os.environ.get("KERNEL_EXTRA_VERBS") or "{}") or {}).items():
+        ns["_VERB_META"].setdefault(_name, _meta)
+except Exception:
+    pass
 
 
 class _Result(dict):
@@ -112,6 +119,11 @@ if _prelude:
     if os.environ.get("KERNEL_PRELUDE_MODE") == "mut":
         for _n in ("map", "read", "grep"):
             ns.pop(_n, None)
+# Experiment tools are source, not imports: a manifest defines its function in the surviving
+# namespace, exactly like a prelude helper, so a run can add an action without editing bench.
+_extra = os.environ.get("KERNEL_EXTRA_PRELUDE")
+if _extra:
+    exec(_extra, ns)
 _run_prelude = os.environ.get("KERNEL_RUN_PRELUDE")
 if _run_prelude:
     exec(_run_prelude, ns)
@@ -206,7 +218,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "skill", "skills") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))

@@ -1,0 +1,1 @@
+Read README.md by calling subprocess.run(['cat', 'README.md']) in Python (not read()), report its first heading, then finish.

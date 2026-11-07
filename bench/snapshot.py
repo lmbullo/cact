@@ -3,8 +3,9 @@
 WHAT IT IS
   `freeze(src, dst)` copies a tree and writes `dst.manifest.json`; `changed(run)` reports
   added/modified/deleted relative to that manifest; `clone(src, dst)` copies without a
-  manifest for throwaway runs. `bench/ws/tui-base` and `bench/ws/tui-broken` are frozen this
-  way; the directory itself is generated output.
+  manifest for throwaway runs. `bench/ws/tui-base` is frozen this way from a working tree; the
+  committed copies live under `bench/archive/results/ws/` and the directory itself is generated
+  output.
 
 ENTRY POINTS
   python3 -m bench.snapshot freeze SRC DST     clone, then write DST.manifest.json

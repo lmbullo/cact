@@ -34,11 +34,11 @@ An LLM coding agent in two halves, one language each:
 
 | Path | Language | What it is |
 |---|---|---|
-| `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the benchmark suites, fixtures, recorded traces |
+| `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the failure-mode evals (`bench/evals/`), archived legacy suites and results (`bench/archive/`) |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The action space is 15 typed
-tools generated from one registry (`bench/agent/verbs.py`): `guide`, `map`, `read`,
+The agent is a model in a loop with a **persistent Python kernel**. The action space is 16 typed
+tools generated from one registry (`bench/agent/verbs.py`): `guide`, `skill`, `map`, `read`,
 `session_diff`, `search`, `recall`, `outline`, `edit`, `splice`, `write`, `delete`, `mkdir`,
 `apply`, `exec`, `git`. `python` is the escape hatch for computation, not a verb. `run()` is a
 python-only helper, present in `repl`/`bare` modes and absent from typed modes.
@@ -95,11 +95,15 @@ These are architecture, not style. A change that breaks one is a regression even
 | `bench/agent/headers.py` | The header index (`index`, `guide`, `problems`). Shipped as source to every kernel child, so the CLI and the verb run the same code |
 | `bench/agent/state_loop.py` | The production loop: tool call → kernel cell → typed observation or state card, context compaction |
 | `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
-| `bench/agent/tool_loop.py` | The turn machine: `final_answer`, goal checks, stop reasons, call pairing |
+| `bench/agent/tool_loop.py` | The turn machine: `final_answer`, goal checks, stop reasons, call pairing, the unattended-ask gate |
+| `bench/agent/subagent.py` | `delegate`: a read-only child loop with its own context and usage |
+| `bench/agent/skeptic.py` | The read-only reviewer that must falsify a finish before it is accepted |
+| `bench/agent/custom.py` | Per-run tools from a JSON manifest, shipped to the child as extra verbs and prelude |
+| `bench/agent/docs.py` | `docs(url)`: fetch one documentation page, strip it to clean text with a char budget, cache it |
 | `bench/agent/check_plan.py` | The check plan and `Verifier`: goal, cheap subset, scope filter, throttle, cache (one command: `check_run.py`) |
-| `bench/run.py` | Benchmark CLI: suites, modes, budgets, traces, results table |
+| `bench/eval.py` + `bench/evals/` | The eval CLI, the scripted loop contracts, the live failure suite, the oracles and the append-only result rows |
 | `bench/smoke.py` + `bench/smoke_checks/` | The offline contract check; one group per area |
-| `bench/HARD.md` | Measured evidence for why the envelope exists; read before simplifying the tool surface |
+| `bench/HARD.md` | Historical evidence for the envelope, with its archived suite and traces |
 | `tui/python/worker.py` | The seam between the TUI and `bench`: builds the loop, streams `@@TUI@@` JSON lines to `server.ts` |
 | `tui/README.md` | The TUI wire contract: state root, HTTP/WS API, events, statuses, env vars |
 
@@ -110,8 +114,8 @@ These are architecture, not style. A change that breaks one is a regression even
    silent stage that reply's content wins over `v`, so a short final value cannot erase the
    report written next. An accepted finish ends the turn: the remaining calls in the same
    message do not run, but each still gets a paired (skipped) tool result. With a goal check no
-   answer is accepted until it passes. `run.py` grades `result.final`; a prose reply with no
-   tool call is the summary.
+   answer is accepted until it passes. A loop eval grades `result.final`; a live eval grades
+   its workspace oracle; a prose reply with no tool call is the summary.
 2. **`exec` is the one process tool; only mutation is gated.** `exec(argv)` runs a program with
    `cwd`, `env`, `stdin` and `commands=[[...]]`; `exec(shell=<string>)` is the explicit shell
    escape hatch. `bash -lc` inside argv is refused (`shell_via_exec`) and points at `shell`.
@@ -147,9 +151,11 @@ These are architecture, not style. A change that breaks one is a regression even
    not pollute a repo map. `search` returns exact line text (no 200-char clip), merges
    overlapping context so each line appears once, and keeps hit text in stdout while the result
    carries locators. Changing `.gitignore` resets the pattern cache.
-6. **Graders hash the test files** (`edge.py::_suite`). Repairing `test_core.py` or
-   `test_calc2.py` scores zero; repair the source. The hard suite's oracle lives outside the
-   workspace (`bench/hard_hidden/`) and cannot be read or edited by the agent.
+6. **The oracle never trusts the visible test.** `bench/evals/oracle.py` runs the workspace's
+   own code and is the only verdict; a green visible suite is fixture evidence, not a pass. The
+   archived edge grader additionally hashed `test_core.py`/`test_calc2.py` so repairing a test
+   scored zero. The hard oracle lives outside the workspace
+   (`bench/archive/legacy/hard_hidden/`) and cannot be read or edited by the agent.
 7. **The check plan is the goal, and one `Verifier` owns it.** `run_plan`/`run_specs` run the
    ordered plan and return the first failure; a spec's `scope` prefixes filter the *cheap*
    health run to the paths a cell changed (the goal still runs every spec). The `Verifier` owns
@@ -157,21 +163,20 @@ These are architecture, not style. A change that breaks one is a regression even
    after a mutating cell (at most every 20s) and appears as the `[check]` line of the state
    card. `final_answer` is rejected (`GOAL_UNMET`) until the whole plan passes. Production
    passes `goal_stops=False`, so a failing check never ends the run by itself.
-8. **Ground truth is computed at import time** in `tasks.py` / `edge.py` / `harness.py` /
-   `hard.py` from the fixtures. Editing a fixture silently redefines the expected answers;
-   `H3_bigcsv`'s CSV is generated and gitignored, and the H1/H2/H4 oracle lives in
-   `hard_hidden/`. Fixture Markdown (`SPEC.md`, `docs/CURRENT.md`, `fixtures/notes.md`) is
-   graded input, not documentation: do not rewrite it as prose.
-9. **`bench/traces/` is append-only evidence.** Add runs; never rewrite a recorded journal.
-   `bench/ws/` (frozen workspaces + `runs/` journals) is gitignored measurement output: rebuild
-   `tui-base` with `python3 -m bench.snapshot freeze tui bench/ws/tui-base`, and let `bench/live.py`
-   create `runs/<tag>`; do not expect either in a fresh clone.
-10. **Generated, not source:** `bench/.tmp/`, `bench/.cache/`, `bench/ws/`, `tui/node_modules/`,
-    and the TUI state root (`~/.local/state/code-tui/` by default). `bench/edge_fixtures/`,
-    `bench/harness_fixtures/`, `bench/sandbox_fixtures/` and `bench/sandbox_hidden/` are
-    committed but rebuilt by their `build()` when missing.
-11. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
-    mode (`python3 -m bench.run`). Keep both working.
+8. **Eval ground truth is data, not prose.** `bench/evals/fixtures.py` builds the input;
+   `bench/evals/oracle.py` owns the hidden answer. A fixture never contains its own oracle,
+   and an oracle never reads a visible test. The archived legacy suite and its fixtures live
+   under `bench/archive/legacy/`; `bench/archive/results/` keeps the recorded traces and
+   workspaces. Do not revive the archived suites as the primary eval.
+9. **`bench/evals/results/`, `bench/archive/results/traces/` and
+   `bench/archive/results/ws/` are append-only evidence.** Add runs; never rewrite a recorded
+   row or journal. `bench/live.py` still creates `bench/ws/runs/<tag>`; treat that as generated
+   output and do not expect it in a fresh clone.
+10. **Generated, not source:** `bench/.tmp/`, `bench/.cache/`, `bench/evals/results/`,
+    `bench/archive/results/`, `tui/node_modules/`, and the TUI state root
+    (`~/.local/state/code-tui/` by default).
+11. **`bench/eval.py` has two import blocks** — script mode (`python3 bench/eval.py`) and package
+    mode (`python3 -m bench.eval`). Keep both working.
 12. **Every module explains itself, and something checks.** A source module carries all four
     header sections; `bench/agent/headers.py` parses them and `python3 bench/guide.py --check`
     (also a smoke check) exits 1 when one is missing. `kernel/prelude.py` ships `headers.py`'s
@@ -185,6 +190,11 @@ These are architecture, not style. A change that breaks one is a regression even
     cell times out or the kernel dies. `recall(pattern)` is the session-side search over `_OBS`;
     `search` (`grep()` in python) is the tree-side search. `_OBS` is persisted to
     `KERNEL_OBS_LOG` and reloaded on restart, so `recall()` survives a crash; variables do not.
+14. **Fire-and-forget is the contract.** A production run is unattended: no human answers a
+    question, reads the code, or repairs the same session. The loop rejects a finish that asks
+    a human (`NEEDS_INPUT`), the `Verifier` is the acceptance authority, and the evals grade
+    the workspace's observable behavior, never the agent's prose. `config.AUTONOMY` owns the
+    gate; `worker.AUTONOMOUS` owns the wording.
 
 ## 5. Verification gates
 
@@ -194,21 +204,22 @@ Run in this order. A failure is a contract change, not a flaky test.
 |---|---|---|
 | `python3 bench/guide.py --check` | every module header has its four sections | exit 0 |
 | `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths and one-owner prose, `guide()`, ruff | exit 0 |
+| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths and one-owner prose, the fast eval subset, `guide()`, ruff | exit 0 |
+| `python3 bench/eval.py` | the 16 scripted loop contracts: finish, args, journal, compaction, custom tools, skills, docs, delegation, skeptic, autonomy, token cap | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
-| `cd tui && bun test` | rendering/detection tests, 6 files | 13 pass; React `act(...)` warnings are expected noise |
+| `cd tui && bun test` | rendering/detection tests, 6 files | 15 pass; React `act(...)` warnings are expected noise |
 
 Smoke is the fast signal: no key, no network, nothing written outside a temp dir. Python has no
 unit-test framework; smoke plus one real task is the whole story:
 
 ```bash
-DEEPSEEK_API_KEY=... python3 bench/run.py --suite edge --tasks E1_tests --mode state --traces
-DEEPSEEK_API_KEY=... python3 bench/run.py --suite harness --mode state   # tool-path evals L1-L8
-DEEPSEEK_API_KEY=... python3 bench/run.py --suite sandbox --tasks S1_feature --mode state --traces
+python3 bench/eval.py                         # offline loop contracts, no key, no network
+DEEPSEEK_API_KEY=... python3 bench/eval.py --live   # the 14 model-backed failure cases
 ```
 
-Needs network and a key. Without one, stop at the offline gates and say so.
+`--live` needs network and a key; the offline pass is the regression gate. Without a key, stop
+at the offline gates and say so.
 
 ## 6. Change recipes
 
@@ -219,9 +230,10 @@ Needs network and a key. Without one, stop at the offline gates and say so.
 | Observation shape/paging | `envelope.py`, `state_loop._observe`, `repl.observation` | smoke envelopes + a run |
 | Finish protocol or stop reason | `tool_loop.ToolLoop.run` (a reply dialect overrides `_reply`, see `repl.py`) | `smoke_checks/turns.py` |
 | A check command / plan | `check_run.py` (one command), `check_plan.py` (`CheckSpec.parse`, `Verifier`), `tui/src/detect-checks.ts` | smoke plans + `bun test` |
-| A benchmark task | `tasks.py` (read/mutation), `edge.py`, `harness.py`, `sandbox.py`, then a recorded run | suite import + trace |
-| Grading semantics | the `grade_*` functions in the same module | re-run the suite |
-| Model/temperature/cache | `llm.Client`, `run.py` flags, TUI env | a live run |
+| A loop failure case | `bench/evals/loops.py` (scripted) or `live.py` (model), then `runner.REGISTRY` | `bench/eval.py --tasks <id>` |
+| Eval input or answer | `fixtures.py` (input), `oracle.py` (answer), never both | the case's row |
+| A delegated capability | `subagent.py` / `skeptic.py` / `custom.py`, then `config.build` and the worker env flags | `bench/eval.py`, a live run |
+| Model/temperature/cache | `llm.Client`, TUI env | a live run |
 | TUI board/log/keys | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts` | `bun test` |
 | TUI queue/journal/API | `tui/src/server.ts`, `tui/src/types.ts` | `bun test`, `bench/live.py` |
 

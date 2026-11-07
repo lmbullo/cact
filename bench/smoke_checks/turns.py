@@ -45,7 +45,8 @@ def run(check):
     # --- the turn machine: finish protocol, stop vocabulary and call pairing --------------
     check("turn: the stop vocabulary is fixed",
           set(tool_loop.STOPS) == {"DONE", "VERIFIED", "STEP_LIMIT", "WALL_LIMIT", "STAGED",
-                                   "GOAL_UNMET", "TRUNCATED", "BAD_ARGS", "LLM_FAILED"},
+                                   "GOAL_UNMET", "TRUNCATED", "BAD_ARGS", "LLM_FAILED",
+                                   "TOKEN_LIMIT", "SKEPTIC_UNMET", "NEEDS_INPUT"},
           str(tool_loop.STOPS))
     check("turn: a turn outcome defaults to continuing",
           not tool_loop.TurnOutcome().end and tool_loop.TurnOutcome().stop is None)

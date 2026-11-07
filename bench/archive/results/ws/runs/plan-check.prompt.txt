@@ -1,0 +1,1 @@
+Add one sentence to README.md in the overview saying the TUI is a thin client over the server, then finish.

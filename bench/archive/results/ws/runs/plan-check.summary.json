@@ -1,0 +1,39 @@
+{
+  "tag": "plan-check",
+  "legacy": "none",
+  "status": "done",
+  "stop": "DONE",
+  "steps": 4,
+  "usage": {
+    "prompt_tokens": 13266,
+    "completion_tokens": 569,
+    "total_tokens": 13835,
+    "reasoning_tokens": 265,
+    "prompt_cache_hit_tokens": 9856,
+    "prompt_cache_miss_tokens": 3410,
+    "local_hits": 0
+  },
+  "wall_s": 12.3,
+  "restarts": 0,
+  "timeouts": 0,
+  "verbs": {
+    "map": 0,
+    "read": 2,
+    "grep": 0,
+    "write": 0,
+    "edit": 1,
+    "run": 0,
+    "diff": 1,
+    "undo": 0,
+    "changes": 0,
+    "final_answer": 1
+  },
+  "changed": {
+    "added": [],
+    "modified": [
+      "README.md"
+    ],
+    "deleted": []
+  },
+  "check": null
+}

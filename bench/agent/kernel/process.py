@@ -9,13 +9,15 @@ WHAT IT IS
 
 ENTRY POINTS
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
-         allow_run=False, allow_shell=None, supervise=True)
+         allow_run=False, allow_shell=None, supervise=True,
+         extra_verbs=None, extra_prelude="")
     .start()                            spawn the child (lazy: run()/call() start it)
     .run(code, check_cache=None)        one python cell -> Cell
     .call(tool, args, check_cache=None) one typed verb -> the same Cell pipeline
     .stop()                             SIGKILL the group, reap orphans, drop the obs log
   The child's environment is the wire: KERNEL_PRELUDE, KERNEL_RUN_PRELUDE, KERNEL_HEADERS,
-  KERNEL_VERBS, KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL.
+  KERNEL_VERBS, KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL,
+  KERNEL_EXTRA_VERBS, KERNEL_EXTRA_PRELUDE (per-run experiment tools).
 
 INVARIANTS
   - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and restarted
@@ -81,7 +83,8 @@ class Kernel:
 
     def __init__(self, root: Path, timeout: float = CELL_TIMEOUT, writable: bool = False,
                  prelude: str = "off", allow_run: bool = False, allow_shell: bool | None = None,
-                 supervise: bool = True) -> None:
+                 supervise: bool = True, extra_verbs: dict | None = None,
+                 extra_prelude: str = "") -> None:
         self.root = Path(root).resolve()
         self.timeout = timeout
         self.writable = writable
@@ -89,6 +92,8 @@ class Kernel:
         self.allow_run = allow_run
         self.allow_shell = bool(allow_run if allow_shell is None else (allow_shell and allow_run))
         self.supervise = supervise
+        self.extra_verbs = dict(extra_verbs or {})
+        self.extra_prelude = str(extra_prelude or "")
         self.proc: subprocess.Popen | None = None
         self.orphan_journal: str | None = None
         self.obs_log: str | None = None
@@ -97,16 +102,21 @@ class Kernel:
     def _argv(self) -> list[str]:
         if self.allow_run:
             return [self._python, "-u", "-c", DRIVER]
+        root = str(self.root)
+        # `--tmpfs /tmp` hides a workspace that lives under /tmp: the bind below would point
+        # into the empty tmpfs and every cell would die on startup. Only mask /tmp when the
+        # workspace is outside it; otherwise the read-only `/` bind already carries the tree.
+        in_tmp = root == "/tmp" or root.startswith(("/tmp/", "/var/tmp/", "/dev/shm/"))
         return [
             "bwrap",
             "--die-with-parent",
             "--unshare-all",
             "--ro-bind", "/", "/",
-            *(["--bind", str(self.root), str(self.root)] if self.writable else []),
-            "--tmpfs", "/tmp",
+            *(["--bind", root, root] if self.writable else []),
+            *([] if in_tmp else ["--tmpfs", "/tmp"]),
             "--proc", "/proc",
             "--dev", "/dev",
-            "--chdir", str(self.root),
+            "--chdir", root,
             self._python, "-u", "-c", DRIVER,
         ]
 
@@ -187,6 +197,9 @@ class Kernel:
                 **({"KERNEL_PRELUDE": PRELUDE, "KERNEL_PRELUDE_MODE": self.prelude,
                     "KERNEL_HEADERS": HEADERS_SOURCE, "KERNEL_VERBS": json.dumps(VERBS)}
                    if self.prelude != "off" else {}),
+                **({"KERNEL_EXTRA_VERBS": json.dumps(self.extra_verbs),
+                    "KERNEL_EXTRA_PRELUDE": self.extra_prelude}
+                   if self.extra_verbs or self.extra_prelude else {}),
             },
         )
 

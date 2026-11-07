@@ -1,0 +1,37 @@
+{
+  "tag": "spawn-gate",
+  "legacy": "none",
+  "status": "done",
+  "stop": "DONE",
+  "steps": 4,
+  "usage": {
+    "prompt_tokens": 17937,
+    "completion_tokens": 663,
+    "total_tokens": 18600,
+    "reasoning_tokens": 276,
+    "prompt_cache_hit_tokens": 13696,
+    "prompt_cache_miss_tokens": 4241,
+    "local_hits": 0
+  },
+  "wall_s": 8.6,
+  "restarts": 0,
+  "timeouts": 0,
+  "verbs": {
+    "map": 0,
+    "read": 4,
+    "grep": 0,
+    "write": 0,
+    "edit": 0,
+    "run": 2,
+    "diff": 0,
+    "undo": 0,
+    "changes": 0,
+    "final_answer": 2
+  },
+  "changed": {
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "check": null
+}

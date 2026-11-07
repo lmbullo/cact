@@ -6,7 +6,7 @@ WHAT IT IS
   `run(check, ...)` and prints through the shared `check()`; failures accumulate in
   `bench.smoke_support.FAILED` and the runner reports the exit code.
 
-    suites.py    every suite imports; task counts and ids are intact        run(check)
+    evals.py     the eval registry is intact and a fast loop subset passes   run(check)
     helpers.py   pure helpers, card digests, generated verb specs          run(check)
     index.py     the header index + map CLI                               run(check)
     docs.py      every path a document names exists                        run(check)

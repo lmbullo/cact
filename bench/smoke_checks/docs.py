@@ -26,10 +26,10 @@ INVARIANTS
     (`src/...` in `tui/README.md`), or as a suffix of any tracked path: headings and prose say
     `kernel/prelude.py` where the real path is `bench/agent/kernel/prelude.py`.
   - Trees in `_GENERATED` are excluded twice: a reference that points into one (`bench/ws/`,
-    `tui/node_modules/`) is skipped, and so is the walk that collects the paths. Those
-    directories are rebuilt on demand, absent in a fresh clone, and not part of the contract.
-    Committed fixtures are checked like any other path: they are graded input and a rename
-    there matters more than elsewhere.
+    `bench/evals/results/`, `bench/archive/results/`, `tui/node_modules/`) is skipped, and so is
+    the walk that collects the paths. Those directories are generated or append-only evidence,
+    absent in a fresh clone, and not part of the contract. Committed trees are checked like any
+    other path, including `bench/archive/legacy/`: a rename there is still a dead pointer.
   - The unique check compares whole paragraphs after whitespace normalisation and only above
     `_DUP_CHARS`, so a shared sentence (`You are the reader.`) or a shared code block is not a
     copy. It is exact: paraphrased duplication is a review call, not a gate.
@@ -53,7 +53,7 @@ _DUP_CHARS = 200
 # Generated or tool-managed trees: absent in a fresh clone, so a pointer into one may dangle.
 _GENERATED = frozenset({
     ".git", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".tmp", ".cache", "dist", "build", "ws",
+    ".tmp", ".cache", "dist", "build", "ws", "results",
 })
 _SPAN = re.compile(r"`([^`\n]+)`")
 _TRAILING = ".,;:"

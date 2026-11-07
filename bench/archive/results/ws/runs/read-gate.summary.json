@@ -1,0 +1,37 @@
+{
+  "tag": "read-gate",
+  "legacy": "none",
+  "status": "done",
+  "stop": "DONE",
+  "steps": 2,
+  "usage": {
+    "prompt_tokens": 3426,
+    "completion_tokens": 182,
+    "total_tokens": 3608,
+    "reasoning_tokens": 0,
+    "prompt_cache_hit_tokens": 2688,
+    "prompt_cache_miss_tokens": 738,
+    "local_hits": 0
+  },
+  "wall_s": 3.1,
+  "restarts": 0,
+  "timeouts": 0,
+  "verbs": {
+    "map": 0,
+    "read": 1,
+    "grep": 0,
+    "write": 0,
+    "edit": 0,
+    "run": 0,
+    "diff": 0,
+    "undo": 0,
+    "changes": 0,
+    "final_answer": 1
+  },
+  "changed": {
+    "added": [],
+    "modified": [],
+    "deleted": []
+  },
+  "check": null
+}

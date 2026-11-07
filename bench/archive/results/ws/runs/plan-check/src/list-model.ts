@@ -1,0 +1,68 @@
+import type { Task, TaskStatus } from "./types";
+
+/** Section order: live work first, then finished work; oldest first inside a section. */
+export const STATUS_ORDER: TaskStatus[] = [
+  "running",
+  "queued",
+  "done",
+  "partial",
+  "failed",
+  "cancelled",
+];
+
+function rank(task: Task): number {
+  const index = STATUS_ORDER.indexOf(task.status);
+  return index < 0 ? STATUS_ORDER.length : index;
+}
+
+export function orderTasks(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    const diff = rank(a) - rank(b);
+    return diff !== 0 ? diff : a.createdAt - b.createdAt;
+  });
+}
+
+/** Rows are labelled with the stable task id, never with a position that moves. */
+export function taskHandle(id: string): string {
+  return id;
+}
+
+export type ListRow =
+  | { kind: "section"; status: TaskStatus; count: number }
+  | { kind: "task"; task: Task };
+
+/** Flat render list: one header per status band, then that band's tasks. */
+export function buildRows(ordered: Task[]): ListRow[] {
+  const rows: ListRow[] = [];
+  for (const status of STATUS_ORDER) {
+    const group = ordered.filter((task) => task.status === status);
+    if (group.length === 0) continue;
+    rows.push({ kind: "section", status, count: group.length });
+    for (const task of group) rows.push({ kind: "task", task });
+  }
+  return rows;
+}
+
+/** Next task id when moving `delta` rows through the ordered list. */
+export function stepSelection(ordered: Task[], current: string | null, delta: number): string | null {
+  if (ordered.length === 0) return null;
+  const index = ordered.findIndex((task) => task.id === current);
+  const next = index < 0 ? 0 : (index + delta + ordered.length) % ordered.length;
+  return ordered[next]!.id;
+}
+
+/** Index of the selected task inside the flat row list, or -1. */
+export function selectedRowIndex(rows: ListRow[], selected: string | null): number {
+  if (!selected) return -1;
+  return rows.findIndex((row) => row.kind === "task" && row.task.id === selected);
+}
+
+/** First visible row so the selected task stays on screen. */
+export function scrollWindow(rowCount: number, budget: number, focus: number): { start: number; size: number } {
+  const size = Math.max(1, Math.min(rowCount, budget));
+  let start = Math.max(0, rowCount - size);
+  if (focus >= 0 && (focus < start || focus >= start + size)) {
+    start = Math.max(0, Math.min(focus - Math.floor(size / 2), rowCount - size));
+  }
+  return { start, size };
+}

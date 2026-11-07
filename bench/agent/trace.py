@@ -2,7 +2,9 @@
 
 WHAT IT IS
   One JSON object per line: one record per turn, plus a final `{"summary": true, ...}` record.
-  `bench/traces/<task>.<mode>.jsonl` is written by this class from every loop.
+  `Trace(path)` is the optional journal the archived CLI and the smoke tests pass to
+  `loop.run(...)`; the evals record a `CaseResult` row instead. `render()` turns one file back
+  into text.
 
 ENTRY POINTS
   Trace(path) -> .write(record) / .close()
@@ -10,8 +12,9 @@ ENTRY POINTS
                                                     `== stop=... steps=...` summary
 
 INVARIANTS
-  - The file is opened with "w": a trace is a new run, never appended to. `bench/traces/` is
-    committed evidence — add new runs, never rewrite old ones.
+  - The file is opened with "w": a trace is a new run, never appended to. The archived traces
+    under `bench/archive/results/traces/` are committed evidence — add new runs, never rewrite
+    old ones.
   - Records are written and flushed per turn, so a killed run still leaves readable evidence.
   - `worker.py` substitutes its own `EventTrace` with the same `write/close` interface; keep
     that duck type intact.

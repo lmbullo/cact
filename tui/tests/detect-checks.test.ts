@@ -59,6 +59,25 @@ test("a package-lock project runs its scripts through npm", () => {
   ]);
 });
 
+test("a lint script and a fixable format check join the cheap plan", () => {
+  const root = workspace();
+  writeFileSync(join(root, "package.json"),
+    JSON.stringify({ scripts: { lint: "eslint .", "format:check": "prettier --check ." } }));
+  writeFileSync(join(root, "bun.lock"), "");
+  expect(detectChecks(root, {})).toEqual([
+    { name: "lint", cmd: "bun run lint", cheap: true, scope: [] },
+    { name: "format", cmd: "bun run format:check", cheap: true, scope: [] },
+  ]);
+});
+
+test("a ruff.toml root adds a cheap lint check", () => {
+  const root = workspace();
+  writeFileSync(join(root, "ruff.toml"), "line-length = 100");
+  expect(detectChecks(root, {})).toEqual([
+    { name: "lint", cmd: "python3 -m ruff check .", cheap: true, scope: [] },
+  ]);
+});
+
 test("a bun project with tests/ but no test script uses bun test", () => {
   const root = workspace();
   writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));

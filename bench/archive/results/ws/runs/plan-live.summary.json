@@ -1,0 +1,39 @@
+{
+  "tag": "plan-live",
+  "legacy": "none",
+  "status": "done",
+  "stop": "DONE",
+  "steps": 11,
+  "usage": {
+    "prompt_tokens": 72922,
+    "completion_tokens": 2150,
+    "total_tokens": 75072,
+    "reasoning_tokens": 720,
+    "prompt_cache_hit_tokens": 63872,
+    "prompt_cache_miss_tokens": 9050,
+    "local_hits": 0
+  },
+  "wall_s": 32.2,
+  "restarts": 0,
+  "timeouts": 0,
+  "verbs": {
+    "map": 2,
+    "read": 11,
+    "grep": 0,
+    "write": 0,
+    "edit": 2,
+    "run": 1,
+    "diff": 1,
+    "undo": 0,
+    "changes": 0,
+    "final_answer": 1
+  },
+  "changed": {
+    "added": [],
+    "modified": [
+      "README.md"
+    ],
+    "deleted": []
+  },
+  "check": null
+}

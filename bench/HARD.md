@@ -10,7 +10,7 @@ same work cheaper, more reliable, and finishable under a latency budget.
 
 ## 1. Why the suite exists
 
-Every ablation in `bench/traces/sweep/` for the easy suites lands within one task of every
+Every ablation in `bench/archive/results/traces/sweep/` for the easy suites lands within one task of every
 other, including a bare loop. Those suites cannot tell you whether state cards, the journal, the
 check plan and batched commits are worth their complexity. `hard` answers that, and `--mode
 bare` is the control: one `python` tool, no helpers, no check plan.
@@ -22,15 +22,21 @@ bare` is the control: one `python` tool, no helpers, no check plan.
 | `H3_bigcsv` | four aggregates over 200k rows | exact answer |
 | `H4_refactor` | rename an API and a field across sixteen call-site modules, delete the old name | held-out tests |
 
-Held-out tests live in `bench/hard_hidden/`, outside the workspace, and run through
-`bench/hard_runner.py`. The agent sees pass/fail and failing test names (the `[check]` line with
+Held-out tests live in `bench/archive/legacy/hard_hidden/`, outside the workspace, and run through
+`bench/archive/legacy/hard_runner.py`. The agent sees pass/fail and failing test names (the `[check]` line with
 `--health on`) but cannot read or edit them. `H3_bigcsv` regenerates its CSV on import; it is
 gitignored.
 
+The numbers below were produced by the retired CLI before it was archived:
+
 ```bash
-DEEPSEEK_API_KEY=... python3 bench/run.py --suite hard --mode state --tasks all --steps 40
-DEEPSEEK_API_KEY=... python3 bench/run.py --suite hard --mode bare  --tasks all --steps 40
+python3 bench/archive/legacy/run.py --suite hard --mode state --tasks all --steps 40
+python3 bench/archive/legacy/run.py --suite hard --mode bare  --tasks all --steps 40
 ```
+
+That CLI is a read-only record, not a gate: after the move its modules still import the
+pre-archive `bench.<suite>` names, so it does not run in place. Re-run it from the commit before
+the archive move if you need to reproduce a row. The current gate is `python3 bench/eval.py`.
 
 ## 2. Measured baseline
 
@@ -112,15 +118,18 @@ Do not reintroduce these; each was tried and measured.
 
 ## 5. Reproducing and extending
 
-Per-run summaries are in `bench/traces/hard/` (`state-r*.json`, `bare-r*.json`,
-`*-wall15.json`, `*-wall20.json`); per-turn journals are `bench/traces/H*.{state,bare}.jsonl`.
+Per-run summaries are in `bench/archive/results/traces/hard/` (`state-r*.json`, `bare-r*.json`,
+`*-wall15.json`, `*-wall20.json`); per-turn journals are `bench/archive/results/traces/H*.{state,bare}.jsonl`.
 Traces are append-only: add a file, never rewrite one.
+
+This suite is a record. New behavior is measured by `bench/evals/` (scripted loop contracts, then
+`--live` failure cases) and its rows land in `bench/evals/results/`; do not append to the archived
+traces.
 
 When you change the action space, the check plan, or the observation shape:
 
 1. `python3 bench/smoke.py` — the offline contract gate.
-2. Run both modes on `hard` with the same `--steps`, temperature and effort; record new files
-   under `traces/hard/`.
-3. Compare steps, tokens, cell errors and finishes, not just pass/fail. This suite is saturated
-   on pass/fail for this model; the signal is cost and completion.
-4. Update the tables here only with a run you can name by file.
+2. `python3 bench/eval.py` — the loop contracts, then the live suite when a key is available.
+3. Compare steps, tokens, cell errors and finishes, not just pass/fail. Pass/fail alone is
+   saturated for this model; the signal is cost and completion.
+4. Update the tables here only with a run you can name by file, and only as history.

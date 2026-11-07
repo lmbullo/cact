@@ -5,17 +5,18 @@ WHAT IT IS
   `MODE` is read from `CODE_TUI_MODE` at import (`state` by default; also `tool`, `repl`).
 
 ENTRY POINTS
-  CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY ... production constants
+  CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY / AUTONOMY ... constants
   budget(steps, wall_s, output=MAX_OUTPUT) -> Budget         clamped to MAX_OUTPUT
   build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
         goal_stops, mode=MODE, health=None, verifier=None) -> StateLoop | ToolLoop | ReplLoop
 
 INVARIANTS
-  - `build` is the only construction site in production; the benchmark CLI constructs loops
-    directly (bench/run.py) because it needs per-suite wiring.
+  - `build` is the only construction site in production; the evals construct loops through
+    `bench/evals/loops.py::run_loop` because a case wires its own levers (skeptic, subagent,
+    docs, autonomy, budgets).
   - Unknown `mode` falls through to ReplLoop, so a typo degrades to the simplest loop instead
     of crashing a worker.
-  - Constants are TUI-facing. Benchmark defaults live in loop.Budget and run.py flags.
+  - Constants are TUI-facing. Eval and test defaults live in `loop.Budget` and each case.
   - COMPACT_AT_TOKENS (85% of the 1M window) is what StateLoop compares the provider's real
     prompt token count against; OBS_CHARS=0 means the state card decides, not a char cap.
   - `verifier` (check_plan.Verifier) is the production wiring: it owns the goal, the cheap
@@ -26,6 +27,7 @@ WHERE TO CHANGE
   Production loop selection ....... build + MODE
   Production budgets ............... budget, MAX_OUTPUT
   Compaction threshold ............. CONTEXT_WINDOW, COMPACT_AT, COMPACT_AT_TOKENS
+  The unattended gate .............. AUTONOMY (CODE_TUI_AUTONOMY=0 turns it off)
   TUI observation/history policy ... OBS_CHARS, HISTORY (passed straight through to the loop)
 """
 from __future__ import annotations
@@ -48,6 +50,9 @@ OBS_CHARS = 0
 HISTORY = "action"
 
 MODE = os.environ.get("CODE_TUI_MODE", "state")
+# Fire-and-forget is the production contract: unattended, no human answer, no same-session
+# repair. The gate is on by default; a flag can turn it off for an interactive experiment.
+AUTONOMY = os.environ.get("CODE_TUI_AUTONOMY", "1") != "0"
 
 
 def budget(steps: int, wall_s: float, output: int = MAX_OUTPUT) -> Budget:
@@ -70,6 +75,11 @@ def build(
     mode: str = MODE,
     health: Any = None,
     verifier: Any = None,
+    autonomy: bool = AUTONOMY,
+    subagent: Any = None,
+    skeptic: Any = None,
+    extra_tools: list[dict] | None = None,
+    docs: Any = None,
 ):
     """The one production loop factory: `mode` picks StateLoop | ToolLoop | ReplLoop."""
     if mode == "state":
@@ -85,6 +95,11 @@ def build(
             health=health,
             verifier=verifier,
             context_budget=COMPACT_AT_TOKENS,
+            autonomy=autonomy,
+            subagent=subagent,
+            skeptic=skeptic,
+            extra_tools=extra_tools,
+            docs=docs,
         )
     if mode == "tool":
         return ToolLoop(
@@ -98,6 +113,11 @@ def build(
             obs_chars=obs_chars,
             health=health,
             verifier=verifier,
+            autonomy=autonomy,
+            subagent=subagent,
+            skeptic=skeptic,
+            extra_tools=extra_tools,
+            docs=docs,
         )
     return ReplLoop(
         client,

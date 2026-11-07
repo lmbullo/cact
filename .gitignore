@@ -12,3 +12,7 @@ bench/ws/
 
 # generated hard-suite artifact (200k rows)
 bench/hard_fixtures/H3_bigcsv/
+bench/archive/legacy/hard_fixtures/H3_bigcsv/
+
+# archived scratch workspaces from the retired suites
+bench/archive/results/tmp/

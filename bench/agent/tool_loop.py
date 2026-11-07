@@ -2,11 +2,10 @@
 
 WHAT IT IS
   The turn machine the production loop extends. The model gets the typed tools generated
-  from `verbs.VERBS` (guide/map/read/session_diff/search/recall/outline/edit/splice/write/apply/exec/git)
-  plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is dispatched to
-  `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return the same
-  `Cell`; a `Verifier` (check_plan.py) decides whether the task may finish and what the cheap
-  `[check]` line says.
+  from `verbs.VERBS` plus `PYTHON_TOOL`, the persistent-kernel escape hatch. A call is
+  dispatched to `Kernel.call(name, args)`; the python call to `Kernel.run(code)`. Both return
+  the same `Cell`; a `Verifier` (check_plan.py) decides whether the task may finish and what
+  the cheap `[check]` line says.
 
   One `run()` is a sequence of *turns*; one turn is one reply with zero or more tool calls.
   The machine keeps four explicit pieces of state instead of ad-hoc locals:
@@ -20,12 +19,14 @@ ENTRY POINTS
   tools.TYPE_TOOLS .. the typed specs generated from verbs.VERBS (the default set)
   TOOL_RULES ... system prompt: typed tools for I/O and mutation, python for computation
   Stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, TRUNCATED,
-                   BAD_ARGS, LLM_FAILED (module constants, collected in STOPS)
+                   BAD_ARGS, LLM_FAILED, TOKEN_LIMIT, SKEPTIC_UNMET, NEEDS_INPUT
+                   (module constants, collected in STOPS)
   FinishState()  .stage(v) / .accept(v) / .clear() / .staged / .terminal
   CallRecord(index, name, call_id) .. .code/.args/.observation/.runs/.reads/.notice/.stop
   TurnOutcome(stop, final, end)
   ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
-           health, verifier, wrap_up_at=0.8)
+           health, verifier, wrap_up_at=0.8, extra_tools=None, subagent=None,
+           skeptic=None, autonomy=False, docs=None)
     .run(task_id, prompt, trace) -> RunResult
   Hooks subclasses override: `_reply(messages, rec, resp, finish, tally, seen, step)`
     (reply -> TurnOutcome; ReplLoop's fenced-block dialect is the only other implementation),
@@ -84,13 +85,14 @@ WHERE TO CHANGE
   Rules and the python escape hatch .... TOOL_RULES, PYTHON_TOOL
   Typed tool names, schemas, summaries . verbs.VERBS (tools.py follows); `_dispatch` routes
                                           python to Kernel.run and every typed name to Kernel.call
-  When a task counts as done ........... the `verifier` passed in by run.py / worker.py (or
-                                          `goal=` for a bare callable)
+  When a task counts as done ........... the `verifier` passed in by the caller (worker.py or
+                                          an eval case), or `goal=` for a bare callable
   The cheap check in the card .......... `_refresh_health`, `last_check`, check_plan.Verifier
 """
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -99,6 +101,8 @@ from .check_run import Check, evaluate
 from .kernel import Kernel
 from .llm import Client, LLMError
 from .loop import Budget, RunResult, _usage_add
+from .docs import DOCS_TOOL
+from .subagent import DELEGATE_TOOL
 from .tools import TOOL_NAMES, TYPE_TOOLS
 from .verbs import VERBS
 
@@ -112,8 +116,11 @@ GOAL_UNMET = "GOAL_UNMET"        # a finish was rejected; the run continues
 TRUNCATED = "TRUNCATED"          # the reply was cut off; nothing ran
 BAD_ARGS = "BAD_ARGS"            # the call arguments were unusable; nothing ran
 LLM_FAILED = "LLM_FAILED"        # the primary model call raised LLMError; the run stops
+TOKEN_LIMIT = "TOKEN_LIMIT"      # Budget.max_total_tokens exhausted; the run stops
+SKEPTIC_UNMET = "SKEPTIC_UNMET"  # the skeptic found a gap; the run continues
+NEEDS_INPUT = "NEEDS_INPUT"      # an unattended finish asked a human; the run continues
 STOPS = (DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, TRUNCATED, BAD_ARGS,
-         LLM_FAILED)
+         LLM_FAILED, TOKEN_LIMIT, SKEPTIC_UNMET, NEEDS_INPUT)
 
 PYTHON_TOOL = {
     "type": "function",
@@ -138,7 +145,7 @@ PYTHON_TOOL = {
     },
 }
 
-TOOL_RULES = """You act by calling tools. The typed tools (guide, map, read, session_diff, search, recall, outline, edit, splice, write, delete, mkdir, apply, exec, git) execute against the workspace and return structured observations. A typed observation has `[observe]`/`[page]` (`shown/total/next/unit/has_more/complete`) and `[data]`; the card does not clip it, so trust `page.complete` rather than a prose tail. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
+TOOL_RULES = """You act by calling tools. The typed tools (guide, skill, map, read, session_diff, search, recall, outline, edit, splice, write, delete, mkdir, apply, exec, git) execute against the workspace and return structured observations. A typed observation has `[observe]`/`[page]` (`shown/total/next/unit/has_more/complete`) and `[data]`; the card does not clip it, so trust `page.complete` rather than a prose tail. When an API or library behavior is uncertain, call docs(url) to read one documentation page instead of guessing; it returns clean text with a character budget. When a task names a project procedure, call skill(name) to load it from .agent/skills/ instead of inventing the steps. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
 
 For "which module owns this?", use guide(query) (ranked rows; total/next are truthful, default limit 10) or guide(path) for one module's full header. For files, use map, outline, read and search. map(path, include='*.md') lists files with line counts; a literal include is an exact relative path and a glob matches full path or basename, skipping .gitignore/generated trees (use it instead of ls/find through exec); outline(path) returns headings and definitions with line numbers (Markdown sections, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS template literals, CSS section comments), so read a long file by its structure instead of guessing. read takes a path or a list and a line range (start/end); page.next is a replayable argument (`{"start": N}`), has_more means the file continues, truncated only means the default page limit cut it, and a range already shown this session returns a short pointer (read(..., repeat=True) re-delivers it). search takes a pattern, one path or a list, include='*.py' to filter, context=N for merged surrounding lines, and ignore_case; its line text is exact, and broad context returns locators (`text_elided`) instead of a silently digested blob. Search is regex by default, so `a|b` is one call; pass regex=False for a literal substring. They return line numbers and handles, so you can go straight to the range you need.
 
@@ -259,6 +266,19 @@ class Tally:
     llm_calls: int = 0
 
 
+_ASK = re.compile(
+    r"\b(would you like|do you want|should i\b|shall i\b|please (confirm|choose|tell me)|"
+    r"let me know|can you (confirm|clarify)|awaiting (your|input)|which (one|option) "
+    r"(should|do)|i need (your|more) (input|information|clarification))",
+    re.IGNORECASE,
+)
+
+
+def _asks_for_input(text: str) -> bool:
+    """True when a proposed finish asks a human to decide; unattended runs must choose."""
+    return bool(text) and bool(_ASK.search(text))
+
+
 class ToolLoop:
     """The turn machine: tool calls -> kernel cells -> paired tool results -> a staged finish.
 
@@ -295,6 +315,11 @@ class ToolLoop:
         health: Any = None,
         verifier: Any = None,
         wrap_up_at: float | None = WRAP_UP_AT,
+        extra_tools: list[dict] | None = None,
+        subagent: Any = None,
+        skeptic: Any = None,
+        autonomy: bool = False,
+        docs: Any = None,
     ) -> None:
         self.client = client
         self.kernel = kernel
@@ -304,7 +329,19 @@ class ToolLoop:
             allow_run = bool(getattr(kernel, "allow_run", True))
             tools = [PYTHON_TOOL, *[spec for spec in TYPE_TOOLS
                                     if allow_run or not VERBS[spec["function"]["name"]].get("requires_run")]]
+        tools = list(tools)
+        if extra_tools:
+            tools.extend(extra_tools)
+        if subagent is not None:
+            tools.append(DELEGATE_TOOL)
+        if docs is not None:
+            tools.append(DOCS_TOOL)
         self.tools = tools
+        self.extra_names = {spec["function"]["name"] for spec in (extra_tools or [])}
+        self.subagent = subagent
+        self.skeptic = skeptic
+        self.autonomy = autonomy
+        self.docs = docs
         self.goal = goal
         self.goal_label = goal_label
         self.goal_stops = goal_stops
@@ -349,6 +386,9 @@ class ToolLoop:
         """Hook: initialise per-run policy state (ReplLoop's prefix drift, for example)."""
         self._last_turn = False
         self._wrapped = False
+        self._task_prompt = str(messages[-1].get("content") or "") if messages else ""
+        self._skeptic_key: str | None = None
+        self._sub_usage: dict = {}
 
     def _before_turn(self, messages: list[dict], tally: Tally) -> None:
         """Add the budget reminders every loop needs: wrap-up, then one last-turn notice.
@@ -415,6 +455,14 @@ class ToolLoop:
                 candidate = finish.staged
         else:
             candidate = text
+        if self.autonomy and _asks_for_input(candidate):
+            notice = ("[observation] this is an unattended, fire-and-forget task: no human "
+                      "will answer. Choose a defensible default, make the change, verify the "
+                      "observable behavior, and report the choice. Do not ask a question.")
+            messages.append({"role": "user", "content": notice})
+            rec["notice"] = notice[:2000]
+            finish.clear()
+            return TurnOutcome(stop=NEEDS_INPUT)
         met, check = self._goal_state()
         if self._gated and not met:
             notice = self._reject(check, "You finished without a passing check")
@@ -422,8 +470,39 @@ class ToolLoop:
             rec["notice"] = notice[:2000]
             finish.clear()
             return TurnOutcome(stop=GOAL_UNMET)
+        if self.skeptic is not None:
+            verdict = self._skeptic_review(candidate, check)
+            if verdict is not None and not verdict.ok:
+                notice = ("[observation] a read-only skeptic reviewed the finish and found a gap: "
+                          + verdict.text + "\nFix the gap and verify again; do not accept the "
+                          "current evidence as complete.")
+                messages.append({"role": "user", "content": notice})
+                rec["notice"] = notice[:2000]
+                finish.clear()
+                return TurnOutcome(stop=SKEPTIC_UNMET)
         finish.accept(candidate)
         return TurnOutcome(stop=DONE, final=candidate, end=True)
+
+    def _skeptic_review(self, candidate: str, check):
+        """One cached review per evidence digest; returns None when there is nothing to review."""
+        if not candidate:
+            return None
+        import hashlib
+
+        deltas = getattr(self, "deltas", {}) or {}
+        diff = "\n".join(str(deltas[path]) for path in sorted(deltas) if deltas[path])[:12000]
+        check_text = check.text() if check is not None else (
+            self.last_check.text() if self.last_check is not None else "")
+        key = hashlib.sha256(
+            (candidate + "\x00" + diff + "\x00" + ",".join(sorted(self.changed))).encode()
+        ).hexdigest()
+        if key == self._skeptic_key:
+            return None
+        self._skeptic_key = key
+        verdict = self.skeptic.review(self._task_prompt, candidate, diff=diff,
+                                      check_text=check_text, changed=sorted(self.changed))
+        _usage_add(self._sub_usage, verdict.usage)
+        return verdict
 
     def _answer_calls(self, messages: list[dict], rec: dict, tool_calls: list[dict],
                       finish_reason, finish: FinishState, tally: Tally, seen: set[str],
@@ -469,7 +548,8 @@ class ToolLoop:
     def _dispatch(self, fn: dict, name: str, record: CallRecord, finish_reason,
                   finish: FinishState, tally: Tally, seen: set[str], step: int) -> str:
         """Run one tool call and return the text of its paired tool message."""
-        if name != "python" and name not in TOOL_NAMES:
+        if name != "python" and name not in TOOL_NAMES and name not in self.extra_names \
+                and name not in ("delegate", "docs"):
             record.notice = (f"[observation] unknown tool {name!r}; use the typed tools or python. "
                              "help() lists the available verbs.")
             return record.notice
@@ -487,6 +567,11 @@ class ToolLoop:
             record.stop = BAD_ARGS
             record.notice = "[observation] arguments must be a JSON object. Nothing ran."
             return record.notice
+
+        if name == "delegate":
+            return self._delegate(args, record, tally)
+        if name == "docs":
+            return self._docs(args, record, tally)
 
         if name == "python":
             code = args.get("code")
@@ -552,6 +637,53 @@ class ToolLoop:
         if self.goal_stops and self._gated and cell.mutated and self._goal_state()[0]:
             finish.accept(self.goal_label)
         return obs
+
+    def _delegate(self, args: dict, record: CallRecord, tally: Tally) -> str:
+        """Run the read-only child and return one compact observation; add its usage."""
+        if self.subagent is None:
+            record.stop = BAD_ARGS
+            return "[observation] delegation is not enabled for this run."
+        prompt = str(args.get("prompt") or "").strip()
+        if not prompt:
+            record.stop = BAD_ARGS
+            return "[observation] delegate(prompt=...) needs the question to answer. Nothing ran."
+        task = str(args.get("task") or "delegate")
+        tally.calls += 1
+        result = self.subagent.run(task, prompt)
+        _usage_add(self._sub_usage, result.usage)
+        text = result.as_text()
+        record.observation = {"tool": "delegate", "stop": result.stop,
+                              "steps": result.steps, "usage": result.usage}
+        record.notice = text[:2000]
+        if not result.ok:
+            tally.errors += 1
+        return text
+
+    def _docs(self, args: dict, record: CallRecord, tally: Tally) -> str:
+        """Fetch one documentation page as a parent-side tool; no kernel and no shell."""
+        if self.docs is None:
+            record.stop = BAD_ARGS
+            return "[observation] docs() is not enabled for this run."
+        url = str(args.get("url") or "").strip()
+        if not url:
+            record.stop = BAD_ARGS
+            return "[observation] docs(url=...) needs a URL. Nothing ran."
+        tally.calls += 1
+        value = self.docs.fetch(url, int(args.get("max_chars") or 12_000))
+        record.observation = {"tool": "docs", **{k: v for k, v in value.items()
+                                                  if k in ("ok", "url", "title", "chars",
+                                                           "total_chars", "truncated", "error")}}
+        if not value.get("ok"):
+            tally.errors += 1
+            text = "[observation] docs failed: " + str((value.get("error") or {}).get("message"))
+            record.notice = text[:2000]
+            return text
+        body = str(value.get("text") or "")
+        text = (f"[docs] {value.get('title') or url} ({value.get('url')})\n"
+                f"{body}\n[page] chars={value.get('chars')}/{value.get('total_chars')} "
+                f"truncated={value.get('truncated')}; pass max_chars for more.")
+        record.notice = text[:2000]
+        return text
 
     def _check_cache(self) -> dict:
         return self.verifier.cache() if self.verifier is not None else self.check_cache
@@ -657,6 +789,11 @@ class ToolLoop:
                 tally.llm_calls += 1
                 resp = self.client.complete(messages, self.tools, b.max_output_tokens)
                 _usage_add(usage, resp["usage"])
+                if b.max_total_tokens and (int(usage.get("total_tokens") or 0)
+                                           + int(self._sub_usage.get("total_tokens") or 0)) >= b.max_total_tokens:
+                    stop = TOKEN_LIMIT
+                    final = finish.terminal or finish.staged or ""
+                    break
                 cu = resp.get("usage") or {}
                 hit = int(cu.get("prompt_cache_hit_tokens") or 0)
                 miss = int(cu.get("prompt_cache_miss_tokens") or 0)
@@ -682,6 +819,7 @@ class ToolLoop:
             error = f"{type(exc).__name__}: {exc}"
             final = final or finish.terminal or finish.staged or ""
         finally:
+            _usage_add(usage, self._sub_usage)
             wall_ms = (time.perf_counter() - t0) * 1000.0
             if trace:
                 trace.write({

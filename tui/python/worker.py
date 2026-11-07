@@ -37,6 +37,11 @@ INVARIANTS
     summary -> partial, anything else -> failed. Exit 0 only for done.
   - A missing DEEPSEEK_API_KEY or an empty prompt fails fast with NO_API_KEY/EMPTY_PROMPT
     rather than burning a kernel.
+  - Fire-and-forget is the contract: `config.AUTONOMY` rejects a finish that asks a human,
+    `docs(url)` reads a documentation page parent-side (no kernel network), and
+    `CODE_TUI_SUBAGENTS`/`CODE_TUI_SKEPTIC`/`CODE_TUI_TOOLS` are opt-in experiment levers.
+    The check plan now includes the project's lint/format scripts, so a correct but dirty
+    tree is not done.
   - A fire-and-forget task may be asked to commit. The worker supplies a default git identity
     through GIT_AUTHOR_*/GIT_COMMITTER_* (CODE_TUI_GIT_NAME / CODE_TUI_GIT_EMAIL override),
     and Kernel.start forwards those four variables to exec()/run() children. It never writes
@@ -73,7 +78,11 @@ from bench.agent.check_plan import CheckSpec, Verifier  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
 from bench.agent.repl import REPL_RULES, RUN_NOTE  # noqa: E402
+from bench.agent import custom  # noqa: E402
+from bench.agent.docs import DocsClient  # noqa: E402
 from bench.agent.state_loop import STATE_RULES  # noqa: E402
+from bench.agent.subagent import Subagent  # noqa: E402
+from bench.agent.skeptic import Skeptic  # noqa: E402
 from bench.agent.tool_loop import TOOL_RULES  # noqa: E402
 
 PREFIX = "@@TUI@@"
@@ -277,6 +286,14 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop_kernel)
 
     result = None
+    manifest = os.environ.get("CODE_TUI_TOOLS", "").strip()
+    extra = custom.load(manifest) if manifest else []
+    subagent = (Subagent(client, workspace)
+                if os.environ.get("CODE_TUI_SUBAGENTS") == "1" else None)
+    skeptic = (Skeptic(client, workspace)
+               if os.environ.get("CODE_TUI_SKEPTIC") == "1" else None)
+    docs = (DocsClient(cache_dir=state_dir(workspace) / "docs")
+            if os.environ.get("CODE_TUI_DOCS", "1") != "0" else None)
     try:
         kernel = StreamingKernel(
             workspace,
@@ -286,6 +303,8 @@ def main() -> int:
             allow_run=allow_run,
             allow_shell=config.MODE not in ("state", "tool"),
             supervise=os.environ.get("CODE_TUI_LEGACY_TIMEOUT") != "1",
+            extra_verbs=custom.verbs(extra),
+            extra_prelude=custom.prelude(extra),
             emit_event=emit,
         )
         loop = config.build(
@@ -300,6 +319,11 @@ def main() -> int:
             goal_stops=False,
             mode=config.MODE,
             verifier=verifier,
+            autonomy=config.AUTONOMY,
+            subagent=subagent,
+            skeptic=skeptic,
+            extra_tools=custom.specs(extra),
+            docs=docs,
         )
         original = prompt
         brief = history_brief(workspace)
