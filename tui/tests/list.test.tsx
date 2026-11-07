@@ -95,21 +95,23 @@ test("arrow keys move the arrow marker and enter opens the selected task", async
   expect(frame).toContain("running");
   expect(frame).toContain("queued");
   expect(frame).toContain("done");
-  // The first row is marked by an arrow by default.
-  expect(frame.split("\n").find((line) => line.includes("aaaa1111"))).toContain("›");
-  expect(frame.split("\n").find((line) => line.includes("aaaa1111"))).toContain("←");
+  // The selected row carries the `›` marker and its short handle. The section above it
+  // already says the status, so the row does not repeat it and has no second marker.
+  const runningRow = frame.split("\n").find((line) => line.includes("aaaa1111"))!;
+  expect(runningRow).toContain("› #aaaa1111");
+  expect(runningRow).not.toContain("←");
 
   const press = async (direction: "up" | "down", id: string) => {
     mockInput.pressArrow(direction);
     // The keyboard event mutates state synchronously; let React flush before capturing.
     await new Promise((resolve) => setTimeout(resolve, 50));
     await flush();
-    expect(captureCharFrame().split("\n").find((line) => line.includes(id))).toContain("›");
+    expect(captureCharFrame().split("\n").find((line) => line.includes(id))).toContain(`› #${id}`);
   };
 
   await press("down", "bbbb2222");
   frame = captureCharFrame();
-  expect(frame.split("\n").find((line) => line.includes("bbbb2222"))).toContain("←");
+  expect(frame.split("\n").find((line) => line.includes("bbbb2222"))).toContain("› #bbbb2222");
   expect(frame.split("\n").find((line) => line.includes("aaaa1111"))).not.toContain("›");
 
   await press("down", "cccc3333");

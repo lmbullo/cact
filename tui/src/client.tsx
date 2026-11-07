@@ -271,7 +271,6 @@ export function App({
   const listRows = useMemo(() => buildRows(ordered), [ordered]);
   const selectedTask = ordered.find((task) => task.id === selected) ?? null;
   const runningCount = ordered.filter((task) => task.status === "running").length;
-  const queuedCount = ordered.filter((task) => task.status === "queued").length;
 
   // A live clock, but only while a row can actually use it: an idle board must not re-render.
   const live = runningCount > 0;
@@ -477,8 +476,9 @@ export function App({
     return () => clearTimeout(frame);
   }, [input, width, promptRows, measurePrompt]);
 
-  // Layout is always: [log header, log only] / content / rule / prompt / rule. Only the
-  // content pane swaps between the board and a run log; the prompt box never does.
+  // Layout is always: [log header, log only] / content / hairline / prompt. Only the
+  // content pane swaps between the board and a run log; the prompt box never does. There
+  // is no background fill: the terminal's own colours show through the whole screen.
   const ruleWidth = Math.max(0, width - 1);
 
   const note = !connected
@@ -498,7 +498,12 @@ export function App({
       ? ` ${Math.min(promptRow + 1, PROMPT_MAX_ROWS)}/${PROMPT_MAX_ROWS}`
       : "";
 
-  const rowBudget = Math.max(1, height - 3 - promptHeight);
+  // Top bar, the breath under it, the hairline, the prompt, and the log's status line
+  // when it is showing.
+  const rowBudget = Math.max(
+    1,
+    height - 3 - promptHeight - (view === "log" && selectedTask ? 1 : 0),
+  );
   const focusRow = selectedRowIndex(listRows, selected);
   const { start: winStart, size: winSize } = scrollWindow(listRows.length, rowBudget, focusRow);
   const visible = listRows.slice(winStart, winStart + winSize);
@@ -565,10 +570,11 @@ export function App({
     </box>
   );
 
-  // Same rule above the prompt on both views: it is what carries the status note.
+  // The one hairline, above the prompt on both views: it carries the status note and, when
+  // the prompt has scrolled internally, the cursor row.
   const ruleAbove = (
     <box style={{ height: 1, flexShrink: 0 }}>
-      <Rule width={ruleWidth} note={note} />
+      <Rule width={ruleWidth} note={`${note}${overflow}`} />
     </box>
   );
 
@@ -586,7 +592,7 @@ export function App({
               <text>{" "}</text>
             </box>
           ) : row.kind === "section" ? (
-            <SectionHeader key={`section:${row.status}`} status={row.status} count={row.count} width={width} />
+            <SectionHeader key={`section:${row.status}`} status={row.status} count={row.count} />
           ) : (
             <TaskRow
               key={`task:${row.task.id}`}
@@ -603,24 +609,21 @@ export function App({
   );
 
   return (
-    <box style={{ width: "100%", height: "100%", flexDirection: "column", backgroundColor: C.bg }}>
+    <box style={{ width: "100%", height: "100%", flexDirection: "column" }}>
       <TopBar
         workspace={workspace}
         model={server?.model}
         effort={server?.effort}
         running={runningCount}
-        queued={queuedCount}
         total={ordered.length}
         connected={connected}
         width={width}
       />
+      <box style={{ height: 1, flexShrink: 0 }} />
       {headerBar}
       {contentPane}
       {ruleAbove}
       {promptBox}
-      <box style={{ height: 1, flexShrink: 0 }}>
-        <Rule width={ruleWidth} note={overflow} />
-      </box>
     </box>
   );
 }

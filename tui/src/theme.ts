@@ -7,7 +7,9 @@
  *  `oneLine`, `lineCount`, `toolArgs`, `wrapText`). No JSX, no state, no I/O.
  *
  * ENTRY POINTS
- *  C                        RGBA palette; explicit hex so the host terminal scheme cannot change it
+ *  C                        RGBA palette; explicit hex, so the host terminal scheme cannot change
+ *                           the ink. There is no background role: the terminal's own colour is
+ *                           the ground, and nothing in the app paints over it.
  *  STATUS                   TaskStatus -> {word, mark, color}; one word and one dot per row
  *  PROMPT_MAX_ROWS          how tall the prompt grows before it scrolls internally
  *  clip(text, width)        collapse to one line and ellipsize to a width
@@ -21,9 +23,11 @@
  * INVARIANTS
  *  - Pure functions only: a view may call them in render, and they are cheap enough for that.
  *  - Palette values are hex literals, never ansi() slots (see the README's TUI contract).
- *  - Colour is the exception, not the decoration: `accent` for the brand, the cursor and the
- *    selection arrow; the three status hues for a dot or a single word; everything else is
- *    the grey ramp (`text` -> `dim` -> `faint` -> `quiet`) so prose stays readable and flat.
+ *  - No background colour anywhere: the screen is drawn on whatever the terminal is set to,
+ *    so a light theme, a dark theme or a wallpaper-tinted one all read the same way.
+ *  - Colour is the exception, not the decoration: `accent` for the brand, the prompt cursor
+ *    and the selection marker; the three status hues for a dot or a single word; everything
+ *    else is the grey ramp (`text` -> `dim` -> `faint` -> `quiet`) so prose stays readable.
  *  - `clip` always collapses whitespace first, so a multi-line payload never breaks a row.
  *  - `wrapText` never loses a line: it only breaks long ones, and past `SUMMARY_MAX_LINES`
  *    it reports the overflow instead of dropping it silently.
@@ -40,18 +44,16 @@ import { RGBA } from "@opentui/core";
 import type { TaskStatus } from "./types";
 
 /**
- * Editorial dark palette: one warm paper grey for prose, a four-step grey ramp for
- * everything structural, and three low-saturation hues used only on a dot or a word.
- * Explicit hex values rather than ansi() slots, so the app keeps the same look no matter
- * how the host terminal's own scheme is configured.
+ * Editorial palette: one warm paper grey for prose, a four-step grey ramp for everything
+ * structural, and three low-saturation hues used only on a dot or a word. Explicit hex values
+ * rather than ansi() slots, so the ink reads the same whatever the host terminal's scheme is.
+ * There is deliberately no background role: the terminal's colour is the ground.
  */
 const hex = (value: string): RGBA => RGBA.fromHex(value);
 
 /** The palette, one named role per colour; never a raw hex at a call site. */
 export const C = {
-  bg: hex("#1d2021"), // near-black warm ground; the whole screen rests on it
-  surface: hex("#282828"), // the one raised surface, if a view ever needs one
-  rule: hex("#2f3336"), // hairlines: present, never loud
+  rule: hex("#3c3f41"), // the single hairline above the prompt
   text: hex("#d5c4a1"), // body ink, warm paper
   dim: hex("#bdae93"), // secondary ink: prompt text on a row, log arguments
   faint: hex("#928374"), // tertiary ink: metadata, hints, counts

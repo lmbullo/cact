@@ -22,7 +22,7 @@
  *  - A turn event is invisible unless it carries a `notice`: that is the only explanation of
  *    a rejected or staged finish the user gets, so it must never be dropped.
  *  - An unknown kind still prints one word (`? kind`), never the payload it carries.
- *  - No row here contains `─`: the log's only rules are the two the prompt box owns.
+ *  - No row here contains `─`: the log's only rule is the one hairline the prompt box owns.
  *
  * WHERE TO CHANGE
  *  A new event kind .................... EventView's kind switch + types.ts

@@ -66,58 +66,71 @@ additionally `chdir`s into it.
 
 ## 3. Board contract
 
-One row per task: id, state as a single lowercase word, live `steps · tokens` when the task
-has them, wall time on the right, and the prompt. Counters come from turn events
-(`Task.progress`), so a running row moves before the final answer; a finished row falls back
-to the final `steps`/`usage` counters and its recorded span. Row id is `t-<base36 timestamp>-<5 hex>`.
+There is no background colour anywhere. The app draws on whatever the terminal is set to — dark,
+light, translucent — and only the ink is fixed. The screen is a masthead, the task sections, one
+hairline and the prompt; nothing is boxed, nothing is filled.
 
-The top bar is the same on both screens: a `▌ code` brand, the workspace with `$HOME`
-shortened to `~`, then the model, effort and live counts on the right. It reads `offline`
-in red while the socket is down and `idle` when the board is empty.
+One row per task: a `›` selection marker, the task's short handle (`#4f7c1`), the prompt, then
+right-aligned telemetry — live `steps · tokens` when the task has them, and the wall time. A row
+whose task recorded errors appends `N err` in clay after the time. Counters come from turn events
+(`Task.progress`), so a running row moves before the final answer; a finished row falls back to
+the final `steps`/`usage` counters and its recorded span. Row id is
+`t-<base36 timestamp>-<5 hex>`; the row shows only its last segment (`#4f7c1`) because the
+timestamp half is already implied by the order. The full id stays in `tasks/<id>.json` and
+`GET /api/tasks`.
+
+The masthead is the same on both screens: a `▌ code` brand, the workspace with `$HOME`
+shortened to `~`, then the model, effort and the running count on the right. It reads `offline`
+in red while the socket is down and `idle` when the board is empty. One blank row follows it, so
+the list starts with air rather than against a bar.
 
 ```
- ▌ code  ~/some/project                      deepseek-flash · low · 1 running · 1 queue
- ● running ──────────────────────────────────────────────────────────────────────── 1
- › t-m3k9a1x2-4f7c1 running add a retry to the fetch helper   3 steps · 4210 tok  11s ←
+ ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
- ○ queue ─────────────────────────────────────────────────────────────────────────── 1
-   t-m3k9b7c4-1a9de queue   write tests for the parser
+ ● running  1
+ › #4f7c1  add a retry to the fetch helper            3 steps · 4210 tok  11s
 
- ✓ done ──────────────────────────────────────────────────────────────────────────── 1
-   t-m3k9f5g6-0c4aa done    rename the config loader                                15s
-───────────────────────────────────────────────────────────────────────────────────────
+ ○ queue  1
+   #1a9de  write tests for the parser
+
+ ✓ done  1
+   #0c4aa  rename the config loader                                  15s
+───────────────────────────────────────────────────────────────────────────────
  › task for /home/you/some/project…
-───────────────────────────────────────────────────────────────────────────────────────
 ```
 
 Grouping order: `running`, `queued`, `done`, `partial`, `failed`, `cancelled`. The `queued`
-state renders as the shorter word `queue` in headers and rows. Telemetry is right-aligned
-and the prompt gives up room first, so steps, tokens and wall time form one readable
-column. A running row's wall time ticks once a second; an idle board does not re-render.
+state renders as the shorter word `queue`. A band is a dot, its word and its count — no rule and
+no column of dashes: the blank row between bands is what separates them, and a row never repeats
+the status word its section already said. Telemetry is right-aligned and the prompt gives up room
+first, so steps, tokens and wall time form one readable column. A running row's wall time ticks
+once a second; an idle board does not re-render.
 
-| State | Section header | Row word | Dot | Colour |
-|---|---|---|---|---|
-| `running` | `● running ─── n` | `running` | `●` | olive |
-| `queued` | `○ queue ───── n` | `queue` | `○` | amber |
-| `done` | `✓ done ────── n` | `done` | `✓` | olive |
-| `partial` | `◐ partial ─── n` | `partial` | `◐` | amber |
-| `failed` | `✖ failed ──── n` | `failed` | `✖` | clay |
-| `cancelled` | `⊘ cancelled ─ n` | `cancelled` | `⊘` | quietest grey |
+| State | Section label | Dot | Colour |
+|---|---|---|---|
+| `running` | `● running  3` | `●` | olive |
+| `queued` | `○ queue  1` | `○` | amber |
+| `done` | `✓ done  12` | `✓` | olive |
+| `partial` | `◐ partial  1` | `◐` | amber |
+| `failed` | `✖ failed  2` | `✖` | clay |
+| `cancelled` | `⊘ cancelled  1` | `⊘` | quietest grey |
 
 Only the dot carries the state colour; the word stays grey, so a column of rows reads as one
-block of type instead of a colour chart. `list-model.buildRows` puts one blank row between bands,
-so the sections breathe without any rule of their own.
+block of type instead of a colour chart. The handle is the quietest ink on the row, the prompt is
+body ink, and the telemetry is quiet — three weights, one line.
 
-Selected row: `›` left, `←` right. Mouse click selects (does not open) and never copies.
-Left-drag selects rendered text; releasing the button copies the selection to the clipboard
-and clears the highlight in the same gesture. `Up`/`Down` move the highlight while the prompt
-fits one row; once the prompt wraps or holds a typed newline they move the text cursor. The
-prompt box grows one row per newline or wrapped row, up to five, then
-scrolls vertically and the bottom rule shows the cursor position (`3/5`). `Ctrl+Enter` queues;
-`Escape` clears the prompt, then the highlight; `Enter` on an empty prompt opens the highlighted
-task. The rule above the prompt reports `reconnecting`, the last toast, or `no api key`, in that
-priority. A task that hits its step or wall cap but still produces a summary is `partial`, not
-`failed`; its final text stays in the log.
+Selected row: `›` on the left and the prompt in brighter ink. There is no second marker on the
+right and no background fill: the marker plus the ink contrast is the whole cue. Mouse click
+selects (does not open) and never copies. Left-drag selects rendered text; releasing the button
+copies the selection to the clipboard and clears the highlight in the same gesture. `Up`/`Down`
+move the highlight while the prompt fits one row; once the prompt wraps or holds a typed newline
+they move the text cursor. The prompt box grows one row per newline or wrapped row, up to five,
+then scrolls vertically and the hairline above it shows the cursor position (`3/5`). `Ctrl+Enter`
+queues; `Escape` clears the prompt, then the highlight; `Enter` on an empty prompt opens the
+highlighted task. The same hairline reports `reconnecting`, the last toast, or `no api key`, in
+that priority; the prompt is the last row of the screen, so the terminal's own edge closes it.
+A task that hits its step or wall cap but still produces a summary is `partial`, not `failed`;
+its final text stays in the log.
 
 Before the first task the board shows `no tasks yet`, one hint line and the fire-and-forget
 reminder; it never invents a fake section or an empty table.
@@ -130,26 +143,31 @@ Rows carry a dim elapsed-time gutter once the task has a start time, so a long r
 timeline.
 
 ```
- ▌ code  ~/some/project                      deepseek-flash · low · 1 running · 1 queue
- ● running  add a retry to the fetch helper  esc/enter: back · 3 steps · 4210 tok · 11s
+ ▌ code  ~/some/project                       deepseek-flash · low · 1 running
+
+ ● running  #4f7c1  add a retry to the fetch helper   esc/enter: back · 3 steps · 4210 tok · 11s
    1.5s · read({"path":"src/client.tsx"})
    3.0s · exec({"argv":["bun","test"]})
    4.5s · 'a.py'
    6.0s ↺ [finish] final_answer rejected: the project check still fails
    7.5s ✓ done  stop=DONE · 7 steps · 3 cells · 0 errors · 18432ms · 4210 tok
 
-          Retry added to the fetch helper; the backoff path is covered by a test.
+     Retry added to the fetch helper; the backoff path is covered by a test.
 
-            changed
-            - src/fetch.ts: three attempts, exponential backoff, jitter
-            - tests/fetch.test.ts: a 503 then a success
+     changed
+     - src/fetch.ts: three attempts, exponential backoff, jitter
+     - tests/fetch.test.ts: a 503 then a success
 
-            verified
-            - bun test (19 tests)
-───────────────────────────────────────────────────────────────────────────────────────
-  › task for /home/you/some/project…
-───────────────────────────────────────────────────────────────────────────────────────
+     verified
+     - bun test (19 tests)
+────────────────────────────────────────────────────────────────────────────────────────────
+ › task for /home/you/some/project…
 ```
+
+The log is the same screen with its content pane swapped: the masthead, the breath under it, a
+status line, the events, and the one hairline over the prompt. The status line carries the dot,
+the status word, the short handle, the prompt, then `esc/enter: back` and the live counters; the
+hint is never dropped and the counters disappear from the tail as the terminal narrows.
 
 A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
 A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
@@ -167,9 +185,9 @@ followed by one blank row and the agent's whole summary — paragraph breaks and
 word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
 `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped.
 
-The log header pins the navigation hint first and clips the prompt before it: `esc/enter: back`
-is never dropped, and the optional counters disappear from the tail as the terminal narrows.
-The header's steps/tokens/duration are the live values, the same ones the board row shows.
+The header's steps/tokens/duration are the live values, the same ones the board row shows, and
+the event count appears once the journal has one. The prompt is clipped before the hint, never
+after it.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
 one exception: a turn carrying a `notice` (a rejected or staged `final_answer`, recorded by
@@ -311,7 +329,8 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 ```bash
 bun run typecheck   # tsc --noEmit
 bun test            # tests/: list, log, progress, prompt, view rendering, selection, checks,
-                    # theme helpers — 19 tests, 8 files; React act(...) warnings are expected noise
+                    # theme helpers, board and log frames — 20 tests, 8 files; React act(...)
+                    # warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

@@ -73,12 +73,12 @@ test("enter inserts a newline and the prompt grows row by row", async () => {
   await settle();
   await flush();
   let frame = captureCharFrame();
-  const bottomRule = frame.split("\n").at(-2)!;
-  // The prompt box has no key-hint tooltips under it — only the rule itself.
-  expect(bottomRule).not.toContain("enter: newline");
-  expect(bottomRule).not.toContain("ctrl+enter");
-  expect(bottomRule).not.toContain("ctrl-k");
-  expect(bottomRule).not.toContain("select");
+  const rule = () => frame.split("\n").find((line) => line.includes("\u2500"))!;
+  // The prompt box has no key-hint tooltips on its hairline — only the line itself.
+  expect(rule()).not.toContain("enter: newline");
+  expect(rule()).not.toContain("ctrl+enter");
+  expect(rule()).not.toContain("ctrl-k");
+  expect(rule()).not.toContain("select");
   expect(frame).not.toContain("1/5");
   expect(frame).not.toContain("ctrl+enter: queue");
 
@@ -93,15 +93,15 @@ test("enter inserts a newline and the prompt grows row by row", async () => {
   expect(frame).toContain("line2");
   expect(frame.split("\n").find((line) => line.includes("line2"))).toContain("line2");
 
-  // Fill past the cap: the box stops growing and starts scrolling with a counter.
+  // Fill past the cap: the box stops growing and starts scrolling with a counter on the
+  // one hairline above it.
   for (let i = 0; i < 5; i++) {
     mockInput.pressEnter();
     await settle();
   }
   await flush();
   const capped = captureCharFrame();
-  const rows = capped.split("\n");
-  expect(rows.at(-2)).toContain("5/5");
+  expect(capped.split("\n").find((line) => line.includes("\u2500"))).toContain("5/5");
 
   // Escape clears the prompt, collapsing the box back to a single row.
   mockInput.pressEscape();
@@ -114,16 +114,18 @@ test("enter inserts a newline and the prompt grows row by row", async () => {
 });
 
 /**
- * The rows of the prompt box: from the row carrying the caret marker down to the rule
- * below it. Continuation rows are indented to line up under the text.
+ * The rows of the prompt box: from the row carrying the caret marker to the bottom of the
+ * screen (the prompt is the last thing on it). Continuation rows are indented to line up
+ * under the text.
  */
 function promptBlock(frame: string): string[] {
   const rows = frame.split("\n");
   const start = rows.findIndex((line) => line.includes("\u203a"));
   expect(start).toBeGreaterThan(-1);
-  const end = rows.findIndex((line, index) => index > start && line.includes("\u2500"));
-  expect(end).toBeGreaterThan(start);
-  return rows.slice(start, end);
+  const block = rows.slice(start);
+  while (block.length > 0 && block[block.length - 1].trim() === "") block.pop();
+  expect(block.length).toBeGreaterThan(0);
+  return block;
 }
 
 test("text that wraps past the terminal width grows the prompt box", async () => {

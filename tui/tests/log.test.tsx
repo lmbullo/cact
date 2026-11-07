@@ -80,19 +80,19 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(logFrame).toContain("›");
   expect(logFrame).toContain("task for /tmp/ws");
 
-  // The live log keeps the board's prompt box: two horizontal rules, one on
-  // each side of the prompt row.
+  // The live log keeps the board's prompt box: one hairline above it, the terminal's edge
+  // below it, and the prompt anchored at the bottom of the screen.
   const logRows = logFrame.split("\n");
   const promptRow = logRows.findIndex((line) => line.includes("task for /tmp/ws"));
   expect(promptRow).toBeGreaterThan(0);
   expect(logRows[promptRow - 1]).toContain("─");
-  expect(logRows[promptRow + 1]).toContain("─");
+  expect(promptRow).toBe(logRows.length - 2);
 
-  // Exactly two horizontal rules: the one above the prompt and the one below it.
+  // Exactly one horizontal rule in the whole frame: the one above the prompt.
   const rules = logRows
     .map((line, index) => ({ line, index }))
     .filter(({ line }) => line.includes("─"));
-  expect(rules.map(({ index }) => index)).toEqual([promptRow - 1, promptRow + 1]);
+  expect(rules.map(({ index }) => index)).toEqual([promptRow - 1]);
 
   const push = async (seq: number, event: Record<string, unknown>) => {
     sockets.at(-1)!.send(JSON.stringify({ type: "event", taskId: task.id, event: { seq, ts: 1, ...event } }));

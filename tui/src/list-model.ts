@@ -9,7 +9,7 @@
  * ENTRY POINTS
  *  STATUS_ORDER                         running -> queued -> done -> partial -> failed -> cancelled
  *  orderTasks(tasks)                    stable sort by rank, then createdAt (oldest first)
- *  taskHandle(id)                       short display handle for a task id
+ *  taskHandle(id)                       short `#suffix` display handle for a task id
  *  buildRows(ordered) -> ListRow[]      header + task rows (what the board renders)
  *  stepSelection(ordered, current, d)   move the highlight, clamped
  *  selectedRowIndex(rows, selected)     row index for the highlighted task (-1 when absent)
@@ -81,9 +81,14 @@ export function orderTasks(tasks: Task[]): Task[] {
   });
 }
 
-/** Rows are labelled with the stable task id, never with a position that moves. */
+/**
+ * The short handle for a task id: the last dash-separated segment (`t-m3k9a1x2-4f7c1` ->
+ * `4f7c1`). The timestamp half is already implied by the board's order, so the row shows the
+ * only part that identifies the task; the full id stays in the state root and the API.
+ */
 export function taskHandle(id: string): string {
-  return id;
+  const cut = id.lastIndexOf("-");
+  return cut >= 0 && cut < id.length - 1 ? id.slice(cut + 1) : id;
 }
 
 /** A board row: a blank spacer row, a status band header, or one task. */
