@@ -3,7 +3,7 @@
 You are the reader. `code` is a server-backed, fire-and-forget coding-agent TUI over the agent
 in `../bench` (the `state` loop by default; `CODE_TUI_MODE` switches it). This file is the
 reference for an agent that has to change or run it. The short contract is `../AGENTS.md`; the
-full repository reference is `../README.md`.
+repository map is `../docs/README.md`, and what runs where is `../README.md`.
 
 Read the source headers first:
 

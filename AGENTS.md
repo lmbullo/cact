@@ -9,8 +9,8 @@ Precedence when sources disagree:
 
 1. the module header / the code (`python3 bench/guide.py --query <topic>`)
 2. this file (the short contract)
-3. `README.md` (the full reference)
-4. every other document
+3. `docs/` (the document map, invocation, runtime shape) and `README.md` (identity, evals)
+4. `tui/README.md`, `bench/HARD.md`
 
 Fix the lower layer in the same change that breaks it.
 
@@ -89,6 +89,9 @@ These are architecture, not style. A change that breaks one is a regression even
 
 | File | Owns |
 |---|---|
+| `docs/README.md` | The trigger→file map for every document, and the one-owner/path rules the docs gate enforces |
+| `docs/run.md` | Invocation: gate ladder, expected exit codes, eval/workspace/TUI commands, knobs, gotchas |
+| `docs/architecture.md` | Runtime shape: tree kinds, one cell end to end, loops, paging, the check plan and compaction |
 | `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE), `prelude_setup.py` / `prelude_journal.py` / `prelude_index.py` / `prelude_read.py` / `prelude_verbs.py` (the five fragments), `run_prelude.py` (exec/git + gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
 | `bench/agent/verbs.py` | The typed verb registry: name, schema, summary, `mutates`, implementing function. `tools.py` builds provider specs from it; the child receives it as `KERNEL_VERBS` |
 | `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
@@ -198,28 +201,12 @@ These are architecture, not style. A change that breaks one is a regression even
 
 ## 5. Verification gates
 
-Run in this order. A failure is a contract change, not a flaky test.
+`docs/run.md` §1 owns the ladder: the command order, each expected exit code, what it proves and
+which knob changes a run. Run it before a commit. A failure is a contract change, not a flaky
+test: fix the code or fix the document in the same change.
 
-| Command | Covers | Expected |
-|---|---|---|
-| `python3 bench/guide.py --check` | every module header has its four sections | exit 0 |
-| `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths and one-owner prose, the fast eval subset, `guide()`, ruff | exit 0 |
-| `python3 bench/eval.py` | the 16 scripted loop contracts: finish, args, journal, compaction, custom tools, skills, docs, delegation, skeptic, autonomy, token cap | exit 0 |
-| `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
-| `cd tui && bun run typecheck` | TS types | exit 0 |
-| `cd tui && bun test` | rendering/detection/selection tests, 7 files | 16 pass; React `act(...)` warnings are expected noise |
-
-Smoke is the fast signal: no key, no network, nothing written outside a temp dir. Python has no
-unit-test framework; smoke plus one real task is the whole story:
-
-```bash
-python3 bench/eval.py                         # offline loop contracts, no key, no network
-DEEPSEEK_API_KEY=... python3 bench/eval.py --live   # the 14 model-backed failure cases
-```
-
-`--live` needs network and a key; the offline pass is the regression gate. Without a key, stop
-at the offline gates and say so.
+The offline pass is the regression gate. `--live` needs network and a key; without a key, stop at
+the offline gates and say so in the report.
 
 ## 6. Change recipes
 
@@ -256,15 +243,16 @@ know it exists. If it replaces a mutating shell verb, add it to `_RUN_SHELL_MUTA
   TS conventions are not gated, so match the file you are editing.
 - Prefer one call that does the job over a pipeline of calls; prefer a typed tool over
   `exec(shell=...)`; prefer deleting a duplicate catalog over syncing two copies.
-- One fact, one owner. `AGENTS.md` owns invariants and recipes, `README.md` owns machinery,
-  `tui/README.md` owns the wire contract, `HARD.md` owns the evidence, a module header owns that
-  module. Point at the owner instead of restating it: `bench/smoke_checks/docs.py` fails on a
-  paragraph that appears in two documents.
+- One fact, one owner. `AGENTS.md` owns invariants, recipes and failure modes, `README.md` owns
+  identity and the eval registry, `docs/run.md` owns invocation, `docs/architecture.md` owns the
+  runtime shape, `docs/README.md` owns the document map, `tui/README.md` owns the wire contract,
+  `HARD.md` owns the evidence, a module header owns that module. Point at the owner instead of
+  restating it: `bench/smoke_checks/docs.py` fails on a paragraph that appears in two documents.
 - A doc claim must be executable or checkable. If you cannot verify it, cut it.
 - Commit style: `area(scope): lowercase summary`, e.g.
   `bench(agent/kernel): add grep, write, edit`.
-- Commit and push only after the gates in §5 pass. Report what changed, what you verified, and
-  what is still unverified.
+- Commit and push only after the gates in `docs/run.md` §1 pass. Report what changed, what you
+  verified, and what is still unverified.
 
 ## 8. Failure modes you will actually hit
 

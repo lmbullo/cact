@@ -27,7 +27,7 @@ INVARIANTS
 WHERE TO CHANGE
   The lint rule set or the excludes .... ruff.toml
   What "source file" means ............. bench/agent/headers.py::_walk, SKIP_DIRS
-  The commands an agent should run ..... this file and AGENTS.md §5
+  The commands an agent should run ..... docs/run.md §1
 """
 from __future__ import annotations
 

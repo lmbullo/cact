@@ -32,7 +32,7 @@ INVARIANTS
 WHERE TO CHANGE
   What exec/git refuse ......................... `_RUN_SHELL_MUTATORS`, `_RUN_GIT_MUTATORS`,
                                                  `_mutating_command`, `_HINT`, then RUN_NOTE
-                                                 in repl.py and the README contract list
+                                                 in repl.py and AGENTS.md §4 invariant 2
   The spawn gate ............................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
   exec's argv/commands/shell shape ............. `exec_argv`
   The typed git actions ........................ `git_tool`

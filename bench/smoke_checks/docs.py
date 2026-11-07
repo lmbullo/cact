@@ -2,11 +2,12 @@
 
 WHAT IT IS
   Two offline checks over the documents an agent reads before editing: `AGENTS.md`, `README.md`,
-  `tui/README.md`, `bench/HARD.md`.
+  `docs/*.md`, `tui/README.md`, `bench/HARD.md`.
     paths   every backticked path a document names resolves in the tree, so a rename cannot
             leave a pointer that costs the next agent a wasted `read`.
     unique  no paragraph of one document is copied verbatim into another. Each fact has one
-            owner (AGENTS.md: invariants/recipes; README.md: machinery; tui/README.md: the wire
+            owner (AGENTS.md: invariants/recipes/failures; README.md: identity and evals;
+            docs/run.md: invocation; docs/architecture.md: runtime shape; tui/README.md: the wire
             contract; HARD.md: measured evidence), and duplicated prose drifts until one copy
             lies, which an agent cannot detect by reading either copy.
 
@@ -48,7 +49,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DOCS = ("AGENTS.md", "README.md", "tui/README.md", "bench/HARD.md")
+DOCS = ("AGENTS.md", "README.md", "docs/README.md", "docs/run.md", "docs/architecture.md",
+        "tui/README.md", "bench/HARD.md")
 _DUP_CHARS = 200
 # Generated or tool-managed trees: absent in a fresh clone, so a pointer into one may dangle.
 _GENERATED = frozenset({
