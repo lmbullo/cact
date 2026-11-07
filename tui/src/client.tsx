@@ -61,10 +61,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ServerInfo, Snapshot, Task, TaskEvent, WsMessage } from "./types";
 import {
   buildRows,
+  followSelection,
   orderTasks,
-  scrollWindow,
   selectedRowIndex,
   stepSelection,
+  type ScrollState,
 } from "./list-model";
 import { C, PROMPT_MAX_ROWS, clip } from "./theme";
 import { EmptyState, LogHeader, Rule, SectionHeader, TaskRow, TopBar } from "./board-view";
@@ -105,6 +106,11 @@ export function App({
   const viewRef = useRef<"list" | "log">("list");
   const selectedRef = useRef<string | null>(null);
   const eventsSeqRef = useRef(0);
+  /**
+   * The board window survives renders: keeping the previous start is what stops a live
+   * task update from re-pinning (or recentring) the list under the reader.
+   */
+  const scrollRef = useRef<ScrollState>({ start: 0, focus: -1, selected: null });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
@@ -481,15 +487,6 @@ export function App({
   // is no background fill: the terminal's own colours show through the whole screen.
   const ruleWidth = Math.max(0, width - 1);
 
-  const note = !connected
-    ? " reconnecting"
-    : toast
-      ? ` ${clip(toast, Math.max(8, width - 24))}`
-      : server && !server.hasKey
-        ? " no api key"
-        : "";
-
-
   // The box grows with the text, whether it wraps on its own or the user presses Enter,
   // up to PROMPT_MAX_ROWS; past that the textarea scrolls internally.
   const promptHeight = Math.max(1, Math.min(PROMPT_MAX_ROWS, promptRows));
@@ -498,18 +495,41 @@ export function App({
       ? ` ${Math.min(promptRow + 1, PROMPT_MAX_ROWS)}/${PROMPT_MAX_ROWS}`
       : "";
 
-  // Top bar, the breath under it, the hairline, the prompt, and the log's status line
-  // when it is showing.
-  const rowBudget = Math.max(
-    1,
-    height - 3 - promptHeight - (view === "log" && selectedTask ? 1 : 0),
-  );
-  const focusRow = selectedRowIndex(listRows, selected);
-  const { start: winStart, size: winSize } = scrollWindow(listRows.length, rowBudget, focusRow);
-  const visible = listRows.slice(winStart, winStart + winSize);
-
   const showingLog = view === "log" && selectedTask !== null;
   const logTask = showingLog ? selectedTask : null;
+
+  // Top bar, the breath under it, the hairline, the prompt, and the log's status line
+  // when it is showing.
+  const rowBudget = Math.max(1, height - 3 - promptHeight - (showingLog ? 1 : 0));
+  const focusRow = selectedRowIndex(listRows, selected);
+  // Carry the window from the previous render; it only moves when the reader moves the
+  // selection (one row at an edge) or the followed task's index changes under it.
+  const scroll = followSelection(
+    scrollRef.current,
+    listRows.length,
+    rowBudget,
+    selected,
+    focusRow,
+  );
+  scrollRef.current = scroll.state;
+  const winStart = scroll.start;
+  const winSize = scroll.size;
+  const visible = listRows.slice(winStart, winStart + winSize);
+
+  // The hairline reports why the socket/last action matters, then where the board is in a
+  // list that overflows. The range keeps the reader oriented without a second chrome row.
+  const statusNote = !connected
+    ? "reconnecting"
+    : toast
+      ? clip(toast, Math.max(8, width - 24))
+      : server && !server.hasKey
+        ? "no api key"
+        : "";
+  const scrollNote =
+    !showingLog && listRows.length > winSize
+      ? `rows ${winStart + 1}–${winStart + winSize}/${listRows.length}`
+      : "";
+  const note = [statusNote, scrollNote].filter(Boolean).join(" · ");
 
   // The one prompt box, rendered outside the view switch. Because it never unmounts, the
   // text, the cursor row, the row count, and the focus survive a move between the board

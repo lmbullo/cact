@@ -124,7 +124,11 @@ right and no background fill: the marker plus the ink contrast is the whole cue.
 selects (does not open) and never copies. Left-drag selects rendered text; releasing the button
 copies the selection to the clipboard and clears the highlight in the same gesture. `Up`/`Down`
 move the highlight while the prompt fits one row; once the prompt wraps or holds a typed newline
-they move the text cursor. The prompt box grows one row per newline or wrapped row, up to five,
+they move the text cursor. Scrolling is edge-following and one row at a time: the window stays
+anchored until the marker crosses an edge, so the list never recentres under the reader. A task
+whose status change moves it between bands keeps its screen row, so a live finish does not push
+the board up. When the board is taller than the window, the hairline also reports the visible
+range (`rows 12–31/40`). The prompt box grows one row per newline or wrapped row, up to five,
 then scrolls vertically and the hairline above it shows the cursor position (`3/5`). `Ctrl+Enter`
 queues; `Escape` clears the prompt, then the highlight; `Enter` on an empty prompt opens the
 highlighted task. The same hairline reports `reconnecting`, the last toast, or `no api key`, in
@@ -204,7 +208,7 @@ keys on both screens, and a prompt can be typed and queued while a run streams.
 
 | Key | Action |
 |---|---|
-| `Up` / `Down` | Move the task highlight (or the prompt cursor once the prompt wraps) |
+| `Up` / `Down` | Move the task highlight one row, scrolling at an edge (or the prompt cursor once the prompt wraps) |
 | `Enter` | Insert a newline in the prompt; open the highlighted task when the prompt is empty |
 | `Ctrl+Enter` | Queue the prompt |
 | `Ctrl+N` / `Ctrl+P` | Move the task highlight without the arrow keys |

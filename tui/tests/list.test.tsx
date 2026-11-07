@@ -127,3 +127,52 @@ test("arrow keys move the arrow marker and enter opens the selected task", async
 
   await dispose();
 });
+
+test("scrolling keeps the marker on one screen row and moves the window one row", async () => {
+  // Grow the board past one screen so the window has to scroll. All extras are done tasks,
+  // appended after the fixture rows, so the running row still gets the initial highlight.
+  tasks.push(
+    ...Array.from({ length: 24 }, (_, index) => ({
+      id: `t-extra${index.toString().padStart(3, "0")}`,
+      prompt: `extra job ${index}`,
+      status: "done",
+      createdAt: 10 + index,
+    })),
+  );
+
+  const setup = await testRender(<App httpUrl={httpUrl} workspace="/tmp/ws" />, { width: 100, height: 12 });
+  const { mockInput, captureCharFrame, waitFor, flush, dispose } = setup;
+
+  await waitFor(() => captureCharFrame().includes("aaaa1111"));
+  await waitFor(() => captureCharFrame().includes("›"));
+  const step = async () => {
+    mockInput.pressArrow("down");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await flush();
+  };
+
+  // The window is eight rows tall. Move the highlight to the last visible row (extra000)
+  // then one row past it: the list scrolls by exactly one row, the marker stays put.
+  await step();
+  await step();
+  await step();
+  let rows = captureCharFrame().split("\n");
+  const ruleRow = () => captureCharFrame().split("\n").findIndex((line) => line.includes("─"));
+  const markerRow = (handle: string) =>
+    captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes(`› #${handle}`));
+  expect(rows.filter((line) => line.includes("● running")).length).toBe(0);
+  expect(rows.find((line) => line.includes("extra000"))).toContain("› #extra000");
+  expect(markerRow("extra000")).toBe(ruleRow() - 1);
+  expect(rows.find((line) => line.includes("─"))).toContain("rows 2–9/");
+
+  // One more Down advances the window by one row and leaves the marker on the same row.
+  await step();
+  rows = captureCharFrame().split("\n");
+  expect(rows.find((line) => line.includes("─"))).toContain("rows 3–10/");
+  expect(rows.find((line) => line.includes("extra001"))).toContain("› #extra001");
+  expect(markerRow("extra001")).toBe(ruleRow() - 1);
+
+  await dispose();
+});

@@ -17,7 +17,7 @@
  *
  * INVARIANTS
  *  - Every row is exactly one line high with `flexShrink: 0`: the parent decides how many
- *    rows fit (list-model.scrollWindow), so a row must never grow or wrap.
+ *    rows fit (list-model.followSelection), so a row must never grow or wrap.
  *  - Status text and dots come from theme.STATUS, so the board and the log cannot disagree.
  *  - The section label already carries the state, so a row never repeats the status word:
  *    a column of prompts reads as prose, not as a table with a redundant column.
@@ -86,8 +86,9 @@ export function TopBar(props: {
 
 /** The one hairline; the optional `note` is sacrificed to keep the line on one row. */
 export function Rule({ width, note }: { width: number; note?: string }) {
-  // Keep the hint visible: shrink the rule instead of letting the note run off-screen.
-  const hint = note ? ` ${note}` : "";
+  // Keep the hint visible: shrink the rule instead of letting the note run off-screen,
+  // and clip the note itself when the status and scroll counters together outgrow it.
+  const hint = note ? ` ${clip(note, Math.max(0, width - 1))}` : "";
   const line = "─".repeat(Math.max(0, width - hint.length));
   return note ? (
     <text fg={C.rule}>
