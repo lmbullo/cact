@@ -18,7 +18,7 @@ WHAT IT IS
   helper already reports), `next` is the next cursor, `unit` names what the cursor counts
   (line/char/hit/file/entry/module), `has_more` says the file/result continues, and
   `complete` says this request was served (an explicit read window is complete even when the
-  file continues). A helper may keep its legacy top-level keys for python callers; the
+  file continues). A helper may keep extra top-level keys for python callers; the
   envelope does not repeat them, so a model never sees the same fact twice.
 
 ENTRY POINTS

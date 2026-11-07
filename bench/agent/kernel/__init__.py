@@ -1,7 +1,7 @@
 """kernel: the agent's action space and the subprocess that enforces it (package form).
 
 WHAT IT IS
-  The former 3025-line `kernel.py`, split by lifecycle so a change lands in one small file:
+  The action space, split by lifecycle so a change lands in one small file:
 
     protocol.py      PROTOCOL, MARKER and the wire shapes: CellRequest, CellReply,
                      ExtendNotice, and `Cell` (the value every loop consumes)
@@ -23,7 +23,7 @@ WHAT IT IS
                      one reply into one `Cell`.
 
   This file is the import surface only. It holds no logic, so there is exactly one place
-  for each fact and the old `from .kernel import Kernel, Cell` keeps working.
+  for each fact: `from .kernel import Kernel, Cell` is the only way the loops import it.
 
 ENTRY POINTS
   from .kernel import Kernel, Cell, PROTOCOL      # the surface the loops and run.py use
@@ -35,9 +35,9 @@ ENTRY POINTS
   Re-exported shapes:    CellRequest, CellReply, ExtendNotice, Cell
 
 INVARIANTS
-  - The names, defaults and meanings here are exactly the old kernel.py's. Moving a symbol
-    between submodules must not change what an importer sees; nothing outside the package
-    imports a submodule directly.
+  - The names and defaults re-exported here are the package's public surface. Moving a
+    symbol between submodules must not change what an importer sees; nothing outside the
+    package imports a submodule directly.
   - Import direction is acyclic and one-way:
     protocol <- driver <- prelude <- run_prelude, and process imports all four.
     A submodule always imports its siblings (`from .protocol import PROTOCOL`), never this

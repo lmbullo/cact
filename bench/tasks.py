@@ -9,13 +9,13 @@ ENTRY POINTS
   TASKS / MUTATION_TASKS / ALL_TASKS / by_id(task_id)
   grade_count, grade_arg_expr, grade_checksum, grade_last_line, grade_todo   (read suite)
   grade_rename, grade_row_total, grade_skip_legal                            (mutation suite)
-  answer_line(text), _has_int(text, n)  answer parsing helpers
+  answer_line(text)       the ANSWER line extraction; `has_int` comes from suite_support
 
 INVARIANTS
   - Ground truth is computed at import time from the fixtures (`_ground_truth`). Editing a
     file in bench/fixtures silently redefines the expected answers for every future run.
-  - Reads are string/number tolerant: `answer_line` pulls the ANSWER line and `_has_int`
-    accepts the number anywhere sane. Mutation graders instead *execute* the workspace
+  - Reads are string/number tolerant: `answer_line` pulls the ANSWER line and `has_int`
+    (bench/suite_support.py) accepts the number anywhere sane. Mutation graders instead *execute* the workspace
     (`exec` lib.py, run app.py with a probe CSV) — they assert behaviour, not text.
   - `run.workspace` is where the grader reads the tree; run.py sets it before grading.
   - A grader must never raise: return (False, detail) instead, so a run still prints.
@@ -23,7 +23,7 @@ INVARIANTS
 WHERE TO CHANGE
   New read task ....... a first-class function `grade_*` + a Task in TASKS (and any fixture
   New mutation task ... a `grade_*` that loads/runs the workspace + a Task in MUTATION_TASKS
-  Answer tolerance .... answer_line / _has_int
+  Answer tolerance .... answer_line here; has_int in bench/suite_support.py
 """
 from __future__ import annotations
 
@@ -35,6 +35,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+from .suite_support import has_int
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -89,15 +91,10 @@ def answer_line(text: str) -> str:
     return (text or "").strip()
 
 
-def _has_int(text: str, n: int) -> bool:
-    """True when `n` appears as a standalone integer (no digit or dot on either side)."""
-    return re.search(rf"(?<![\d.]){n}(?![\d])", text) is not None
-
-
 def grade_count(answer: str, run) -> tuple[bool, str]:
     """T1: the number of ledger.csv rows with amount > 100."""
     value = answer_line(answer)
-    ok = _has_int(value, GT["rows_over_100"])
+    ok = has_int(value, GT["rows_over_100"])
     detail = f"got {value!r}; expected {GT['rows_over_100']}"
     return ok, detail
 
@@ -113,7 +110,7 @@ def grade_arg_expr(answer: str, run) -> tuple[bool, str]:
 def grade_checksum(answer: str, run) -> tuple[bool, str]:
     """T3: the file defining checksum plus checksum(7), both required."""
     value = answer_line(answer)
-    ok = _has_int(value, GT["checksum_7"]) and GT["checksum_file"] in (answer or "").lower()
+    ok = has_int(value, GT["checksum_7"]) and GT["checksum_file"] in (answer or "").lower()
     detail = f"expected {GT['checksum_file']} + {GT['checksum_7']}; got {value!r}"
     return ok, detail
 
@@ -129,7 +126,7 @@ def grade_last_line(answer: str, run) -> tuple[bool, str]:
 def grade_todo(answer: str, run) -> tuple[bool, str]:
     """T5: the count of the literal string TODO across every fixture file."""
     value = answer_line(answer)
-    ok = _has_int(value, GT["todo_count"])
+    ok = has_int(value, GT["todo_count"])
     detail = f"got {value!r}; expected {GT['todo_count']}"
     return ok, detail
 

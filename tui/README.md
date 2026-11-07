@@ -12,21 +12,8 @@ python3 ../bench/map.py --query tui
 python3 ../bench/map.py --check     # fails when a module header loses a section
 ```
 
-| File | Owns |
-|---|---|
-| `bin/code`, `bin/code-stop` | shell entry points; no logic |
-| `src/launcher.ts` | workspace hash, server discovery/reuse, detached spawn |
-| `src/server.ts` | task queue, concurrency, cancellation, HTTP + WebSocket, journals |
-| `src/client.tsx` | `App` (state, keys, layout) and `main`; board, live log, prompt box |
-| `src/theme.ts` | palette (`C`), status words, one-line helpers (`clip`, `oneLine`, `lineCount`, `toolArgs`) |
-| `src/board-view.tsx` | `Rule`, `SectionHeader`, `TaskRow` — task list rows |
-| `src/log-view.tsx` | `EventView`, `LogView` — one event, one row |
-| `src/detect-checks.ts` | the verification plan for one workspace (`CODE_TUI_CHECKS` / `CODE_TUI_CHECK` / `package.json`) |
-| `src/list-model.ts` | pure ordering/rows/selection/scroll (the tested logic) |
-| `src/types.ts` | the wire contract shared by all of the above |
-| `src/stop.ts` | SIGTERM the workspace's server |
-| `python/worker.py` | one task = one worker = one agent loop; `@@TUI@@` streams to the server |
-| `tests/*.test.ts(x)` | rendering/detection tests; the fake Bun server lives in each file |
+The only files with no header are the two shell entry points, `bin/code` and `bin/code-stop`: they
+hold no logic, so `src/` and `python/` are the whole surface.
 
 Two contract checks live outside this directory: `python3 ../bench/smoke.py` (agent/kernel
 interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).

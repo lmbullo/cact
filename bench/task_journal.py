@@ -5,7 +5,7 @@ WHAT IT IS
   (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts the typed call mix
   (`tool_mix`), structured rejections, which kernel verbs the model used, which files it
   wrote, steps, tokens, stop reason. (`bench/run.py` is the benchmark CLI; this is the
-  reader for runs the TUI recorded, formerly `bench/runs.py`.)
+  reader for the journals the TUI records.)
 
 ENTRY POINTS
   python3 bench/task_journal.py <state-dir> <task-id>

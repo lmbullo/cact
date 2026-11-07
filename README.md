@@ -52,8 +52,9 @@ cact/
 │   ├── live.py               run ONE task through tui/python/worker.py and journal it
 │   ├── smoke.py              offline contract runner, one call per group below
 │   ├── smoke_support.py      its harness: check(), fakes, temp workspace, kernel_for()
-│   ├── smoke_checks/         suites, helpers, index, plans, protocol, files, verbs, gates, turns, repl, style
+│   ├── smoke_checks/         suites, helpers, index, docs, plans, protocol, files, verbs, gates, turns, repl, style
 │   ├── map.py                header-index CLI (`--query`, `--module`, `--json`, `--check`)
+│   ├── suite_support.py      has_int() + write_once(): the two helpers every suite shares
 │   ├── task_journal.py       summarise a task journal; `--recent` spans workspaces
 │   ├── fixtures/             small read/mutation workspace (ledger.csv, lib.py, app.py, notes.md, deep/)
 │   ├── edge_fixtures/        broken tests, 20k-line log, invalid utf-8, shadowed import
@@ -289,7 +290,7 @@ python3 bench/run.py --mode repl --repl-stop call --repl-history action --repl-l
 Every run prints one row per task, writes `bench/traces/<task>.<mode>.jsonl` and rewrites
 `bench/traces/summary.<mode>.json`. `--traces` prints `trace.render()` (`err`/`call`/`get`/`text`
 lines). Knobs: `--suite read|mutation|all|edge|harness|hard|sandbox`,
-`--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`, `--read-chars`,
+`--mode repl|tool|state|bare`, `--tasks`, `--steps`, `--wall`, `--max-output`,
 `--obs-chars`, `--map off|tool|inline`, `--context map|full`, `--context-chars`,
 `--allow-run off|on`, `--cell-timeout`, `--health on|off`,
 `--repl-rules|--repl-stop|--repl-history|--repl-lib`, `--model`,
@@ -401,8 +402,9 @@ The agent's Python kernel is `python3` from `PATH` (`CODE_TUI_PYTHON` overrides)
   editing. `bench/ws/` is gitignored: recreate `tui-base` with
   `python3 -m bench.snapshot freeze tui bench/ws/tui-base`.
 - Tests are TS only (`bun test` = 13 tests, 6 files). React `act(...)` warnings are expected
-  noise. Python has no test framework: `bench/smoke.py` is the offline contract check, and its
-  `style` group runs `ruff.toml` plus the "every public name has a docstring" check.
+  noise. Python has no test framework: `bench/smoke.py` is the offline contract check; its
+  `style` group runs `ruff.toml` plus the "every public name has a docstring" check, and its
+  `docs` group fails when a document names a path that no longer exists.
 - Commit style: `area(scope): lowercase summary`, e.g.
   `bench(agent/kernel): add grep, write, edit` or `tui(tests): add log and prompt tests`.
 

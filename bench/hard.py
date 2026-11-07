@@ -43,18 +43,12 @@ from pathlib import Path
 from typing import Callable
 
 from .agent.check_run import Check, run_check
+from .suite_support import write_once
 
 HERE = Path(__file__).parent
 HARD = HERE / "hard_fixtures"
 HIDDEN = HERE / "hard_hidden"
 RUNNER = HERE / "hard_runner.py"
-
-
-def _write(path: Path, text: str) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 # --- H1: a spec the visible tests do not cover -------------------------------------------
@@ -283,25 +277,25 @@ H4_PROMPT = (
 
 
 def _h1(root: Path) -> None:
-    _write(root / "SPEC.md", H1_SPEC)
-    _write(root / "textkit" / "__init__.py", H1_INIT)
-    _write(root / "textkit" / "strings.py", H1_STRINGS)
-    _write(root / "tests" / "test_visible.py", H1_VISIBLE)
+    write_once(root / "SPEC.md", H1_SPEC)
+    write_once(root / "textkit" / "__init__.py", H1_INIT)
+    write_once(root / "textkit" / "strings.py", H1_STRINGS)
+    write_once(root / "tests" / "test_visible.py", H1_VISIBLE)
 
 
 def _h2(root: Path) -> None:
-    _write(root / "SPEC.md", H2_SPEC)
+    write_once(root / "SPEC.md", H2_SPEC)
     for rel, body in H2_FILES.items():
-        _write(root / rel, body)
+        write_once(root / rel, body)
 
 
 def _h4(root: Path) -> None:
-    _write(root / "SPEC.md", H4_SPEC)
-    _write(root / "billing" / "__init__.py", "")
-    _write(root / "billing" / "api.py", H4_API)
+    write_once(root / "SPEC.md", H4_SPEC)
+    write_once(root / "billing" / "__init__.py", "")
+    write_once(root / "billing" / "api.py", H4_API)
     for name in H4_MODULES:
-        _write(root / "billing" / (name + ".py"), H4_MODULE.format(name=name))
-    _write(root / "tests" / "test_visible.py", H4_VISIBLE)
+        write_once(root / "billing" / (name + ".py"), H4_MODULE.format(name=name))
+    write_once(root / "tests" / "test_visible.py", H4_VISIBLE)
 
 
 H3_ROWS = 200_000

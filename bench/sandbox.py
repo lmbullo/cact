@@ -37,6 +37,7 @@ from pathlib import Path
 
 from .agent.check_run import Check, run_check
 from .harness import HarnessTask
+from .suite_support import write_once
 
 HERE = Path(__file__).parent
 SANDBOX = HERE / "sandbox_fixtures"
@@ -44,22 +45,15 @@ HIDDEN = HERE / "sandbox_hidden"
 DOC_PATH = "docs/CURRENT.md"
 
 
-def _write(path: Path, text: str) -> None:
-    if path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
 def build() -> None:
     """(Re)create `sandbox_fixtures/` and `sandbox_hidden/`; existing files are never overwritten."""
-    _write(SANDBOX / ".gitignore", "__pycache__/\n*.pyc\n")
-    _write(SANDBOX / "README.md", """# Tiny pricing workspace
+    write_once(SANDBOX / ".gitignore", "__pycache__/\n*.pyc\n")
+    write_once(SANDBOX / "README.md", """# Tiny pricing workspace
 
 The package is small on purpose. `docs/CURRENT.md` is the current contract; the visible
 tests cover the old `shipping()` helper only.
 """)
-    _write(SANDBOX / "docs" / "CURRENT.md", """# Current pricing contract
+    write_once(SANDBOX / "docs" / "CURRENT.md", """# Current pricing contract
 
 This file is the source of truth for this checkout, not a model's training data.
 
@@ -70,11 +64,11 @@ This file is the source of truth for this checkout, not a model's training data.
   the base charge plus the zone surcharge. An unknown zone raises `ValueError`.
 - Keep the existing `shipping(weight_g, zone)` behavior unchanged.
 """)
-    _write(SANDBOX / "pricing" / "__init__.py", """from .rates import shipping
+    write_once(SANDBOX / "pricing" / "__init__.py", """from .rates import shipping
 
 __all__ = ["shipping"]
 """)
-    _write(SANDBOX / "pricing" / "rates.py", """ZONE_SURCHARGE = {"north": 0, "south": 150}
+    write_once(SANDBOX / "pricing" / "rates.py", """ZONE_SURCHARGE = {"north": 0, "south": 150}
 BASE_CHARGE = 400
 
 
@@ -83,8 +77,8 @@ def shipping(weight_g, zone):
         raise ValueError("unknown zone: %r" % (zone,))
     return BASE_CHARGE + ZONE_SURCHARGE[zone] + max(0, int(weight_g) - 500) // 100
 """)
-    _write(SANDBOX / "tests" / "__init__.py", "")
-    _write(SANDBOX / "tests" / "test_rates.py", """import unittest
+    write_once(SANDBOX / "tests" / "__init__.py", "")
+    write_once(SANDBOX / "tests" / "test_rates.py", """import unittest
 
 from pricing import shipping
 
@@ -104,8 +98,8 @@ class Visible(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 """)
-    _write(HIDDEN / "__init__.py", "")
-    _write(HIDDEN / "test_quote.py", """import unittest
+    write_once(HIDDEN / "__init__.py", "")
+    write_once(HIDDEN / "test_quote.py", """import unittest
 
 from pricing import quote
 

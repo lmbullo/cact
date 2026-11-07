@@ -28,7 +28,7 @@ ENTRY POINTS
 INVARIANTS
   - The fragments are concatenated in the order above and must stay ONE valid program: a
     fragment may use names defined in an earlier fragment, never in a later one. The join is
-    byte-identical to the former single string, so the child sees the same source.
+    plain concatenation: nothing separates the fragments but their own trailing blank lines.
   - Never insert a separator between fragments: each one already ends with its blank lines,
     and `_snapshot()` must remain the last statement (it records the session-start tree that
     changes()/diff()/undo() compare against).

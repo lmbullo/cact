@@ -27,7 +27,7 @@ INVARIANTS
 
 WHERE TO CHANGE
   New edge task ....... the fixture (or a builder string + build()), a grader, an EdgeTask
-  Grading tolerance .... the `_has_int` / Decimal comparisons in each grader
+  Grading tolerance .... the `has_int` / Decimal comparisons in each grader
   Fixture shapes ....... CORE/TEST/CORE2/TEST2/LEDGER/AMOUNTS/DATA_CSV + build()
 """
 from __future__ import annotations
@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable
+
+from .suite_support import has_int
 
 EDGE = Path(__file__).parent / "edge_fixtures"
 
@@ -232,11 +234,6 @@ REVISION = _indirect()
 LEGACY_LINES = _lines()
 
 
-def _has_int(text: str, n: int) -> bool:
-    """True when `n` appears as a standalone integer (no digit or dot on either side)."""
-    return re.search(rf"(?<![\d.]){n}(?![\d])", text) is not None
-
-
 def _suite_ok(ws: Path, module: str, original: str) -> bool:
     """The `check` goal of E1/E6: the module passes AND its test file is byte-identical."""
     probe = subprocess.run(
@@ -275,7 +272,7 @@ def grade_tests2(answer: str, run) -> tuple[bool, str]:
 
 def grade_checkpoint(answer: str, run) -> tuple[bool, str]:
     """E2: the SEQ of the last checkpoint in the 20k-line log."""
-    return _has_int(answer, CHECKPOINT_SEQ), f"expected SEQ {CHECKPOINT_SEQ}; got {answer[:100]!r}"
+    return has_int(answer, CHECKPOINT_SEQ), f"expected SEQ {CHECKPOINT_SEQ}; got {answer[:100]!r}"
 
 
 def grade_limit(answer: str, run) -> tuple[bool, str]:
@@ -287,12 +284,12 @@ def grade_limit(answer: str, run) -> tuple[bool, str]:
 
 def grade_cents(answer: str, run) -> tuple[bool, str]:
     """E4: the exact integer-cent total of orders.csv."""
-    return _has_int(answer, TOTAL_CENTS), f"expected {TOTAL_CENTS}; got {answer[:100]!r}"
+    return has_int(answer, TOTAL_CENTS), f"expected {TOTAL_CENTS}; got {answer[:100]!r}"
 
 
 def grade_join(answer: str, run) -> tuple[bool, str]:
     """E5: the largest order's id plus its ledger checksum, both required."""
-    ok = TOP_ID in answer and _has_int(answer, TOP_CHECKSUM)
+    ok = TOP_ID in answer and has_int(answer, TOP_CHECKSUM)
     return ok, f"expected {TOP_ID} + {TOP_CHECKSUM}; got {answer[:100]!r}"
 
 
@@ -300,24 +297,24 @@ def grade_compound(answer: str, run) -> tuple[bool, str]:
     """E7: all three top orders, each with its own checksum."""
     missing = [
         (oid, _checksum(oid)) for oid, amount in TOP3
-        if not (oid in answer and _has_int(answer, _checksum(oid)))
+        if not (oid in answer and has_int(answer, _checksum(oid)))
     ]
     return not missing, f"missing {missing}; got {answer[:120]!r}"
 
 
 def grade_records(answer: str, run) -> tuple[bool, str]:
     """E8: the CSV record count with quoted newlines counted once."""
-    return _has_int(answer, RECORDS), f"expected {RECORDS} records; got {answer[:100]!r}"
+    return has_int(answer, RECORDS), f"expected {RECORDS} records; got {answer[:100]!r}"
 
 
 def grade_indirect(answer: str, run) -> tuple[bool, str]:
     """E9: the REVISION value reached through index.txt."""
-    return _has_int(answer, REVISION), f"expected {REVISION}; got {answer[:100]!r}"
+    return has_int(answer, REVISION), f"expected {REVISION}; got {answer[:100]!r}"
 
 
 def grade_bytes(answer: str, run) -> tuple[bool, str]:
     """E10: the line count of a file with invalid UTF-8."""
-    return _has_int(answer, LEGACY_LINES), f"expected {LEGACY_LINES} lines; got {answer[:100]!r}"
+    return has_int(answer, LEGACY_LINES), f"expected {LEGACY_LINES} lines; got {answer[:100]!r}"
 
 
 @dataclass

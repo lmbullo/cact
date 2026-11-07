@@ -7,7 +7,7 @@ bench/.cache/
 bench/.tmp/
 tmp8_w_n1sf/
 
-# measurement fixtures: regenerate with bench/ws.py
+# measurement fixtures: regenerate with `python3 -m bench.snapshot freeze`
 bench/ws/
 
 # generated hard-suite artifact (200k rows)

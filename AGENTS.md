@@ -54,7 +54,9 @@ These are architecture, not style. A change that breaks one is a regression even
   INVARIANTS / WHERE TO CHANGE. `bench/agent/headers.py` parses those sections into rows;
   `bench/map.py` and the in-kernel `guide()` verb both read them. `help(tool)` returns the live
   signature, and the provider schema comes from the same registry entry. An agent must never
-  need to read an implementation to learn how to call it.
+  need to read an implementation to learn how to call it. `bench/smoke.py` checks that every
+  ENTRY POINTS callable resolves to a declared symbol, so a header cannot advertise a deleted
+  function.
 - **Self-verifying work.** `final_answer` is staged, then rejected until the goal `Verifier`
   plan passes. A failed check is a repair instruction, not a question. There are no interactive
   prompts in production (`tui/python/worker.py` is unattended).
@@ -67,9 +69,11 @@ These are architecture, not style. A change that breaks one is a regression even
   `error.code: "bad_arguments"`, plus the signature hint), refused mutations (`wrong_call`) and
   check failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`). Do not replace a
   structured answer with prose only a human can parse.
-- **Legibility is enforced, not requested.** Three cheap offline gates: `bench/map.py --check`
+- **Legibility is enforced, not requested.** Four cheap offline gates: `bench/map.py --check`
   for the module header, `ruff.toml` (E/F/W/B, blank-line convention included) for the code,
-  and a one-line contract docstring on every public function and class. A public name without
+  a one-line contract docstring on every public function and class, and
+  `bench/smoke_checks/docs.py`, which resolves every repository path these documents name so a
+  rename cannot leave a dead pointer. A public name without
   a docstring is a defect; so is a name one character away from another (`check` vs `checks`,
   `run` vs `runs`, `ws.py` next to `ws/`). Names come in prefix families, never near-duplicates.
 - **Design the tool for the job.** `exec` takes argv + cwd, not a command string: no quoting, no
@@ -189,7 +193,7 @@ Run in this order. A failure is a contract change, not a flaky test.
 |---|---|---|
 | `python3 bench/map.py --check` | every module header has its four sections | exit 0 |
 | `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, `guide()`, ruff | exit 0 |
+| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths, `guide()`, ruff | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
 | `cd tui && bun test` | rendering/detection tests, 6 files | 13 pass; React `act(...)` warnings are expected noise |
