@@ -15,7 +15,7 @@
  *  clip(text, width)        collapse to one line and ellipsize to a width
  *  oneLine(text)            collapse whitespace, drop CRs
  *  lineCount(text)          non-empty line count, for the `(+42L)` tail
- *  wrapText(text, width)    keep every line: word-wrap a final summary into rows
+ *  wrapText(text, width)    keep every line: word-wrap a log block (the prompt, the summary)
  *  toolArgs(code)           the arguments of a python cell's first call, for the run log
  *  shortPath(path)          `$HOME` -> `~`, so the top bar stays one line
  *  elapsed(ms)              compact duration: `0.8s`, `12s`, `2m04s`, `1h02m`
@@ -78,9 +78,10 @@ export const STATUS: Record<TaskStatus, { word: string; mark: string; color: RGB
 export const PROMPT_MAX_ROWS = 5;
 
 /**
- * How many rows a final summary may occupy before the rest is reported as `(+N lines)`.
- * High enough that a real summary is shown in full; low enough that a runaway one cannot
- * turn the run log into a wall.
+ * How many rows a log block may occupy before the rest is reported as `(+N lines)`. Both blocks
+ * the reader came to read — the prompt the run started from and the summary it ended with — are
+ * wrapped, never clipped, and share this cap. High enough that a real block is shown in full;
+ * low enough that a runaway one cannot turn the run log into a wall.
  */
 export const SUMMARY_MAX_LINES = 400;
 
@@ -102,9 +103,10 @@ export function lineCount(text: string): number {
 }
 
 /**
- * Wrap text to `width` columns, keeping every line: the run log's final summary is shown
- * whole, so it must wrap instead of being clipped. Paragraph breaks survive as blank rows;
- * a line longer than `width` breaks on its last space, or hard when it has none.
+ * Wrap text to `width` columns, keeping every line: a log block (the prompt at the top of a run
+ * and the agent's final summary at the bottom) is shown whole, so it must wrap instead of being
+ * clipped. Paragraph breaks survive as blank rows; a line longer than `width` breaks on its last
+ * space, or hard when it has none.
  * Returns the wrapped rows plus how many were cut past `maxLines` (never silently).
  */
 export function wrapText(

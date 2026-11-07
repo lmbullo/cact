@@ -1,11 +1,12 @@
 /**
- * Live log: one line per event, long payloads truncated, the log keeps following the task over the WebSocket while the board stays mounted.
+ * Live log: the prompt it started from, one line per event, and the agent's summary in full.
  *
  * WHAT IT IS
  *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
- *  over the WebSocket exactly as python/worker.py emits them. The frame must show one line per
- *  event, keep a long `run(...)` argument on a bounded row, keep the prompt box where it was,
- *  and end on the status line with the agent's whole summary wrapped below it.
+ *  over the WebSocket exactly as python/worker.py emits them. The frame must open with the whole
+ *  prompt, show one line per event, keep a long `run(...)` argument on a bounded row, keep the
+ *  prompt box where it was, and close on the status line with the agent's whole summary wrapped
+ *  below it in the same column the prompt used.
  *
  * ENTRY POINTS
  *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
@@ -15,19 +16,23 @@
  *  - Event fixtures mirror the `emit({...})` payloads of python/worker.py; a new kind added
  *    there without a case here means the panel can drop it silently.
  *  - Truncation is part of the contract for a row: a cell that prints 200 lines must not push
- *    the board off the frame, so the digest assertions are load-bearing. The one exception is
- *    the final summary, which is wrapped, never clipped, and asserted whole.
+ *    the board off the frame, so the digest assertions are load-bearing. The two exceptions are
+ *    the opening prompt and the final summary, which are wrapped, never clipped, and asserted
+ *    whole.
  *  - React `act(...)` warnings in `bun test` are expected noise.
  *
  * WHERE TO CHANGE
- *  How an event renders .... src/client.tsx (log panel)
+ *  How an event renders .... src/log-view.tsx (EventView)
+ *  The opening block ........ src/log-view.tsx (PromptView)
  *  A new event kind ........ python/worker.py emit(), src/types.ts, a case here
  */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/client";
 
-const task = { id: "t-eeee5555", prompt: "live job", status: "running", createdAt: 1 };
+const baseTask = { id: "t-eeee5555", prompt: "live job", status: "running", createdAt: 1 };
+/** The task the stub serves; a later test swaps in a long prompt before it connects. */
+let task = baseTask;
 const sockets: any[] = [];
 
 const server = Bun.serve({
@@ -79,6 +84,15 @@ test("live log renders one line per event and truncates long payloads", async ()
   const logFrame = captureCharFrame();
   expect(logFrame).toContain("›");
   expect(logFrame).toContain("task for /tmp/ws");
+
+  // The log opens with the task's prompt as a block: `▸ prompt` head, then the prompt in the
+  // indented column (one box pad + four) that the final summary will also use.
+  expect(logFrame).toContain("▸ prompt");
+  const promptBody = logFrame.split("\n").find((line) => /^ {5}live job/.test(line))!;
+  expect(promptBody).toMatch(/^ {5}live job/);
+  const promptIndent = promptBody.length - promptBody.trimStart().length;
+  // With the prompt as the only content, the log says it is waiting for the first event.
+  expect(logFrame).toContain("waiting for output…");
 
   // The live log keeps the board's prompt box: one hairline above it, the terminal's edge
   // below it, and the prompt anchored at the bottom of the screen.
@@ -176,6 +190,8 @@ test("live log renders one line per event and truncates long payloads", async ()
   const summaryStart = finalRows.findIndex((line) => line.includes("DONE: y"));
   expect(summaryStart).toBeGreaterThan(finalRows.indexOf(finalLine));
   expect(finalRows[summaryStart]!).toMatch(/^ {1,7}DONE: y/);
+  // The summary starts in the same column the prompt did: the log's two ends line up.
+  expect(finalRows[summaryStart]!.length - finalRows[summaryStart]!.trimStart().length).toBe(promptIndent);
   const shown = frame.split("").filter((ch) => ch === "y").length;
   expect(shown).toBeGreaterThanOrEqual(300);
   expect(finalRows.every((line) => line.length <= 80)).toBe(true);
@@ -188,4 +204,30 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(frame).not.toContain("w".repeat(120));
 
   await dispose();
+});
+
+test("a long prompt opens the log whole, wrapped instead of clipped", async () => {
+  const words = Array.from({ length: 90 }, (_, i) => `w${String(i).padStart(2, "0")}`);
+  task = { ...baseTask, id: "t-aaaa9999", prompt: words.join(" ") };
+  const setup = await testRender(<App httpUrl={httpUrl} workspace="/tmp/ws" />, { width: 80, height: 24 });
+  const { mockInput, captureCharFrame, waitFor, flush, dispose } = setup;
+
+  await waitFor(() => captureCharFrame().includes("aaaa9999"));
+  await flush();
+  mockInput.pressEnter();
+  await settle();
+  await flush();
+
+  const frame = captureCharFrame();
+  expect(frame).toContain("▸ prompt");
+  // Every word of the prompt is on screen: it wraps, it is never ellipsized.
+  const flat = frame.replace(/\s+/g, " ");
+  for (const word of words) expect(flat).toContain(word);
+  const first = frame.split("\n").find((line) => /^ {5}w00/.test(line))!;
+  expect(first).toMatch(/^ {5}w00/);
+  expect(first).not.toContain("…");
+  expect(frame.split("\n").every((line) => line.length <= 80)).toBe(true);
+
+  await dispose();
+  task = baseTask;
 });

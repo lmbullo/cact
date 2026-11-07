@@ -141,19 +141,27 @@ reminder; it never invents a fake section or an empty table.
 
 ## 4. Live run log
 
-`Enter` on an empty prompt opens the selected task's log: one row per tool call, plus one `↺`
-row when the loop rejected or staged a finish, and the agent's final summary in full at the end.
-Rows carry a dim elapsed-time gutter once the task has a start time, so a long run reads as a
-timeline.
+`Enter` on an empty prompt opens the selected task's log: the task's whole prompt at the top,
+one row per tool call, one `↺` row when the loop rejected or staged a finish, and the agent's
+final summary in full at the end. The prompt and the summary are the bracket around the run —
+start and finish — and they are set in the same shape. Rows carry a dim elapsed-time gutter once
+the task has a start time, so a long run reads as a timeline.
 
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
  ● running  #4f7c1  add a retry to the fetch helper   esc/enter: back · 3 steps · 4210 tok · 11s
+
+    0ms ▸ prompt  deepseek-flash · low
+
+     add a retry with exponential backoff and jitter to the fetch helper, and cover the
+     503 path with a test
+
    1.5s · read({"path":"src/client.tsx"})
    3.0s · exec({"argv":["bun","test"]})
    4.5s · 'a.py'
    6.0s ↺ [finish] final_answer rejected: the project check still fails
+
    7.5s ✓ done  stop=DONE · 7 steps · 3 cells · 0 errors · 18432ms · 4210 tok
 
      Retry added to the fetch helper; the backoff path is covered by a test.
@@ -188,6 +196,13 @@ The final event is the one row that grows: its status line (`✓ done  stop=DONE
 followed by one blank row and the agent's whole summary — paragraph breaks and bullets included —
 word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
 `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped.
+
+The log opens with the same block shape, upside: a head row (`0ms ▸ prompt`, the model in the
+quiet tail) and the prompt wrapped into the same four-column indent, so the start and the finish
+of a run line up under each other. The prompt is shown whole — a long one wraps instead of being
+clipped — and it keeps its bright body ink, while the summary sits a shade quieter: the reader's
+words, then the agent's. Before the first event the prompt is the whole log, with `waiting for
+output…` beneath it.
 
 The header's steps/tokens/duration are the live values, the same ones the board row shows, and
 the event count appears once the journal has one. The prompt is clipped before the hint, never
