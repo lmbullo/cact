@@ -31,6 +31,8 @@ interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).
   `@@TUI@@`-prefixed JSON lines. It also prepends a short history of previous tasks in the same
   workspace (files they changed, one line each) as `[workspace history]`.
 - `list-model.ts` is the pure ordering/row/scroll model.
+- `clipboard.ts` owns the one write to the user's clipboard: host clipboard first, OSC 52
+  fallback; a remote terminal uses OSC 52 only.
 - The server broadcasts task updates and events over WebSocket; the TUI keeps only in-memory
   state and reconnects every second on close. There is no TUI-side database.
 
@@ -93,9 +95,11 @@ state renders as the shorter word `queue` in headers and rows.
 | `failed` | `─ failed (n)` | `failed` | red |
 | `cancelled` | `─ cancelled (n)` | `cancelled` | faint |
 
-Selected row: `›` left, `←` right. Mouse click selects (does not open). `Up`/`Down` move the
-highlight while the prompt fits one row; once the prompt wraps or holds a typed newline they
-move the text cursor. The prompt box grows one row per newline or wrapped row, up to five, then
+Selected row: `›` left, `←` right. Mouse click selects (does not open) and never copies.
+Left-drag selects rendered text; releasing the button copies the selection to the clipboard
+and clears the highlight in the same gesture. `Up`/`Down` move the highlight while the prompt
+fits one row; once the prompt wraps or holds a typed newline they move the text cursor. The
+prompt box grows one row per newline or wrapped row, up to five, then
 scrolls vertically and the bottom rule shows the cursor position (`3/5`). `Ctrl+Enter` queues;
 `Escape` clears the prompt, then the highlight; `Enter` on an empty prompt opens the highlighted
 task. The rule above the prompt reports `reconnecting`, the last toast, or `no api key`, in that
@@ -144,6 +148,7 @@ keys on both screens, and a prompt can be typed and queued while a run streams.
 | `Ctrl+K` | Cancel selected queued/running task |
 | `Ctrl+R` | Reconnect the WebSocket |
 | `Ctrl+Q` / `Ctrl+C` | Close the TUI; leave the server running |
+| Left-drag | Select text; release copies it and clears the highlight |
 | `Escape` | Clear the prompt, then the highlight |
 | `Enter` / `Escape` (log) | Leave the log when the prompt is empty; otherwise act on the prompt |
 
@@ -260,8 +265,8 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, progress, prompt, view rendering, check detection
-                    # 15 tests, 6 files; React act(...) warnings are expected noise
+bun test            # tests/: list, log, progress, prompt, view rendering, selection, checks
+                    # 16 tests, 7 files; React act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

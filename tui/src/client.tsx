@@ -19,7 +19,8 @@
  *  Ctrl-C / Ctrl-Q quit, Ctrl-K cancel the selected task, Ctrl-R reconnect,
  *  up/down move the highlight (or the cursor inside a multi-row prompt), Enter opens the
  *  selected task's log (empty prompt) / adds a line, Ctrl-Enter submits, Esc clears the
- *  prompt then leaves the log.
+ *  prompt then leaves the log. A left-drag selects text; releasing copies it and clears the
+ *  highlight.
  *
  * INVARIANTS
  *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and theme.ts
@@ -38,16 +39,24 @@
  *  A colour, a status word, a clip rule ...... theme.ts
  *  Live steps/tokens ........................ taskProgress in list-model.ts, TaskRow, log final
  *  Keys / focus rules ....................... the useKeyboard block below
+ *  Selection copy ........................... clipboard.ts, the useSelectionHandler call below
  *  Ordering, rows, scrolling ................ list-model.ts
  *  Data contract ............................ types.ts
  */
 import {
   createCliRenderer,
+  type CliRenderer,
   type TextareaRenderable,
   type KeyEvent,
   TextAttributes,
 } from "@opentui/core";
-import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
+import {
+  createRoot,
+  useKeyboard,
+  useRenderer,
+  useSelectionHandler,
+  useTerminalDimensions,
+} from "@opentui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ServerInfo, Snapshot, Task, TaskEvent, WsMessage } from "./types";
 import {
@@ -61,9 +70,19 @@ import {
 import { C, PROMPT_MAX_ROWS, clip } from "./theme";
 import { Rule, SectionHeader, TaskRow } from "./board-view";
 import { LogView } from "./log-view";
+import { copyText } from "./clipboard";
 
 /** The board: task list + live run log + one prompt box, mounted against one server's HTTP URL. */
-export function App({ httpUrl, workspace }: { httpUrl: string; workspace: string }) {
+export function App({
+  httpUrl,
+  workspace,
+  copy = copyText,
+}: {
+  httpUrl: string;
+  workspace: string;
+  /** Clipboard writer; tests inject a spy so they never touch the host clipboard. */
+  copy?: (renderer: CliRenderer, text: string) => Promise<boolean>;
+}) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -106,6 +125,22 @@ export function App({ httpUrl, workspace }: { httpUrl: string; workspace: string
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 3500);
   }, []);
+
+  // A left-drag is the whole copy gesture: releasing the mouse copies the selection and
+  // clears the highlight immediately, whether or not the clipboard write then succeeds.
+  // A plain click is only a task selection (or a double-click word), so it never copies
+  // unless the gesture actually moved or the terminal expanded it to a word/line.
+  useSelectionHandler((selection) => {
+    const text = selection.getSelectedText();
+    const { anchor, focus } = selection;
+    const dragged = anchor.x !== focus.x || anchor.y !== focus.y;
+    const expanded = selection.behavior !== "cell";
+    renderer.clearSelection();
+    if ((!dragged && !expanded) || !text.trim()) return;
+    void copy(renderer, text).then((ok) =>
+      notify(ok ? `copied ${text.length} chars` : "copy failed"),
+    );
+  });
 
   const selectTask = useCallback((id: string | null) => {
     selectedRef.current = id;

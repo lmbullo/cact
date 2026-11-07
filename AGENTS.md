@@ -208,7 +208,7 @@ Run in this order. A failure is a contract change, not a flaky test.
 | `python3 bench/eval.py` | the 16 scripted loop contracts: finish, args, journal, compaction, custom tools, skills, docs, delegation, skeptic, autonomy, token cap | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
-| `cd tui && bun test` | rendering/detection tests, 6 files | 15 pass; React `act(...)` warnings are expected noise |
+| `cd tui && bun test` | rendering/detection/selection tests, 7 files | 16 pass; React `act(...)` warnings are expected noise |
 
 Smoke is the fast signal: no key, no network, nothing written outside a temp dir. Python has no
 unit-test framework; smoke plus one real task is the whole story:
@@ -234,7 +234,7 @@ at the offline gates and say so.
 | Eval input or answer | `fixtures.py` (input), `oracle.py` (answer), never both | the case's row |
 | A delegated capability | `subagent.py` / `skeptic.py` / `custom.py`, then `config.build` and the worker env flags | `bench/eval.py`, a live run |
 | Model/temperature/cache | `llm.Client`, TUI env | a live run |
-| TUI board/log/keys | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts` | `bun test` |
+| TUI board/log/keys/clipboard | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts`, `clipboard.ts` | `bun test` |
 | TUI queue/journal/API | `tui/src/server.ts`, `tui/src/types.ts` | `bun test`, `bench/live.py` |
 
 Adding a module means adding its four-section header before its first line of code, a one-line

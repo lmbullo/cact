@@ -234,7 +234,7 @@ python3 bench/task_journal.py --recent 10  # newest tasks across every workspace
 ```bash
 cd tui && bun install
 bun run typecheck      # tsc --noEmit; noUnusedLocals/noUnusedParameters are on
-bun test               # 15 tests, 6 files
+bun test               # 16 tests, 7 files
 ./bin/code             # inside the target project; starts/reuses its server
 ./bin/code-stop        # SIGTERM the server for this directory
 ```
@@ -253,7 +253,7 @@ The agent's Python kernel is `python3` from `PATH` (`CODE_TUI_PYTHON` overrides)
 - `bench/archive/results/ws/tui-base` and `tui-broken` are archived frozen snapshots.
   Recreate a base with `python3 -m bench.snapshot freeze tui <dst>`; `bench/ws/` is generated
   and gitignored.
-- Tests are TS only (`bun test` = 15 tests, 6 files). React `act(...)` warnings are expected
+- Tests are TS only (`bun test` = 16 tests, 7 files). React `act(...)` warnings are expected
   noise. Python has no test framework: `bench/smoke.py` is the offline contract check; its
   `style` group runs `ruff.toml` plus the "every public name has a docstring" check, and its
   `docs` group fails when a document names a path that no longer exists.
