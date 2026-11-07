@@ -86,17 +86,22 @@ export function taskHandle(id: string): string {
   return id;
 }
 
-/** A board row: a status band header, or one task. */
+/** A board row: a blank spacer row, a status band header, or one task. */
 export type ListRow =
+  | { kind: "space" }
   | { kind: "section"; status: TaskStatus; count: number }
   | { kind: "task"; task: Task };
 
-/** Flat render list: one header per status band, then that band's tasks. */
+/**
+ * Flat render list: one header per status band, then that band's tasks, with one blank row
+ * between bands. The blank is what makes the board read as sections instead of a table.
+ */
 export function buildRows(ordered: Task[]): ListRow[] {
   const rows: ListRow[] = [];
   for (const status of STATUS_ORDER) {
     const group = ordered.filter((task) => task.status === status);
     if (group.length === 0) continue;
+    if (rows.length > 0) rows.push({ kind: "space" });
     rows.push({ kind: "section", status, count: group.length });
     for (const task of group) rows.push({ kind: "task", task });
   }

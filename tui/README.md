@@ -77,15 +77,17 @@ in red while the socket is down and `idle` when the board is empty.
 
 ```
  ▌ code  ~/some/project                      deepseek-flash · low · 1 running · 1 queue
-  ● running ──────────────────────────────────────────────────────────────────────── 1
-  › t-m3k9a1x2-4f7c1 running add a retry to the fetch helper   3 steps · 4210 tok  11s ←
-  ○ queue ─────────────────────────────────────────────────────────────────────────── 1
-    t-m3k9b7c4-1a9de queue   write tests for the parser
-  ✓ done ──────────────────────────────────────────────────────────────────────────── 1
-    t-m3k9f5g6-0c4aa done    rename the config loader                                15s
-────────────────────────────────────────────────────────────────────────────────────────
-  › task for /home/you/some/project…
-────────────────────────────────────────────────────────────────────────────────────────
+ ● running ──────────────────────────────────────────────────────────────────────── 1
+ › t-m3k9a1x2-4f7c1 running add a retry to the fetch helper   3 steps · 4210 tok  11s ←
+
+ ○ queue ─────────────────────────────────────────────────────────────────────────── 1
+   t-m3k9b7c4-1a9de queue   write tests for the parser
+
+ ✓ done ──────────────────────────────────────────────────────────────────────────── 1
+   t-m3k9f5g6-0c4aa done    rename the config loader                                15s
+───────────────────────────────────────────────────────────────────────────────────────
+ › task for /home/you/some/project…
+───────────────────────────────────────────────────────────────────────────────────────
 ```
 
 Grouping order: `running`, `queued`, `done`, `partial`, `failed`, `cancelled`. The `queued`
@@ -95,12 +97,16 @@ column. A running row's wall time ticks once a second; an idle board does not re
 
 | State | Section header | Row word | Dot | Colour |
 |---|---|---|---|---|
-| `running` | `● running ─── n` | `running` | `●` | green |
-| `queued` | `○ queue ───── n` | `queue` | `○` | yellow |
-| `done` | `✓ done ────── n` | `done` | `✓` | dim |
-| `partial` | `◐ partial ─── n` | `partial` | `◐` | yellow |
-| `failed` | `✖ failed ──── n` | `failed` | `✖` | red |
-| `cancelled` | `⊘ cancelled ─ n` | `cancelled` | `⊘` | faint |
+| `running` | `● running ─── n` | `running` | `●` | olive |
+| `queued` | `○ queue ───── n` | `queue` | `○` | amber |
+| `done` | `✓ done ────── n` | `done` | `✓` | olive |
+| `partial` | `◐ partial ─── n` | `partial` | `◐` | amber |
+| `failed` | `✖ failed ──── n` | `failed` | `✖` | clay |
+| `cancelled` | `⊘ cancelled ─ n` | `cancelled` | `⊘` | quietest grey |
+
+Only the dot carries the state colour; the word stays grey, so a column of rows reads as one
+block of type instead of a colour chart. `list-model.buildRows` puts one blank row between bands,
+so the sections breathe without any rule of their own.
 
 Selected row: `›` left, `←` right. Mouse click selects (does not open) and never copies.
 Left-drag selects rendered text; releasing the button copies the selection to the clipboard
@@ -119,28 +125,47 @@ reminder; it never invents a fake section or an empty table.
 ## 4. Live run log
 
 `Enter` on an empty prompt opens the selected task's log: one row per tool call, plus one `↺`
-row when the loop rejected or staged a finish. Rows carry a dim elapsed-time gutter once the
-task has a start time, so a long run reads as a timeline.
+row when the loop rejected or staged a finish, and the agent's final summary in full at the end.
+Rows carry a dim elapsed-time gutter once the task has a start time, so a long run reads as a
+timeline.
 
 ```
  ▌ code  ~/some/project                      deepseek-flash · low · 1 running · 1 queue
- ● running  add a retry to the fetch helper  esc/enter: back · 3 steps · 4210 tok · 11s · ctrl-k · 5 events
-   1.5s ▸ read({"path":"src/client.tsx"})
-   3.0s ▸ exec({"argv":["bun","test"]})
-   4.5s ▸ 'a.py'
+ ● running  add a retry to the fetch helper  esc/enter: back · 3 steps · 4210 tok · 11s
+   1.5s · read({"path":"src/client.tsx"})
+   3.0s · exec({"argv":["bun","test"]})
+   4.5s · 'a.py'
    6.0s ↺ [finish] final_answer rejected: the project check still fails
-   7.5s ● done stop=DONE · 7 steps · 3 cells · 0 errors · 18432ms · 4210 tok = all tests pass
-────────────────────────────────────────────────────────────────────────────────────────
+   7.5s ✓ done  stop=DONE · 7 steps · 3 cells · 0 errors · 18432ms · 4210 tok
+
+          Retry added to the fetch helper; the backoff path is covered by a test.
+
+            changed
+            - src/fetch.ts: three attempts, exponential backoff, jitter
+            - tests/fetch.test.ts: a 503 then a success
+
+            verified
+            - bun test (19 tests)
+───────────────────────────────────────────────────────────────────────────────────────
   › task for /home/you/some/project…
-────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────────────
 ```
 
 A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
 A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
-`exec({"argv":["bun","test"]})`; the verb is dim and the arguments are the tool colour. A
-python cell shows the arguments of its first call, so `read('a.py')` reads as `▸ 'a.py'`; the
-cell index and counters are dropped and only the first line of a multi-line cell is kept.
-Calls render in gruvbox purple (`#d3869b`).
+`exec({"argv":["bun","test"]})`; both are body ink, the tool name a shade quieter. A python cell
+shows the arguments of its first call, so `read('a.py')` reads as `· 'a.py'`; the cell index and
+counters are dropped and only the first line of a multi-line cell is kept.
+
+The log is monochrome by design: the gutter, the `·` bullet and the lifecycle lines use the
+quietest greys, the arguments use body ink, and nothing is bold. Colour appears only where it
+means something — amber for a rejected or staged finish, clay for an error, the status dot on the
+final line. That is the difference between a log you scan and a log that glares.
+
+The final event is the one row that grows: its status line (`✓ done  stop=DONE · 7 steps · …`) is
+followed by one blank row and the agent's whole summary — paragraph breaks and bullets included —
+word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
+`SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped.
 
 The log header pins the navigation hint first and clips the prompt before it: `esc/enter: back`
 is never dropped, and the optional counters disappear from the tail as the terminal narrows.

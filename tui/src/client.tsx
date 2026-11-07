@@ -580,8 +580,12 @@ export function App({
       ) : listRows.length === 0 ? (
         <EmptyState width={width} />
       ) : (
-        visible.map((row) =>
-          row.kind === "section" ? (
+        visible.map((row, index) =>
+          row.kind === "space" ? (
+            <box key={`space:${index}`} style={{ height: 1, flexShrink: 0 }}>
+              <text>{" "}</text>
+            </box>
+          ) : row.kind === "section" ? (
             <SectionHeader key={`section:${row.status}`} status={row.status} count={row.count} width={width} />
           ) : (
             <TaskRow

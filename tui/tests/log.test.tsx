@@ -4,8 +4,8 @@
  * WHAT IT IS
  *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
  *  over the WebSocket exactly as python/worker.py emits them. The frame must show one line per
- *  event, collapse a long `run(...)` argument and a 200-line stdout to a bounded digest, keep
- *  the prompt box where it was, and end on the stop line.
+ *  event, keep a long `run(...)` argument on a bounded row, keep the prompt box where it was,
+ *  and end on the status line with the agent's whole summary wrapped below it.
  *
  * ENTRY POINTS
  *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
@@ -14,8 +14,9 @@
  * INVARIANTS
  *  - Event fixtures mirror the `emit({...})` payloads of python/worker.py; a new kind added
  *    there without a case here means the panel can drop it silently.
- *  - Truncation is part of the contract: a cell that prints 200 lines must not push the board
- *    off the frame, so the digest assertions are load-bearing.
+ *  - Truncation is part of the contract for a row: a cell that prints 200 lines must not push
+ *    the board off the frame, so the digest assertions are load-bearing. The one exception is
+ *    the final summary, which is wrapped, never clipped, and asserted whole.
  *  - React `act(...)` warnings in `bun test` are expected noise.
  *
  * WHERE TO CHANGE
@@ -99,30 +100,30 @@ test("live log renders one line per event and truncates long payloads", async ()
     await flush();
   };
 
-  // A short tool call reads as just its arguments on one row, with no verb.
+  // A short tool call reads as just its arguments on one row, with no verb and a quiet bullet.
   await push(1, { kind: "cell.start", cell: 1, code: "read('a.py')" });
   let frame = captureCharFrame();
   const cellLine = frame.split("\n").find((line) => line.includes("a.py"))!;
-  expect(cellLine).toContain("▸ 'a.py'");
+  expect(cellLine).toContain("· 'a.py'");
   expect(cellLine).not.toContain("read");
   // One row only: the next row is not a continuation of the code.
   expect(cellLine.trimEnd().endsWith("a.py')") || cellLine.includes("'a.py'")).toBe(true);
 
-  // Tool calls use the gruvbox purple accent, not the old aqua/green one.
+  // Tool calls are monochrome: the arguments use the dim ink, never a saturated accent.
   const callLine = captureSpans().lines.find((line) =>
     line.spans.some((span) => span.text.includes("a.py")),
   );
   expect(callLine).toBeTruthy();
   const argSpan = callLine!.spans.find((span) => span.text.includes("a.py"))!;
-  expect(argSpan.fg.toInts().slice(0, 3)).toEqual([0xd3, 0x86, 0x9b]);
-  expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0x8e, 0xc0, 0x7c]);
-  expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xb8, 0xbb, 0x26]);
+  expect(argSpan.fg.toInts().slice(0, 3)).toEqual([0xbd, 0xae, 0x93]);
+  expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xd3, 0x86, 0x9b]);
+  expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xa9, 0xb6, 0x65]);
 
   // A long tool call is truncated with an ellipsis instead of wrapping.
   const longCode = `run(${JSON.stringify("x".repeat(400))})`;
   await push(2, { kind: "cell.start", cell: 2, code: longCode });
   frame = captureCharFrame();
-  const longLine = frame.split("\n").find((line) => line.includes("▸ \""))!;
+  const longLine = frame.split("\n").find((line) => line.includes("· \""))!;
   expect(longLine).toContain("…");
   expect(longLine.length).toBeLessThanOrEqual(80);
   expect(frame).not.toContain("x".repeat(120));
@@ -130,9 +131,9 @@ test("live log renders one line per event and truncates long payloads", async ()
   // A multi-line cell still renders exactly one row.
   await push(3, { kind: "cell.start", cell: 3, code: "print(1)\nprint(2)\nprint(3)\nprint(4)" });
   frame = captureCharFrame();
-  const multi = frame.split("\n").filter((line) => line.includes("▸ 1"));
+  const multi = frame.split("\n").filter((line) => line.trimStart().startsWith("· 1"));
   expect(multi.length).toBe(1);
-  expect(multi[0]).toContain("▸ 1");
+  expect(multi[0]).toContain("· 1");
 
   // A turn is not rendered at all: no output, no line counts.
   const stdout = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
@@ -154,19 +155,30 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(noticeLine).toContain("↺");
   expect(noticeLine).toContain("project check still fails");
 
-  // The final event is a single row: status, counters, and a clipped summary.
+  // The final event is a status row followed by the agent's summary in full: wrapped to the
+  // pane, never clipped, set in a column of its own two rows below the status line. A task
+  // with a start time also carries the timeline gutter, which the wrap must leave room for.
+  sockets.at(-1)!.send(JSON.stringify({ type: "task", task: { ...task, startedAt: 1 } }));
+  await settle();
+  await flush();
+  const summary = "DONE: " + "y".repeat(300);
   await push(6, {
     kind: "final",
-    text: "DONE: " + "y".repeat(300),
+    text: summary,
     data: { status: "done", stop: "DONE", steps: 7, calls: 3, wallMs: 1234 },
   });
   frame = captureCharFrame();
-  const finalLine = frame.split("\n").find((line) => line.includes("● done"))!;
+  const finalRows = frame.split("\n");
+  const finalLine = finalRows.find((line) => line.includes("✓ done"))!;
   expect(finalLine).toContain("stop=DONE");
   expect(finalLine).toContain("7 steps");
-  expect(finalLine).toContain("…");
-  expect(finalLine.length).toBeLessThanOrEqual(80);
-  expect(frame).not.toContain("y".repeat(200));
+  // The summary body is the wrapped block below it, and no word of it is lost.
+  const summaryStart = finalRows.findIndex((line) => line.includes("DONE: y"));
+  expect(summaryStart).toBeGreaterThan(finalRows.indexOf(finalLine));
+  expect(finalRows[summaryStart]!).toMatch(/^ {1,7}DONE: y/);
+  const shown = frame.split("").filter((ch) => ch === "y").length;
+  expect(shown).toBeGreaterThanOrEqual(300);
+  expect(finalRows.every((line) => line.length <= 80)).toBe(true);
 
   // An unknown event kind shows one word only: its payload is never dumped.
   await push(7, { kind: "observation", text: "z".repeat(300), data: { stdout: "w".repeat(300) } });

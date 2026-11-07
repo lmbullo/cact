@@ -71,22 +71,22 @@ export function TopBar(props: {
       style={{ height: 1, flexShrink: 0, flexDirection: "row", paddingLeft: 1, paddingRight: 1 }}
     >
       <text>
-        <span fg={C.aqua} attributes={TextAttributes.BOLD}>{"▌ "}</span>
+        <span fg={C.accent}>{"▌ "}</span>
         <span fg={C.text} attributes={TextAttributes.BOLD}>{"code"}</span>
         {pathText ? <span fg={C.faint}>{`  ${pathText}`}</span> : null}
-        <span fg={C.faint}>{" ".repeat(gap)}</span>
-        <span fg={connected ? C.dim : C.red}>{rightText}</span>
+        <span>{" ".repeat(gap)}</span>
+        <span fg={connected ? C.faint : C.red}>{rightText}</span>
       </text>
     </box>
   );
 }
 
-/** One full-width rule; the optional `note` is sacrificed to keep the line on one row. */
+/** One full-width hairline; the optional `note` is sacrificed to keep the line on one row. */
 export function Rule({ width, note }: { width: number; note?: string }) {
   // Keep the hint visible: shrink the rule instead of letting the note run off-screen.
   const hint = note ? ` ${note}` : "";
   const line = "─".repeat(Math.max(0, width - hint.length));
-  return note ? <text fg={C.faint}>{`${line}${hint}`}</text> : <text fg={C.faint}>{line}</text>;
+  return note ? <text fg={C.quiet}>{`${line}`}<span fg={C.faint}>{hint}</span></text> : <text fg={C.quiet}>{line}</text>;
 }
 
 /**
@@ -101,9 +101,10 @@ export function SectionHeader({ status, count, width }: { status: TaskStatus; co
   return (
     <box style={{ height: 1, width: "100%", flexShrink: 0, paddingLeft: 1, paddingRight: 1 }}>
       <text>
-        <span fg={meta.color} attributes={TextAttributes.BOLD}>{`${meta.mark} ${meta.word}`}</span>
-        <span fg={C.bg1}>{` ${"─".repeat(dashes)} `}</span>
-        <span fg={C.faint}>{tail}</span>
+        <span fg={meta.color}>{meta.mark}</span>
+        <span fg={C.dim}>{` ${meta.word}`}</span>
+        <span fg={C.rule}>{` ${"─".repeat(dashes)} `}</span>
+        <span fg={C.quiet}>{tail}</span>
       </text>
     </box>
   );
@@ -123,7 +124,7 @@ export function TaskRow(props: {
   const { task, selected, width, now, onSelect } = props;
   const meta = STATUS[task.status];
   const handle = taskHandle(task.id);
-  const head = ` ${selected ? "›" : " "} ${handle} `;
+  const arrow = selected ? "›" : " ";
   const statusCell = meta.word.padEnd(8);
   // Selection is shown with an arrow, not a background highlight.
   const marker = selected ? " ←" : "";
@@ -131,11 +132,13 @@ export function TaskRow(props: {
   const age = taskDuration(task, now);
   const telemetry = [progress, age].filter(Boolean).join("  ");
   const tail = `${telemetry}${marker}`;
+  // ` arrow  handle status` — the fixed left column, padding included.
+  const chrome = 3 + handle.length + 1;
   const prompt = clip(
     task.prompt,
-    Math.max(8, width - head.length - statusCell.length - tail.length - 1),
+    Math.max(8, width - 2 - chrome - statusCell.length - tail.length),
   );
-  const fill = Math.max(0, width - head.length - statusCell.length - prompt.length - tail.length);
+  const fill = Math.max(0, width - 2 - chrome - statusCell.length - prompt.length - tail.length);
   return (
     <box
       style={{
@@ -146,12 +149,13 @@ export function TaskRow(props: {
       onMouseDown={() => onSelect(task.id)}
     >
       <text>
-        <span fg={selected ? C.accent : C.faint}>{head}</span>
-        <span fg={meta.color}>{statusCell}</span>
+        <span fg={selected ? C.accent : C.quiet}>{` ${arrow} `}</span>
+        <span fg={selected ? C.dim : C.quiet}>{`${handle} `}</span>
+        <span fg={C.faint}>{statusCell}</span>
         <span fg={selected ? C.text : C.dim}>{prompt}</span>
         <span>{fill > 0 ? " ".repeat(fill) : ""}</span>
-        <span fg={C.faint}>{telemetry}</span>
-        <span fg={selected ? C.accent : C.faint}>{marker}</span>
+        <span fg={C.quiet}>{telemetry}</span>
+        <span fg={C.accent}>{marker}</span>
       </text>
     </box>
   );
@@ -195,10 +199,11 @@ export function LogHeader({
   return (
     <box style={{ height: 1, flexShrink: 0, flexDirection: "row", paddingLeft: 1, paddingRight: 1 }}>
       <text>
-        <span fg={meta.color} attributes={TextAttributes.BOLD}>{label}</span>
-        {prompt ? <span fg={C.text}>{`  ${prompt}`}</span> : null}
-        <span fg={C.faint}>{" ".repeat(gap)}</span>
-        <span fg={C.faint}>{right}</span>
+        <span fg={meta.color}>{meta.mark}</span>
+        <span fg={C.dim}>{` ${meta.word}`}</span>
+        {prompt ? <span fg={C.faint}>{`  ${prompt}`}</span> : null}
+        <span>{" ".repeat(gap)}</span>
+        <span fg={C.quiet}>{right}</span>
       </text>
     </box>
   );
@@ -211,7 +216,7 @@ export function EmptyState({ width }: { width: number }) {
     <box style={{ flexDirection: "column", flexShrink: 0, paddingLeft: 2, paddingTop: 1 }}>
       <text fg={C.text} attributes={TextAttributes.BOLD}>{"no tasks yet"}</text>
       <text fg={C.faint}>{hint}</text>
-      <text fg={C.faint}>{clip("every run is fire-and-forget: closing the tui leaves it running", Math.max(10, width - 4))}</text>
+      <text fg={C.quiet}>{clip("every run is fire-and-forget: closing the tui leaves it running", Math.max(10, width - 4))}</text>
     </box>
   );
 }
