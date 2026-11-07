@@ -23,7 +23,7 @@ WHAT IT IS
 ENTRY POINTS
   python3 bench/map.py [--query TEXT | --module PATH | --json | --check]
   guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0) -> dict
-  index(root=None) -> list[dict];  documented(root=None);  problems(root=None)
+  index(root=None) -> list[dict];  problems(root=None)
   header(path) -> (header text, line count);  split(text) -> (title, sections)
   render(rows, chars=20000) -> str
 

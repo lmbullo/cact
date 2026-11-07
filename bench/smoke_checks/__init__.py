@@ -9,6 +9,7 @@ WHAT IT IS
     suites.py    every suite imports; task counts and ids are intact        run(check)
     helpers.py   pure helpers, card digests, generated verb specs          run(check)
     index.py     the header index + map CLI                               run(check)
+    docs.py      every path a document names exists                        run(check)
     plans.py     check plan, Verifier, coverage, run_check                 run(check) -> root
     protocol.py  stale/current PROTOCOL                                   run(check, root)
     files.py     journalled file action space                             run(check, root, kernel)

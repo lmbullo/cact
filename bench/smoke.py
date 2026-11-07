@@ -10,6 +10,7 @@ WHAT IT IS
     suites    every suite imports; task counts and ids are intact
     helpers   pure helpers: reply parsing, card digests, budgets, generated verb specs
     index     the header index and `bench/map.py --check`
+    docs      every repository path a document names still exists
     plans     the check plan, the Verifier, read coverage, run_check's three states
     protocol  a stale child is restarted, the current PROTOCOL is accepted
     files     the journalled file action space (read/write/edit/undo/diff/map/guide)
@@ -52,7 +53,7 @@ if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the
     sys.path.insert(0, str(ROOT))
 
 from bench.smoke_checks import (  # noqa: E402
-    files, gates, helpers, index, plans, protocol, repl, style, suites, turns, verbs,
+    docs, files, gates, helpers, index, plans, protocol, repl, style, suites, turns, verbs,
 )
 from bench.smoke_support import check, kernel_for, summary  # noqa: E402
 
@@ -62,6 +63,7 @@ def main() -> int:
     suites.run(check)
     helpers.run(check)
     index.run(check)
+    docs.run(check)
 
     # The workspace and the kernel child are shared by every later group: plans creates the
     # tree, then one child serves files -> verbs -> gates (they depend on each other's files).
