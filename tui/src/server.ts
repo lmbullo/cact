@@ -26,9 +26,10 @@
  *    tui/python/worker.py.
  *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
- *  - A `turn` message updates `Task.progress` (turn number, cumulative prompt tokens from
- *    the cache split) and broadcasts the task, so the board moves while the task runs. The
- *    `final` message clears `progress` and installs the authoritative steps/usage.
+ *  - A `turn` message folds the provider's usage into `Task.progress` (turn number, in/out
+ *    tokens, prompt cache split, latest context size, context window) and broadcasts the
+ *    task, so the board moves while the task runs. The `final` message clears `progress`,
+ *    installs the authoritative steps/usage and keeps the last context/window on the task.
  *  - Port 0 means an OS-chosen port, published in server.json. Two servers for one workspace
  *    would race on those files, so launcher.ts always reuses a healthy one.
  *  - detectChecks() runs when a task starts, not once at boot, so a script an earlier
@@ -64,6 +65,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CheckSpec, ServerInfo, Snapshot, Task, TaskEvent, WorkerMessage } from "./types";
+import { foldTurn } from "./list-model";
 import { detectChecks } from "./detect-checks";
 
 const VERSION = "0.1.0";
@@ -293,19 +295,10 @@ function handleWorkerLine(task: Task, raw: string): void {
     case "turn": {
       const data = capValue(message.data) as Record<string, unknown>;
       // Live progress: the final event carries the authoritative counters, but a running
-      // task would otherwise show nothing until it ends. Turn events already carry the
-      // turn number and the prompt cache split, so derive `steps` and `tokens` from them.
-      const cache = (data.cache ?? {}) as Record<string, unknown>;
-      const usage = (data.usage ?? {}) as Record<string, unknown>;
-      const turn = Number(message.turn ?? data.turn ?? 0);
-      const tokens =
-        Number(usage.total_tokens ?? 0) ||
-        Number(cache.hit ?? 0) + Number(cache.miss ?? 0);
-      const progress = task.progress ?? {};
-      task.progress = {
-        steps: turn > 0 ? turn : progress.steps,
-        tokens: (progress.tokens ?? 0) + (Number.isFinite(tokens) ? tokens : 0),
-      };
+      // task would otherwise show nothing until it ends. The fold itself (usage, cache split,
+      // context size, window) lives in list-model.foldTurn, so the numbers a view formats and
+      // the numbers a turn accumulates cannot drift apart.
+      task.progress = foldTurn(task.progress, Number(message.turn ?? data.turn ?? 0), data);
       saveTask(task);
       broadcast({ type: "task", task });
       appendEvent(task, {
@@ -331,6 +324,10 @@ function handleWorkerLine(task: Task, raw: string): void {
       task.usage = message.usage;
       task.wallMs = message.wallMs;
       // The final counters replace the live estimate, so the board never prefers stale numbers.
+      // The context window is not a sum, so it is kept on the task instead of derived from
+      // `usage` (whose prompt tokens are a total over turns), and `progress` is dropped.
+      task.context = task.progress?.context;
+      task.window = task.progress?.window;
       task.progress = undefined;
       task.final = capString(message.final ?? "", 64000) as string;
       appendEvent(task, {

@@ -22,8 +22,11 @@
  *    the board off the frame, so the digest assertions are load-bearing. The two exceptions are
  *    the opening prompt and the final summary, which are wrapped, never clipped, and asserted
  *    whole.
- *  - Exactly one status word per log is the invariant: the header's. A lifecycle row or a second
- *    status word on the closing block is a regression, not a wording preference.
+ *  - Exactly one status word per log is the invariant: the header's. The same holds for the
+ *    counters (steps, tokens in/out, cache rate, context window): the header prints them once
+ *    and the closing block repeats none of them.
+ *  - A lifecycle row or a second status word on the closing block is a regression, not a
+ *    wording preference.
  *  - React `act(...)` warnings in `bun test` are expected noise.
  *
  * WHERE TO CHANGE
@@ -181,8 +184,9 @@ test("live log renders one line per event and truncates long payloads", async ()
   // The final event closes the log with the summary block. The header above already owns the
   // run's state and its live counters, so the closing head names itself (`▸ summary`) and
   // carries only what the header cannot: why the run stopped, its cell and error counts. That
-  // is the one source of truth — no second status word, no copied steps or tokens. A task with
-  // a start time also carries the timeline gutter, which the wrap must leave room for.
+  // is the one source of truth — no second status word, no copied steps, tokens, cache rate or
+  // context window. A task with a start time also carries the timeline gutter, which the wrap
+  // must leave room for.
   const summary = "DONE: " + "y".repeat(300);
   await push(6, {
     kind: "final",
@@ -191,7 +195,21 @@ test("live log renders one line per event and truncates long payloads", async ()
   });
   sockets.at(-1)!.send(JSON.stringify({
     type: "task",
-    task: { ...task, status: "done", startedAt: 1, steps: 7, usage: { total_tokens: 4210 } },
+    task: {
+      ...task,
+      status: "done",
+      startedAt: 1,
+      steps: 7,
+      usage: {
+        prompt_tokens: 3600,
+        completion_tokens: 610,
+        total_tokens: 4210,
+        prompt_cache_hit_tokens: 3000,
+        prompt_cache_miss_tokens: 600,
+      },
+      context: 4210,
+      window: 1_048_576,
+    },
   }));
   await settle();
   await flush();
@@ -200,13 +218,16 @@ test("live log renders one line per event and truncates long payloads", async ()
   const header = finalRows.find((line) => line.includes("esc/enter: back"))!;
   expect(header).toContain("✓ done");
   expect(header).toContain("7 steps");
-  expect(header).toContain("4210 tok");
+  expect(header).toContain("↑3.6k ↓610");
+  expect(header).toContain("83% cache");
   // One status word on the whole log: the header's.
   expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
   const finalLine = finalRows.find((line) => line.includes("▸ summary"))!;
   expect(finalLine).toContain("stop=DONE");
   expect(finalLine).toContain("3 cells");
   expect(finalLine).not.toContain("7 steps");
+  expect(finalLine).not.toContain("↑");
+  expect(finalLine).not.toContain("cache");
   expect(finalLine).not.toContain("done");
   // The summary body is the wrapped block below it, and no word of it is lost.
   const summaryStart = finalRows.findIndex((line) => line.includes("DONE: y"));

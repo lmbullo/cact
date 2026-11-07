@@ -71,11 +71,14 @@ light, translucent — and only the ink is fixed. The screen is a masthead, the 
 hairline and the prompt; nothing is boxed, nothing is filled.
 
 One row per task: a `›` selection marker, the task's short handle (`#4f7c1`), the prompt, then
-right-aligned telemetry — live `steps · tokens` when the task has them, and the wall time. A row
-whose task recorded errors appends `N err` in clay after the time. Counters come from turn events
-(`Task.progress`), so a running row moves before the final answer; a finished row falls back to
-the final `steps`/`usage` counters and its recorded span. Row id is
-`t-<base36 timestamp>-<5 hex>`; the row shows only its last segment (`#4f7c1`) because the
+right-aligned telemetry — `steps`, tokens in and out, the prompt-cache hit rate — and the wall
+time. Tokens read `↑in ↓out` (prompt, then completion) and the cache part is the fraction of
+prompt tokens the provider served from its own cache. A row whose task recorded errors appends
+`N err` in clay after the time. Every number comes from one place, `list-model.taskUsage`:
+counters come from turn events (`Task.progress`) while the task runs, and a finished row falls
+back to the final `steps`/`usage` totals and its recorded span. The context window (`ctx`) is
+the log header's alone — a row has no room for it and would repeat the same fill twice. Row id
+is `t-<base36 timestamp>-<5 hex>`; the row shows only its last segment (`#4f7c1`) because the
 timestamp half is already implied by the order. The full id stays in `tasks/<id>.json` and
 `GET /api/tasks`.
 
@@ -88,7 +91,7 @@ the list starts with air rather than against a bar.
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
  ● running  1
- › #4f7c1  add a retry to the fetch helper            3 steps · 4210 tok  11s
+ › #4f7c1  add a retry to fetch          3 steps · ↑12.4k ↓1.2k · 62% cache  11s
 
  ○ queue  1
    #1a9de  write tests for the parser
@@ -103,8 +106,10 @@ Grouping order: `running`, `queued`, `done`, `partial`, `failed`, `cancelled`. T
 state renders as the shorter word `queue`. A band is a dot, its word and its count — no rule and
 no column of dashes: the blank row between bands is what separates them, and a row never repeats
 the status word its section already said. Telemetry is right-aligned and the prompt gives up room
-first, so steps, tokens and wall time form one readable column. A running row's wall time ticks
-once a second; an idle board does not re-render.
+first, so steps, tokens and wall time form one readable column. Two numbers on a row never
+describe the same thing: `↑` is prompt tokens, `↓` completion tokens, `% cache` the hit rate,
+and none of them is a copy of another. A running row's wall time ticks once a second; an idle
+board does not re-render.
 
 | State | Section label | Dot | Colour |
 |---|---|---|---|
@@ -156,7 +161,7 @@ as journal history; they are not rendered.
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
- ● running  #4f7c1                            esc/enter: back · 3 steps · 4210 tok · 11s
+ ● running  #4f7c1        esc/enter: back · 3 steps · ↑12.4k ↓1.2k · 11s · 62% cache · ctx 421k/1.0M
 
     0ms ▸ prompt  deepseek-flash · low
 
@@ -178,7 +183,7 @@ as journal history; they are not rendered.
 
      verified
      - bun test (19 tests)
-────────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────────────────────────
  › task for /home/you/some/project…
 ```
 
@@ -187,6 +192,16 @@ status line, the events, and the one hairline over the prompt. The status line c
 the status word, the short handle, then `esc/enter: back` and the live counters; the hint is
 never dropped and the counters disappear from the tail as the terminal narrows. It does not
 repeat the prompt — the log opens with that in full, right below.
+
+Those counters are the log's data row, and the only one. Left to right: turns taken, tokens in
+and out (`↑` prompt, `↓` completion, both summed over turns), the wall time, the prompt-cache
+hit rate and the context window as `ctx <latest prompt>/<window>` — that last one is the size of
+the conversation the model had to carry, not a sum, so it is read from the newest turn. They
+are derived once, by `list-model.taskUsage`, from `Task.progress` while the run streams and from
+the final `steps`/`usage` after it; `list-model.foldTurn` is what server.ts folds each turn's
+provider usage into, and the closing context is kept on the task when `progress` is cleared.
+Nothing else on the log prints a counter — not a tool row, not the summary block — so a number
+can never appear twice or mean two things.
 
 A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
 A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
@@ -204,8 +219,8 @@ The final event is the one block that grows: its head row (`▸ summary  stop=DO
 bullets included — word-wrapped into an indented column by `theme.wrapText`. Nothing is
 clipped. Past `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than
 dropped. The head carries only what the status line cannot: why the run stopped, its cell and
-error counts. The status word, the steps, the tokens and the wall time live up there; the
-closing marker only borrows the run's status colour.
+error counts. The status word, the steps, the tokens, the cache rate, the context window and the
+wall time live up there; the closing marker only borrows the run's status colour.
 
 The log opens with the same block shape, upside: a head row (`0ms ▸ prompt`, the model in the
 quiet tail) and the prompt wrapped into the same four-column indent, so the start and the finish
@@ -215,7 +230,8 @@ words, then the agent's. Before the first renderable event the prompt is the who
 `waiting for output…` beneath it; a finished task with nothing to show gets no such line, because
 that sentence only tells the truth while the task is queued or running.
 
-The status line's steps/tokens/duration are the live values, the same ones the board row shows.
+The status line's counters are the live values, formatted exactly as the board row formats them:
+same function, same numbers, one screen at a time.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
 one exception: a turn carrying a `notice` (a rejected or staged `final_answer`, recorded by

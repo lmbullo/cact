@@ -17,7 +17,8 @@
  *  - `TaskStatus` is the closed vocabulary the board colours and sections by; the mapping
  *    from stop reason to status lives in tui/python/worker.py, not here.
  *  - `Task.progress` is the live estimate from turn events; `steps`/`usage` are the final
- *    counters. The client prefers `progress` until the final event clears it.
+ *    counters, and `context`/`window` keep the last turn's prompt size and the model's window.
+ *    The client derives every counter from them in list-model.taskUsage.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
  *  - `CheckSpec` mirrors `bench.agent.check_plan.CheckSpec`: {name, cmd, cheap, scope?}, where
@@ -48,9 +49,23 @@ export type Task = {
   steps?: number;
   /**
    * Live counters derived from turn events while a task runs (server.ts), so the board can
-   * show progress before the final event replaces them.
+   * show progress before the final event replaces them. `tokensIn`/`tokensOut` are the
+   * provider's prompt and completion tokens summed over turns, `cacheHit`/`cacheMiss` its
+   * prompt cache split, `context` the latest turn's prompt size and `window` the model's
+   * context window.
    */
-  progress?: { steps?: number; tokens?: number };
+  progress?: {
+    steps?: number;
+    tokensIn?: number;
+    tokensOut?: number;
+    cacheHit?: number;
+    cacheMiss?: number;
+    context?: number;
+    window?: number;
+  };
+  /** The last turn's prompt size and the context window it had to fit in, kept after `progress`. */
+  context?: number;
+  window?: number;
   calls?: number;
   llmCalls?: number;
   errors?: number;
@@ -120,5 +135,6 @@ export type WorkerMessage =
   | { kind: "cell.start"; cell: number; code?: string; tool?: string; args?: Record<string, unknown> }
   | { kind: "turn"; turn: number; data: Record<string, unknown> }
   | { kind: "final"; status: "done" | "partial" | "failed"; final?: string; stop?: string; usage?: Record<string, number>; steps?: number; calls?: number; llmCalls?: number; errors?: number; wallMs?: number }
+  // A `turn`'s `data` carries {usage, cache, window, ...}; see python/worker.py EventTrace.
   | { kind: "error"; text: string }
   | { kind: "log"; text: string };

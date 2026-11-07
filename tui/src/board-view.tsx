@@ -5,7 +5,7 @@
  *  The presentational half of the board: a `TopBar` (brand, workspace, model and live
  *  counts), a `Rule` (the one hairline in the app, carrying the status note above the
  *  prompt), a `SectionHeader` (status dot, word and count, no rule of its own), a `TaskRow`
- *  (`#handle`, prompt, right-aligned steps/tokens and wall time) and `EmptyState`.
+ *  (`#handle`, prompt, right-aligned steps/tokens/cache and wall time) and `EmptyState`.
  *
  * ENTRY POINTS
  *  TopBar({workspace, model, effort, running, total, connected, width})
@@ -25,8 +25,10 @@
  *    marker on the right (keeps the palette calm and the row quiet).
  *  - The handle is the short `#suffix` of the task id; the full id stays in the state root
  *    and the HTTP API, where diagnosis needs it.
- *  - Telemetry (steps, tokens, wall time) is right-aligned and the prompt gives up room, so
- *    the eye can scan one column of numbers without the prompt jittering the layout.
+ *  - Telemetry (steps, tokens in/out, cache rate, wall time) is right-aligned and the prompt
+ *    gives up room, so the eye can scan one column of numbers without the prompt jittering
+ *    the layout. Every number comes from list-model.taskCounters/taskUsage, which is also
+ *    what the log header formats: a row and a log cannot disagree about a task.
  *  - The log header is the single source of the run's state: dot, word and handle come from
  *    `Task.status`, once. The log body never repeats them (log-view.isSilent) and the header
  *    does not repeat the prompt either — that block is the first thing in the log, in full.
@@ -39,7 +41,7 @@
  */
 import { TextAttributes } from "@opentui/core";
 import { C, STATUS, clip, shortPath } from "./theme";
-import { taskDuration, taskHandle, taskProgress } from "./list-model";
+import { taskCounters, taskDuration, taskHandle, taskProgress } from "./list-model";
 import type { Task, TaskStatus } from "./types";
 
 /**
@@ -123,8 +125,8 @@ export function SectionHeader({ status, count }: { status: TaskStatus; count: nu
 
 /**
  * One task row: the `›` marker, the short handle, the prompt, then right-aligned telemetry.
- * The prompt absorbs the slack so steps/tokens and wall time line up down the board, and the
- * row never repeats the status word — its section already said it.
+ * The prompt absorbs the slack so steps/tokens/cache and wall time line up down the board,
+ * and the row never repeats the status word — its section already said it.
  */
 export function TaskRow(props: {
   task: Task;
@@ -168,16 +170,26 @@ export function TaskRow(props: {
 /**
  * The run log's status line, and the log's one source of truth for the run's state: the dot,
  * the status word and the handle come from `Task.status` and appear here and nowhere else. The
- * live counters (steps, tokens, duration) sit on the right, the prompt is not repeated (the log
+ * live counters (steps, tokens in/out, duration, cache hit rate, context window) sit on the
+ * right and are the only place those numbers are printed — the log body never repeats them and
+ * the board row formats the same `taskCounters` parts. The prompt is not repeated (the log
  * opens with it in full), and `esc/enter: back` is never dropped — a log you cannot leave is a
- * trap. The extras are dropped from the tail as the terminal narrows.
+ * trap. The extras are dropped from the tail as the terminal narrows, so the order is by
+ * priority: counters, clock, then the derived ratios.
  */
 export function LogHeader({ task, width, now }: { task: Task; width: number; now: number }) {
   const meta = STATUS[task.status];
   const label = `${meta.mark} ${meta.word}`;
   const handlePart = `  #${taskHandle(task.id)}`;
   const essential = "esc/enter: back";
-  const extras = [taskProgress(task), taskDuration(task, now)].filter(Boolean);
+  const counters = taskCounters(task);
+  // Steps and tokens, then the clock, then cache and context: what a narrow frame drops is
+  // always the tail of that list, never the counters that move.
+  const extras = [
+    ...counters.slice(0, 2),
+    taskDuration(task, now),
+    ...counters.slice(2),
+  ].filter(Boolean);
   // The box pads one column each side, so the line shares `width - 2`.
   const content = Math.max(0, width - 2);
   // Grow the right side from the essential hint, so what gets dropped is always the tail.

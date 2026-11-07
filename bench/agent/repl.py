@@ -200,6 +200,8 @@ class ReplLoop(ToolLoop):
             "code": None,
             "observation": None,
             "cache": {"hit": hit, "miss": miss},
+            # Same as the tool loop: the TUI folds this into its live in/out counters.
+            "usage": dict(resp.get("usage") or {}),
             "runs": [],
         }
 

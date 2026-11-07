@@ -17,13 +17,22 @@
  *                                       visible slice, moved just enough to reveal focus
  *  followSelection(previous, rowCount, budget, selected, focus)
  *                                       next slice + state: one-row scroll, stable on reorder
- *  taskProgress(task)                   live `steps / tokens` label ("" until one is known)
+ *  taskUsage(task)                      the task's numbers: live `progress`, else `usage`
+ *  foldTurn(previous, turn, data)       one turn event folded into the live `progress`
+ *  formatTokens(count)                  `950`, `4.2k`, `12k`, `1.0M`
+ *  taskCounters(task)                   `3 steps`, `↑4.2k ↓310`, `62% cache`, `ctx 4.2k/1.0M`
+ *  taskProgress(task)                   the board row's tail: the counters and the cache rate
  *  taskDuration(task, now)              live/final wall time label ("" until it starts)
  *
  * INVARIANTS
  *  - Deterministic and side-effect free: same input, same output, no clock. `taskDuration`
  *    takes `now` as an argument for the same reason.
  *  - Ties are broken by `createdAt`, so a re-render never reshuffles the list.
+ *  - `taskUsage` is the only place a counter is read: the board row, the log header and the
+ *    closing block all format what it returns, so two views cannot print different steps,
+ *    tokens, cache rate or context for the same task.
+ *  - Live `progress` wins only while it exists; the server clears it with the `final` event,
+ *    so a stale estimate can never outrank the final `steps`/`usage`.
  *  - `scrollWindow` never returns a negative start and never exceeds rowCount.
  *  - The window never recentres: a selection that moves one row past an edge scrolls the
  *    list by exactly one row, so the marker never jumps half a screen.
@@ -34,6 +43,9 @@
  *  Section order or row shape ... STATUS_ORDER, rank, buildRows
  *  Keyboard movement ............ stepSelection
  *  Visible window maths ......... scrollWindow, followSelection
+ *  A task's numbers ............. taskUsage (read this, not Task fields, in a view)
+ *  What a turn adds to progress . foldTurn
+ *  How a number is abbreviated .. formatTokens
  *  A row's duration label ....... taskDuration
  */
 import type { Task, TaskStatus } from "./types";
@@ -54,15 +66,119 @@ function rank(task: Task): number {
   return index < 0 ? STATUS_ORDER.length : index;
 }
 
-/** `N steps · M tok` for a task: live `progress` first, final counters as a fallback. */
-export function taskProgress(task: Task): string {
-  const steps = task.progress?.steps ?? task.steps;
-  const tokens = task.progress?.tokens ?? task.usage?.total_tokens;
-  return [
-    steps !== undefined ? `${steps} steps` : "",
-    tokens ? `${tokens} tok` : "",
+/** The numbers one task reports, already reconciled: never render a raw `Task` counter. */
+export type TaskUsage = {
+  steps?: number;
+  /** Prompt tokens the provider billed, summed over turns. */
+  tokensIn?: number;
+  /** Completion tokens the provider billed, summed over turns. */
+  tokensOut?: number;
+  cacheHit?: number;
+  cacheMiss?: number;
+  /** The latest turn's prompt size: what is in the context window right now. */
+  context?: number;
+  /** The model's context window, as the worker reports it. */
+  window?: number;
+};
+
+/** A usable count, or undefined: the wire may carry nulls, strings or nothing at all. */
+function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** A count as the wire may carry it (a number, a numeric string, or nothing). */
+function amount(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+/**
+ * One `turn` event folded into the live counters: the provider's usage gives the in/out tokens
+ * and the cache split, and the latest prompt size is what the context window holds right now
+ * (a size, not a sum). server.ts calls this for every turn, so a running task moves while the
+ * final `steps`/`usage` are still unknown.
+ */
+export function foldTurn(
+  previous: Task["progress"],
+  turn: number,
+  data: Record<string, unknown>,
+): NonNullable<Task["progress"]> {
+  const cache = (data.cache ?? {}) as Record<string, unknown>;
+  const usage = (data.usage ?? {}) as Record<string, unknown>;
+  const hit = amount(cache.hit) || amount(usage.prompt_cache_hit_tokens);
+  const miss = amount(cache.miss) || amount(usage.prompt_cache_miss_tokens);
+  const prompt = amount(usage.prompt_tokens) || hit + miss;
+  const live = previous ?? {};
+  return {
+    steps: turn > 0 ? turn : live.steps,
+    tokensIn: (live.tokensIn ?? 0) + prompt,
+    tokensOut: (live.tokensOut ?? 0) + amount(usage.completion_tokens),
+    cacheHit: (live.cacheHit ?? 0) + hit,
+    cacheMiss: (live.cacheMiss ?? 0) + miss,
+    context: prompt || live.context,
+    window: amount(data.window) || live.window,
+  };
+}
+
+/**
+ * The one derivation of a task's numbers. Live `progress` (from turn events) wins while it
+ * exists; the server clears it with the `final` event, so the final `steps`/`usage` and the
+ * kept `context`/`window` take over without a second counter ever disagreeing.
+ */
+export function taskUsage(task: Task): TaskUsage {
+  const live = task.progress ?? {};
+  const usage = task.usage ?? {};
+  return {
+    steps: count(live.steps) ?? count(task.steps),
+    tokensIn: count(live.tokensIn) ?? count(usage.prompt_tokens),
+    tokensOut: count(live.tokensOut) ?? count(usage.completion_tokens),
+    cacheHit: count(live.cacheHit) ?? count(usage.prompt_cache_hit_tokens),
+    cacheMiss: count(live.cacheMiss) ?? count(usage.prompt_cache_miss_tokens),
+    context: count(live.context) ?? count(task.context),
+    window: count(live.window) ?? count(task.window),
+  };
+}
+
+/** A count in the width a terminal row can spare: `950`, `4.2k`, `12k`, `1.0M`. */
+export function formatTokens(value: number): string {
+  if (value < 1000) return String(Math.round(value));
+  const thousands = value / 1000;
+  if (thousands < 1000) return `${thousands < 10 ? thousands.toFixed(1) : Math.round(thousands)}k`;
+  return `${(thousands / 1000).toFixed(1)}M`;
+}
+
+/**
+ * The counters one task reports, as separate parts so a narrow frame can drop the tail
+ * instead of losing the whole label: steps, tokens in/out, cache hit rate, context window.
+ * A part is omitted when its number is unknown, never printed as a zero place-holder.
+ */
+export function taskCounters(task: Task): string[] {
+  const usage = taskUsage(task);
+  const parts: string[] = [];
+  if (usage.steps !== undefined) parts.push(`${usage.steps} steps`);
+  const tokens = [
+    usage.tokensIn !== undefined ? `↑${formatTokens(usage.tokensIn)}` : "",
+    usage.tokensOut !== undefined ? `↓${formatTokens(usage.tokensOut)}` : "",
   ]
     .filter(Boolean)
+    .join(" ");
+  if (tokens) parts.push(tokens);
+  const cached = (usage.cacheHit ?? 0) + (usage.cacheMiss ?? 0);
+  if (cached > 0) parts.push(`${Math.round(((usage.cacheHit ?? 0) / cached) * 100)}% cache`);
+  if (usage.context !== undefined) {
+    parts.push(
+      usage.window
+        ? `ctx ${formatTokens(usage.context)}/${formatTokens(usage.window)}`
+        : `ctx ${formatTokens(usage.context)}`,
+    );
+  }
+  return parts;
+}
+
+/** The board row's tail: the counters and the cache rate, without the log-only context window. */
+export function taskProgress(task: Task): string {
+  return taskCounters(task)
+    .filter((part) => !part.startsWith("ctx "))
     .join(" · ");
 }
 

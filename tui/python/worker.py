@@ -196,6 +196,10 @@ class EventTrace:
             "reads": record.get("reads") or {},
             "runs": record.get("runs") or [],
             "cache": record.get("cache") or {},
+            # The provider's per-turn usage is what the TUI's live counters are made of:
+            # in/out tokens, the prompt cache split, and the window they have to fit in.
+            "usage": record.get("usage") or {},
+            "window": config.CONTEXT_WINDOW,
             "check": record.get("check"),
             "notice": record.get("notice"),
         }

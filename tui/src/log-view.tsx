@@ -20,8 +20,9 @@
  *    `Task.status` live. The body never repeats it — no lifecycle row, no second status word on
  *    the final block — so the screen cannot show `queue` and `queued` at once, or keep a stale
  *    `queued` above a run that has moved on.
- *  - The header also owns the live counters (steps, tokens, duration), so the closing block
- *    carries only what the header cannot: why the run stopped, its cell and error counts.
+ *  - The header also owns the live counters (steps, tokens in/out, cache rate, context
+ *    window, duration), so the closing block carries only what the header cannot: why the run
+ *    stopped, its cell and error counts.
  *  - The log is bookended: the prompt block at the top and the summary block at the bottom share
  *    one shape — a marker + one word on the head row, then a blank row and the prose wrapped in
  *    the same INDENT column by theme.wrapText. Start and finish must line up, so a change to

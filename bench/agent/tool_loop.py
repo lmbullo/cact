@@ -437,6 +437,10 @@ class ToolLoop:
             "code": None,
             "observation": None,
             "cache": {"hit": hit, "miss": miss},
+            # The provider's own usage for this turn: the TUI's live in/out and cache
+            # counters are folded from it (server.ts), and the trace keeps it for a
+            # later post-mortem.
+            "usage": dict(resp.get("usage") or {}),
             "runs": [],
             "finish": resp.get("finish"),
         }

@@ -38,7 +38,7 @@
  * WHERE TO CHANGE
  *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
  *  A colour, a status word, a clip rule ...... theme.ts
- *  Live steps/tokens/duration ............... list-model.ts, TaskRow, log header
+ *  Live steps/tokens/cache/context ......... list-model.ts, TaskRow, log header
  *  Keys / focus rules ....................... the useKeyboard block below
  *  Selection copy ........................... clipboard.ts, the useSelectionHandler call below
  *  Ordering, rows, scrolling ................ list-model.ts
