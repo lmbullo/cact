@@ -93,9 +93,13 @@ it, and `help(tool)` prints the live signature — so there is no tool table in 
 sync. The registry entry and the function docstring are what an agent reads.
 
 Paging contract, shared by every paged verb: `[page]` carries
-`shown/total/next/unit/has_more/complete`; `next` is a replayable argument object. `has_more`
-means the file continues; `truncated` only means the default page limit cut the requested output;
-`complete` means this request was served. `complete` is the field to trust, not a prose tail. A
+`shown/total/offset/next/unit/has_more/truncated/complete`; `offset` is the start of what this
+response delivered and `next` is the only resume cursor, a replayable argument object.
+`has_more` means the file/result continues; `truncated` means a built-in default limit cut
+output the caller did not ask to have cut; `complete` is exactly `not truncated`, and an
+explicit window (`end`, `max_files`, `max_entries`, `max_results`, `max_chars`) is complete
+with `has_more` true. `complete` is the field to trust, not a prose tail. Every typed verb
+answers a refusal with the same `{ok:false, kind, error:{code,message,use,signature}}`, and a
 typed verb that returns `ok: false` is a rejected cell and counts as an error in run metrics.
 
 ## 4. The loops

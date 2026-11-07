@@ -8,12 +8,16 @@ WHAT IT IS
   `_coerce_paths`-free basics every later fragment uses.
 
 ENTRY POINTS
-  guide(query, path, limit, chars, offset)   the one verb the header index adds
+  guide(query, path, limit, chars, offset, headers)   the one verb the header index adds
+  _fail(kind, code, message, use, **extra)    the one error-dict builder every verb uses
   Inside the cell namespace: _ROOT, _READS_CELL, _READS_SESSION, _READ_MAX_CHARS,
   _READ_MAX_LINES, _MUT, _JOURNAL, _SNAP, _JSEQ, _CELL_CHANGED, _SKIP_DIRS, _IGNORE
 
 INVARIANTS
   - This fragment runs first, so it may only use the stdlib modules it imports itself.
+  - `_fail` is the one shape for a refusal: {ok:false, kind, error:{code,message,use}, path?}.
+    Every verb returns that, so the model never parses a second dialect; the driver adds the
+    live signature to it at the typed-call boundary.
   - `guide()` is a thin wrapper over `_HEADERS["guide"]` and must stay read-only; the rest of
     the prelude never calls it.
   - path matching is shared by map/search/read: a change here changes which files those
@@ -34,15 +38,32 @@ _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)
 
 
-def guide(query=None, path=None, limit=10, chars=20000, offset=0):
+def guide(query=None, path=None, limit=None, chars=20000, offset=0, headers=0):
     fn = _HEADERS.get("guide")
     if fn is None:
-        return {"ok": False, "error": {"code": "no_index",
-                "message": "the header index is not loaded; use map() and grep() instead"}}
-    return fn(_ROOT, query=query, path=path, limit=limit, chars=chars, offset=offset)
+        return _fail("guide", "no_index", "the header index is not loaded",
+                     "use map() and search() instead")
+    return fn(_ROOT, query=query, path=path, limit=limit, chars=chars, offset=offset,
+              headers=headers)
+
+
+def _fail(kind, code, message, use, **extra):
+    # The one error shape. `use` is part of the JSON, not only the rendered [error] line, so
+    # a parser reads the same hint the card prints. Extra keys (path, did_you_mean, ...) sit
+    # at the top level where the success shape puts them.
+    out = {"ok": False, "kind": str(kind),
+           "error": {"code": str(code), "message": str(message), "use": str(use)}}
+    out.update({key: value for key, value in extra.items() if value is not None})
+    return (globals().get("_Result") or dict)(out)
 
 
 _ROOT = _os.getcwd()
+# The one story for scratch paths: exec/run may mutate /tmp, /var/tmp, /dev/shm and $TMPDIR
+# because they run outside the journal; the typed editors are workspace-only, and this hint is
+# what every outside_root refusal returns instead of implying /tmp works.
+_OUTSIDE_USE = ("typed editors are workspace-only (the journal cannot see a path outside it); "
+                "for scratch output use exec(shell=...) or python open(), or keep the file "
+                "inside the workspace under bench/.tmp/")
 _READS_CELL = {}
 # Session-level delivery ledger. A repeated read of a range that was already shown, while
 # the file is unchanged, returns a pointer instead of the same text again. `repeat=True`

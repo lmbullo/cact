@@ -130,25 +130,36 @@ These are architecture, not style. A change that breaks one is a regression even
    `git apply/checkout/...`, `>` redirection; a quoted `>` is an argument) are refused as
    `kind: "wrong_call"` with a `use` hint, because they bypass the journal. `git
    add/commit/push/fetch/init/clone` are allowed, as is mutation of a scratch path (`/tmp`,
-   `/var/tmp`, `/dev/shm`, `$TMPDIR`). Direct spawning (`subprocess.Popen`, `os.system`,
-   `os.exec*`, `os.posix_spawn`, `os.spawn`) runs through the same classifier (`_audit_spawn`).
+   `/var/tmp`, `/dev/shm`, `$TMPDIR`) **by a program**: the scratch exemption belongs to the
+   process gate, because that output is not journalled. The typed editors (`write`, `edit`,
+   `splice`, `delete`, `mkdir`, `apply`) are workspace-only and answer `outside_root` with a
+   `use` that says so; a scratch file inside the workspace (`bench/.tmp/`) is fine. Direct
+   spawning (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs
+   through the same classifier (`_audit_spawn`).
    A program can still write files: the journal is a typed-helper contract, not a sandbox. Keep
    `_mutating_command`, `_HINT` and `RUN_NOTE` honest.
-3. **`write()` replaces** and refuses to silently drop a tail without `force=True`.
-   **`edit(edits=[{path, old, new}, ...])`** is the typed batch form (the python `edit(path,
-   old, new)` helper remains); the list is atomic — all old strings must match, or nothing
-   changes. **`delete(path)`** and **`mkdir(path)`** cover the shell mutations that would
-   bypass the journal. **`splice(path, start, end, text)`** replaces 1-based inclusive lines.
-   **`apply(<unified diff>)`** writes several files in one cell. All go through `_commit`, which
-   is what makes the journal honest; `commit()` is a python helper.
+3. **`write()` replaces** and refuses ANY shorter body without `force=True` (a body that is
+   a prefix of the old file is only the clearest case); a body whose only line breaks are a
+   literal backslash-n comes back with a note. **`edit(edits=[{path, old, new}, ...])`** is
+   the typed batch form (the python `edit(path, old, new)` helper remains); the list is
+   atomic — all old strings must match, or nothing changes, and a miss returns the enclosing
+   `outline()` definition plus `closest` lines. **`delete(path)`** and **`mkdir(path)`** cover
+   the shell mutations that would bypass the journal. **`splice(path, start, end, text)`**
+   replaces 1-based inclusive lines and `end` is required: `end=start-1` inserts, `text=''`
+   deletes. **`apply(<unified diff>)`** writes several files in one cell. All go through
+   `_commit`, which is what makes the journal honest; `commit()` is a python helper.
 4. **A repeated read is a pointer, not a re-delivery.** `read` tracks delivered ranges and the
    file digest; a contained range again returns `already_read` with the `_OBS[n]` handle.
    `read(..., repeat=True)` re-delivers. `_commit` invalidates the entry; an external write is
    caught by the digest. This is context hygiene, not a read cap. A typed result is normalized
-   into `Cell.envelope` and rendered verbatim; only python/exec output is digested. `has_more`
-   means the file continues after `shown`; `truncated` means the default page limit cut the
-   requested output — an explicit `start`/`end` before EOF is complete and only has
-   `has_more`.
+   into `Cell.envelope` and rendered verbatim; only python/exec output is digested. One paging
+   contract: `offset` is the start of what this response delivered, `next` is the resume
+   cursor, `has_more` means the file/result continues, `truncated` means a built-in default
+   limit cut output the caller did not ask to have cut, and `complete` is exactly
+   `not truncated` — an explicit window (`end`, `max_files`, `max_entries`, `max_results`,
+   `max_chars`) is complete with `has_more` true. `read`'s window arguments are `start`/`end`,
+   the same names the schema exposes, and a non-integer or `start > end` is `bad_arguments` at
+   the boundary. A missing path is `ok:false`/`not_found`, never `ok:true`/`miss`.
 5. **Map and search skip generated trees.** `map`/`search` use `_walk`, which applies root
    `.gitignore` patterns plus `_SKIP_DIRS`; `bench/ws`, `.tmp`, `.cache` and `node_modules` do
    not pollute a repo map. `search` returns exact line text (no 200-char clip), merges

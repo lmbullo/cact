@@ -42,7 +42,7 @@ from .protocol import PROTOCOL
 
 # --- child side 1/4: DRIVER, the cell loop (stdin JSON in, `@@K@@` line out) ---------------
 DRIVER = r'''
-import ast, contextlib, inspect as _inspect, io, json, os, signal, sys, time, traceback
+import ast, contextlib, difflib as _edifflib, inspect as _inspect, io, json, os, signal, sys, time, traceback
 
 _PROTOCOL = __PROTOCOL__
 
@@ -153,6 +153,44 @@ def emit(payload):
     sys.__stdout__.write("@@K@@" + json.dumps(payload) + "\n")
     sys.__stdout__.flush()
 
+
+_USE_FALLBACK = "call help(tool) for the signature and the accepted arguments"
+_USE_BY_CODE = {
+    "outside_root": "typed editors are workspace-only; use exec(shell=...) for a scratch path",
+    "not_found": "map(path) lists files; search(pattern) finds text",
+    "unknown_verb": "help() lists every verb; help(name) matches a name",
+    "bad_arguments": "call help(tool) for the accepted keywords and signature",
+}
+
+
+def _error_shape(value, tool, signature=None):
+    # The one refusal shape, applied at the boundary every typed call goes through. A verb may
+    # answer a bare {code, path} or put `reason` at the top level for python callers; the model
+    # only ever sees {ok:false, kind, error:{code,message,use,signature}, path?}.
+    error = value.get("error") if isinstance(value.get("error"), dict) else {}
+    kind = str(value.get("kind") or "")
+    if not kind or kind == tool:
+        kind = tool + "_failed"
+    code = str(error.get("code") or value.get("code") or kind)
+    message = str(error.get("message") or value.get("reason") or value.get("message") or code)
+    use = str(error.get("use") or value.get("use") or _USE_BY_CODE.get(code) or _USE_FALLBACK)
+    shaped = {"code": code, "message": message, "use": use}
+    for key in ("signature", "valid", "available"):
+        if error.get(key) is not None:
+            shaped[key] = error[key]
+        elif value.get(key) is not None:
+            shaped[key] = value[key]
+    if signature and not shaped.get("signature"):
+        shaped["signature"] = "%s%s" % (tool, signature)
+    out = {key: item for key, item in value.items()
+           if key not in ("error", "reason", "use", "code", "message")}
+    out["ok"] = False
+    out["kind"] = kind
+    out["error"] = shaped
+    if out.get("path") is None and error.get("path") is not None:
+        out["path"] = error["path"]
+    return out
+
 for line in sys.stdin:
     line = line.strip()
     if not line:
@@ -189,28 +227,43 @@ for line in sys.stdin:
                 meta = ns.get("_VERB_META") or {}
                 fn_name = (meta.get(tool) or {}).get("function") or tool
                 fn = ns.get(fn_name)
-                if not callable(fn):
-                    raise NameError("unknown kernel verb %r; call help() for the list" % tool)
                 call_args = request.get("args") or {}
-                signature = _inspect.signature(fn)
-                try:
-                    signature.bind(**call_args)
-                except TypeError as exc:
-                    # A bare "see help()" cost repeated retries in a long run: name the
-                    # accepted keywords in the answer itself, before the model spends a turn
-                    # asking for the signature it already has.
-                    names = [name for name, param in signature.parameters.items()
-                             if param.kind not in (_inspect.Parameter.VAR_POSITIONAL,
-                                                   _inspect.Parameter.VAR_KEYWORD)]
-                    value = {"ok": False, "kind": "bad_args",
-                             "error": {"code": "bad_arguments",
-                                       "message": str(exc),
-                                       "signature": "%s%s" % (tool, signature),
-                                       "valid": names,
-                                       "use": "call %s%s; valid keywords: %s"
-                                              % (tool, signature, ", ".join(names))}}
+                signature = None
+                if not callable(fn):
+                    # An unknown name is the same class of mistake as a bad keyword: a refusal
+                    # with the near names, never a NameError traceback.
+                    known = sorted(name for name in meta
+                                   if callable(ns.get((meta[name].get("function") or name))))
+                    near = _edifflib.get_close_matches(tool, known, n=3, cutoff=0.3)
+                    value = {"ok": False, "kind": "wrong_call",
+                             "error": {"code": "unknown_verb",
+                                       "message": "no verb named %r" % tool,
+                                       "use": "help() lists every verb",
+                                       "available": near or known}}
                 else:
-                    value = fn(**call_args)
+                    signature = _inspect.signature(fn)
+                    try:
+                        signature.bind(**call_args)
+                    except TypeError as exc:
+                        # A bare "see help()" cost repeated retries in a long run: name the
+                        # accepted keywords in the answer itself, before the model spends a turn
+                        # asking for the signature it already has.
+                        names = [name for name, param in signature.parameters.items()
+                                 if param.kind not in (_inspect.Parameter.VAR_POSITIONAL,
+                                                       _inspect.Parameter.VAR_KEYWORD)]
+                        value = {"ok": False, "kind": "bad_args",
+                                 "error": {"code": "bad_arguments",
+                                           "message": str(exc),
+                                           "signature": "%s%s" % (tool, signature),
+                                           "valid": names,
+                                           "use": "call %s%s; valid keywords: %s"
+                                                  % (tool, signature, ", ".join(names))}}
+                    else:
+                        value = fn(**call_args)
+                if isinstance(value, dict) and value.get("ok") is False:
+                    # One refusal shape for every verb, applied where every typed call lands.
+                    value = _error_shape(value, tool,
+                                         str(signature) if signature is not None else None)
                 if isinstance(value, dict):
                     if value.get("ok") is False:
                         rejected = True
@@ -224,7 +277,8 @@ for line in sys.stdin:
                         out.write(str(value.get("hunk")))
                     if value.get("kind") in ("command", "commands"):
                         summary = {k: v for k, v in value.items()
-                                   if k in ("ok", "kind", "count", "exit_code", "results")}
+                                   if k in ("ok", "kind", "count", "exit_code", "results", "note",
+                                            "shown", "total", "offset", "unit", "truncated")}
                         summary["stdout_chars"] = len(str(value.get("stdout") or ""))
                         summary["stderr_chars"] = len(str(value.get("stderr") or ""))
                     else:

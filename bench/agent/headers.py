@@ -22,7 +22,7 @@ WHAT IT IS
 
 ENTRY POINTS
   python3 bench/guide.py [--query TEXT | --module PATH | --json | --check]
-  guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0) -> dict
+  guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, headers=0) -> dict
   index(root=None) -> list[dict];  problems(root=None)
   header(path) -> (header text, line count);  split(text) -> (title, sections)
   render(rows, chars=20000) -> str
@@ -40,6 +40,11 @@ INVARIANTS
     outputs, not code an agent maintains.
   - `guide(query=...)` scores a term three times in path+title and once everywhere else,
     sorts by score then path, and caps at `limit`. Deterministic: same tree, same order.
+  - `headers=N` inlines the full header of the top N hits in the same response, so "which
+    module owns this, and what is its contract" is one call, not a second `guide(path)`.
+  - A `path` that is not an indexed module is `ok:false`/`not_found` with the nearest paths;
+    a query that matches nothing stays `ok:true` with a note (a miss is an answer about the
+    index, and the note names the fallback).
   - Rendering truncates each section at `chars` and always keeps the path line, so a card
     never hides which module it is talking about.
 
@@ -51,6 +56,7 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import difflib
 import os
 import re
 
@@ -204,20 +210,26 @@ def _non_indexed_note(root, query, rows):
     return None
 
 
-def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
+def guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, headers=0):
     """Answer "which module owns this?" over the headers.
 
     No query, no path -> one line per source file (the map). `path` -> that module's header.
-    `query` -> the best `limit` documented matches, ranked, with their sections.
+    `query` -> the best `limit` documented matches, ranked, with their sections; `headers=N`
+    also inlines the full header of the top N hits.
     """
+    explicit = limit is not None
+    page_size = 10 if limit is None else max(1, int(limit))
     rows = index(root)
     if path:
         want = str(path).replace(os.sep, "/").lstrip("./")
         hits = [row for row in rows if row["path"] == want or row["path"].endswith("/" + want)]
         if not hits:
+            near = difflib.get_close_matches(want, [row["path"] for row in rows], n=3, cutoff=0.3)
             message = "no module at %s; map() lists the files, search() finds text" % want
-            return {"ok": True, "kind": "guide", "path": want, "modules": [],
-                    "shown": 0, "total": 0, "next": None,
+            return {"ok": False, "kind": "not_found", "path": want, "modules": [],
+                    "shown": 0, "total": 0, "next": None, "did_you_mean": near,
+                    "error": {"code": "not_found", "message": message,
+                             "use": "guide(query=...) ranks modules; map(path) lists files"},
                     "note": message, "text": message}
         return {"ok": True, "kind": "guide", "modules": hits, "shown": len(hits),
                 "total": len(hits), "next": None, "text": render(hits, chars)}
@@ -234,9 +246,8 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
                 scored.append((score, row["path"], row))
         scored.sort(key=lambda item: (-item[0], item[1]))
         note = _non_indexed_note(root, query, rows)
-        limit = max(1, int(limit))
         start = max(0, int(offset or 0))
-        hits = [item[2] for item in scored[start:start + limit]]
+        hits = [item[2] for item in scored[start:start + page_size]]
         public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in hits]
         lines = ["%s  (%s, %d lines)  %s" % (
             row["path"], row["language"], row["lines"],
@@ -258,9 +269,18 @@ def guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0):
                     "shown": 0, "total": 0, "next": None,
                     "note": message, "text": message}
         nxt = {"offset": end, "unit": "module"} if end < len(scored) else None
+        inlined = ""
+        if headers:
+            # Inline the first N hits' headers in the same answer: one round-trip instead of
+            # guide(query) then guide(path). `chars` still bounds the whole block.
+            inlined = render(hits[:max(1, int(headers))], chars)
+        body = "\n".join(lines)
+        if inlined:
+            body = body + "\n\n" + inlined
         return {"ok": True, "kind": "guide", "query": str(query), "modules": public,
                 "shown": len(public), "total": len(scored), "offset": start, "next": nxt,
-                "note": note, "text": "\n".join(lines)}
+                "unit": "module", "truncated": end < len(scored) and not explicit,
+                "note": note, "text": body}
     public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]
     return {"ok": True, "kind": "guide", "modules": public,
             "shown": len(public), "total": len(public), "next": None,

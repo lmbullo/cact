@@ -10,22 +10,27 @@ WHAT IT IS
   `_section_search_result`, `_coerce_paths`.
 
 ENTRY POINTS
-  read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=False, ...)
-  grep(pattern, path=".", max_results=50, regex=True, include=None, context=0, ...)
+  read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, section=None)
+  grep(pattern, path=".", max_results=None, regex=True, include=None, context=0, ...)
   search(...)          the typed verb (same engine as grep)
   recall(pattern, limit=10, context=100) / recall_tool(...)   the typed session search
   skill(name=None, root=".")   list .agent/skills/, or load one procedure
-  Inside: _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
+  Inside: _int_arg, _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
 
 INVARIANTS
   - `read()` is a ledger, not a firehose: no range returns the whole file only while it fits
     the line/char budget, else `next`/`has_more`. A contained range already delivered this
     session (same digest) returns `already_read` plus the `_OBS[n]` pointer; `repeat=True`
     re-delivers. `_commit` drops that file's entry.
+  - `start`/`end` are the only window arguments (the signature matches the provider schema):
+    a non-integer, `start < 1`, or `end < start` is `bad_arguments` at the boundary, never a
+    traceback from int(). `end` omitted is the default page (truncated when it cuts).
+  - A missing path is `ok:false`/`not_found`, never `ok:true`/`miss`: success means success.
   - Every delivered range is recorded in `_READS_CELL`, which is what `Cell.reads` and the
     card's coverage line report.
   - Search text is exact (no clipping); context is merged so a line appears once; above
-    `max_chars` a broad result degrades to locators instead of a silent digest.
+    `max_chars` a broad result degrades to locators instead of a silent digest. The two search
+    counts are labelled: `hits` (matching lines) and `hit_ranges` (contiguous ranges).
   - `recall()` reads `_OBS`, which survives a restart; it must not depend on live variables.
 
 WHERE TO CHANGE
@@ -107,8 +112,9 @@ def _section_search_result(path, numbers, hits_total, occurrences, offset=0, ext
     return _Result({
         "ok": True, "kind": "search_sections", "path": path,
         "sections": rows, "hits": hits_total, "occurrences": occurrences,
-        "ranges": _range_count(numbers), "shown": len(rows), "total": len(rows),
-        "offset": int(offset), "next": None, "complete": True,
+        "hit_ranges": _range_count(numbers), "shown": len(rows), "total": len(rows),
+        "unit": "section",
+        "offset": int(offset), "next": None, "truncated": False, "complete": True,
         "by_file": {path: {"count": hits_total, "lines": sorted(set(int(item) for item in numbers))}},
         "note": ("aggregated %d hit(s) by section; pass sections=false for matching lines, "
                  "or section='Heading' to search one section" % hits_total)
@@ -131,37 +137,56 @@ def _coerce_paths(path):
     return path
 
 
-def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=False,
-         ranges=None, section=None):
+def _int_arg(value, name, minimum):
+    # Validate a numeric argument at the boundary. A model that passes start="five" must get
+    # bad_arguments with the signature (the driver adds it), never a traceback from int().
+    if value is None:
+        return None, None
+    try:
+        if isinstance(value, bool):
+            raise TypeError
+        number = int(value)
+    except (TypeError, ValueError):
+        return None, _fail("bad_args", "bad_arguments",
+                           "%s must be an integer, got %r" % (name, value),
+                           "read(path, start=1, end=10); help('read') shows the signature",
+                           argument=name)
+    if number < minimum:
+        return None, _fail("bad_args", "bad_arguments",
+                           "%s must be >= %d, got %d" % (name, minimum, number),
+                           "read(path, start=1, end=10); help('read') shows the signature",
+                           argument=name)
+    return number, None
+
+
+def read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, section=None):
     path = _coerce_paths(path)
     if section:
         if not isinstance(path, str):
-            return {"ok": False, "kind": "bad_args", "error": {
-                "code": "section_needs_path",
-                "message": "section= applies to one file path",
-                "use": "read(path, section='Heading')"}}
+            return _fail("bad_args", "bad_arguments", "section= applies to one file path",
+                         "read(path, section='Heading')")
         target, rel = _resolve(path)
         if target is None or not _os.path.isfile(target):
-            return {"ok": True, "kind": "miss", "path": rel}
+            return _fail("not_found", "not_found", "no file at %s" % rel,
+                         "map(path) lists files; outline(path) shows sections", path=rel)
         bounds = _section_bounds(target, section)
         if bounds is None:
-            return {"ok": False, "kind": "bad_args", "error": {
-                "code": "section_not_found",
-                "message": "no outline entry matches %r" % section,
-                "use": "outline(%r) to see section names" % path}}
+            return _fail("bad_args", "bad_arguments",
+                         "no outline entry matches %r" % (section,),
+                         "outline(%r) lists the section names" % (path,), path=rel)
         start, end = bounds
     # A batched ranged read: ranges=[{path, start, end}, ...] is one call for several
     # windows, unlike path=[...] which applies the same window to each file.
     if ranges is not None:
         if not isinstance(ranges, (list, tuple)) or not ranges:
-            return {"ok": False, "kind": "bad_args", "error": {
-                "code": "bad_ranges", "message": "ranges must be a non-empty list",
-                "use": "read(ranges=[{path, start, end}, ...])"}}
+            return _fail("bad_args", "bad_arguments", "ranges must be a non-empty list",
+                         "read(ranges=[{path, start, end}, ...])")
         results = []
         for item in ranges:
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-                results.append({"ok": False, "kind": "bad_args",
-                                "error": {"code": "bad_range", "message": "each range needs path"}})
+                results.append(_fail("bad_args", "bad_arguments",
+                                     "each range needs a path",
+                                     "read(ranges=[{path, start, end}, ...])"))
                 continue
             results.append(read(item["path"], start=item.get("start"),
                                 end=item.get("end"), raw=raw, repeat=repeat))
@@ -179,24 +204,33 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
                 chunks.append("# " + rel + "\n" + str(dict(item)))
         return _Result({"ok": all(bool(item.get("ok")) for item in results),
                         "kind": "files", "files": results, "count": len(results),
-                        "text": "\n\n".join(chunks)})
+                        "shown": len(results), "total": len(results), "offset": 0,
+                        "unit": "range",
+                        "has_more": any(bool(item.get("has_more")) for item in results),
+                        "truncated": any(bool(item.get("truncated")) for item in results),
+                        "next": None, "text": "\n\n".join(chunks)})
     if path is None:
-        return {"ok": False, "kind": "bad_args", "error": {
-            "code": "missing_path", "message": "read needs path or ranges",
-            "use": "read(path, start=..., end=...) or read(ranges=[...])"}}
-    # `start`/`end` are the natural line-range names; `offset`/`limit` stay for compatibility.
-    explicit = end is not None
-    if start is not None:
-        offset = start
-    if end is not None:
-        limit = max(0, int(end) - int(offset) + 1)
+        return _fail("bad_args", "bad_arguments", "read needs path or ranges",
+                     "read(path, start=..., end=...) or read(ranges=[...])")
+    first_line, problem = _int_arg(start, "start", 1)
+    if problem is not None:
+        return problem
+    last_line, problem = _int_arg(end, "end", 1)
+    if problem is not None:
+        return problem
+    if first_line is None:
+        first_line = 1
+    explicit = last_line is not None
+    if explicit and last_line < first_line:
+        return _fail("bad_args", "bad_arguments",
+                     "end (%d) is before start (%d)" % (last_line, first_line),
+                     "read(path, start=1, end=10); end is the inclusive last line")
     # A list is one call for several files: the model's natural batch shape. Each sub-read
-    # records its own _READS_CELL ranges, so coverage stays exact. `text` is the concatenation
-    # with a `# path` header, so print(read([a, b])['text']) gives the model everything at once.
+    # records its own _READS_CELL ranges, so coverage stays exact.
     if isinstance(path, (list, tuple, set)):
         paths = sorted(path) if isinstance(path, set) else list(path)
-        results = [read(item, offset=offset, limit=limit, raw=raw, start=start, end=end,
-                        repeat=repeat) for item in paths]
+        results = [read(item, start=first_line, end=last_line, raw=raw, repeat=repeat)
+                   for item in paths]
         chunks = []
         for item in results:
             rel = str(item.get("path") or "")
@@ -205,10 +239,16 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
             else:
                 chunks.append("# " + rel + "\n" + str(dict(item)))
         return _Result({"ok": all(bool(item.get("ok")) for item in results), "kind": "files",
-                        "files": results, "count": len(results), "text": "\n\n".join(chunks)})
+                        "files": results, "count": len(results),
+                        "shown": len(results), "total": len(results), "offset": 0,
+                        "unit": "file",
+                        "has_more": any(bool(item.get("has_more")) for item in results),
+                        "truncated": any(bool(item.get("truncated")) for item in results),
+                        "next": None, "text": "\n\n".join(chunks)})
     target, rel = _resolve(path)
     if target is None:
-        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
+                     _OUTSIDE_USE, path=rel)
     if not _os.path.exists(target):
         near = []
         try:
@@ -216,31 +256,39 @@ def read(path=None, offset=1, limit=0, raw=False, start=None, end=None, repeat=F
                 _os.path.basename(rel), _os.listdir(_os.path.dirname(target) or _ROOT), n=3, cutoff=0.3)
         except OSError:
             pass
-        return {"ok": True, "kind": "miss", "path": rel, "did_you_mean": near}
+        return _fail("not_found", "not_found", "no file at %s" % rel,
+                     "map(path) lists files; search(pattern) finds text",
+                     path=rel, did_you_mean=near)
     if _os.path.isdir(target):
-        return {"ok": True, "kind": "dir", "path": rel, "entries": sorted(_os.listdir(target))}
+        return _fail("wrong_call", "is_directory", "read() takes a file, not a directory",
+                     "map(%r) lists the directory; read each file you mean" % rel, path=rel)
     body = _read_text(target)
     lines = body.splitlines()
     total = len(lines)
-    start = max(1, min(int(offset), total or 1))
-    want = int(limit)
-    if want <= 0:
+    if total and first_line > total:
+        # Past EOF is an empty delivery, not a silent clamp back into the file.
+        return _Result({"ok": True, "kind": "file", "path": rel, "total_lines": total,
+                        "shown": [first_line, first_line - 1], "offset": first_line,
+                        "next": None, "truncated": False, "has_more": False,
+                        "note": "start %d is past EOF (total_lines=%d)" % (first_line, total),
+                        "text": ""})
+    if explicit:
+        stop = min(total, last_line)
+        truncated = False
+    else:
         stop = total
         budget = 0
-        for n in range(start - 1, total):
+        for n in range(first_line - 1, total):
             budget += len(lines[n]) + 1
-            if n - (start - 1) + 1 > _READ_MAX_LINES or budget > _READ_MAX_CHARS:
-                stop = max(start, n)
+            if n - (first_line - 1) + 1 > _READ_MAX_LINES or budget > _READ_MAX_CHARS:
+                stop = max(first_line, n)
                 break
-    else:
-        stop = min(total, start + max(1, want) - 1)
+        # `truncated` means this call cut output the caller asked to see: the default page.
+        truncated = stop < total
+    start = first_line
     has_more = stop < total
-    # `truncated` means this call had to cut output the caller asked to see (the default
-    # page limits). An explicit start/end that lands before EOF is complete, even though
-    # the file has more: that is `has_more`, not a truncation.
-    truncated = has_more and not explicit and int(limit) <= 0
     result = {"ok": True, "kind": "file", "path": rel, "total_lines": total,
-              "shown": [start, stop],
+              "shown": [start, stop], "offset": start,
               "next": {"offset": stop + 1, "unit": "line"} if has_more else None,
               "truncated": truncated, "has_more": has_more}
     digest = _digest(body)
@@ -279,12 +327,16 @@ def _count_result(counts, occurrences=0, note=None):
     text = "\n".join("%s:%d" % (path, count) for path, count in sorted(counts.items()))
     if note:
         text = (text + "\n" if text else "") + "note: " + note
+    # `shown`/`total` count the rows this response delivers (one per file with matches);
+    # `hits` is the matching-line count. Reporting 234 lines as `shown` while delivering 25
+    # rows made the page look half-served.
     return _Result({"ok": True, "kind": "search_counts", "counts": counts,
                     "by_file": {path: {"count": count, "lines": []}
                                 for path, count in counts.items()},
-                    "occurrences": occurrences, "shown": total, "total": total,
-                    "offset": 0, "next": None, "complete": True, "text": text,
-                    "note": note})
+                    "occurrences": occurrences, "hits": total,
+                    "shown": len(counts), "total": len(counts), "unit": "file",
+                    "offset": 0, "next": None, "truncated": False, "complete": True,
+                    "text": text, "note": note})
 
 
 def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=None,
@@ -320,9 +372,12 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
         entry["lines"].append(int(hit["line"]))
     all_numbers = sorted({int(hit["line"]) for hit in hits}) if all_numbers is None else all_numbers
     range_count = _range_count(all_numbers)
+    # Two counts, two names: `hits` is matching lines, `hit_ranges` is how many contiguous
+    # ranges they fall in. One unlabeled `ranges` next to `total` made a model guess.
     common = {"ok": True, "kind": "matches", "matches": hits,
-              "truncated": truncated, "shown": len(hits), "total": total,
-              "offset": int(offset), "by_file": by_file, "ranges": range_count,
+              "truncated": truncated, "shown": len(hits), "total": total, "hits": total,
+              "hit_ranges": range_count, "unit": "hit",
+              "offset": int(offset), "by_file": by_file,
               "next": {"offset": int(offset) + len(hits), "unit": "hit"} if int(offset) + len(hits) < total else None}
     if int(offset) >= total and not hits:
         common["note"] = "end of results (offset %d >= total %d)" % (int(offset), total)
@@ -344,11 +399,15 @@ def _grep_result(hits, occurrences, truncated, max_chars=12000, offset=0, total=
     return _Result(common)
 
 
-def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
+def grep(pattern, path=".", max_results=None, regex=True, include=None, context=0,
          ignore_case=False, max_chars=12000, offset=0, count=False, within=None,
          section=None, sections=None):
     # Search: one path or a list, an optional include glob, and optional context. The typed
     # `search` and the python `grep` share this one implementation and the same regex default.
+    # `max_results` is the page size; passing it makes the page an explicit window (complete),
+    # omitting it means the default page and a cut is `truncated`.
+    explicit_limit = max_results is not None
+    max_results = 50 if max_results is None else max(1, int(max_results))
     path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
         if count:
@@ -372,15 +431,18 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
             occurred += int(result.get("occurrences") or 0)
             truncated = truncated or bool(result.get("truncated"))
             if len(hits) >= int(max_results):
-                return _grep_result(hits[:int(max_results)], occurred, True, max_chars,
+                return _grep_result(hits[:int(max_results)], occurred, not explicit_limit, max_chars,
                                     offset=offset, total=int(result.get("total") or len(hits)))
         return _grep_result(hits, occurred, truncated, max_chars, offset=offset,
                             total=len(hits))
     target, rel = _resolve(path)
     if target is None:
-        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
+                     _OUTSIDE_USE, path=rel)
     if not _os.path.exists(target):
-        return {"ok": True, "kind": "miss", "path": rel}
+        return _fail("not_found", "not_found", "no path at %s" % rel,
+                     "map(path) lists files; search(pattern, path='.') walks the tree",
+                     path=rel)
     matcher = None
     flags = _re.IGNORECASE if ignore_case else 0
     if regex:
@@ -464,7 +526,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
             if len(hits) < int(max_results):
                 hits.append(hit)
             else:
-                truncated = True
+                truncated = not explicit_limit
     if count:
         note = None if counts else "no matches for %r in %s" % (pattern, rel)
         return _count_result(counts, occurrences, note)
@@ -500,7 +562,7 @@ def grep(pattern, path=".", max_results=50, regex=True, include=None, context=0,
     return result
 
 
-def search(pattern, path=".", max_results=50, regex=True, include=None, context=0,
+def search(pattern, path=".", max_results=None, regex=True, include=None, context=0,
            ignore_case=False, max_chars=12000, offset=0, count=False, within=None,
            section=None, sections=None):
     # The typed `search` tool is the public name; grep() stays the python helper. Search is

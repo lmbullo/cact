@@ -7,15 +7,20 @@ WHAT IT IS
   including ones inside JS template literals.
 
 ENTRY POINTS
-  map(path=".", max_files=120, include=None, offset=0)      files, paged
-  outline(path, max_entries=200, keys=False)                 structure with subtree ranges
+  map(path=".", max_files=None, include=None, offset=0)      files, paged (max_files=0: all rows)
+  outline(path, max_entries=None, keys=False)                 structure with subtree ranges
   Inside: _walk, _outline_doc, _outline_html
 
 INVARIANTS
   - `_walk` applies SKIP_DIRS, the root `.gitignore` and the include patterns: map, search and
     read all list through it, so generated trees never pollute a repo map.
-  - `map` pages with `shown`/`next`/`has_more`; `outline` reports 1-based inclusive ranges, and
-    a Markdown heading owns its whole subtree.
+  - `map` pages with `shown`/`next`/`has_more`; `max_files=0` means every row plus the
+    `dirs_matched` summary, so a 700-file tree is one call instead of seven. `outline`
+    reports 1-based inclusive ranges, and a Markdown heading owns its whole subtree.
+  - Both report `offset` as the start of what they delivered (0 on the first page) and
+    `truncated` only when the default page size cut the list; an explicit `max_files`/
+    `max_entries` is a served window (`complete:true`, `has_more:true`).
+  - A missing path is `ok:false`/`not_found`.
   - Both are read-only and never open a file through the journalled `open()`.
 
 WHERE TO CHANGE
@@ -46,7 +51,7 @@ _INDEX = r"""def _walk(root):
             yield full
 
 
-def map(path=".", max_files=120, include=None, offset=0):
+def map(path=".", max_files=None, include=None, offset=0):
     path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
         results = [map(item, max_files=max_files, include=include, offset=offset)
@@ -55,12 +60,28 @@ def map(path=".", max_files=120, include=None, offset=0):
         for item in results:
             chunks.append("# " + str(item.get("root") or "") + "\n" + str(item.get("text") or ""))
         return {"ok": all(bool(item.get("ok")) for item in results), "kind": "maps",
-                "files": results, "count": len(results), "text": "\n\n".join(chunks)}
+                "files": results, "count": len(results), "file_count": len(results),
+                "shown": len(results), "total": len(results), "offset": 0, "unit": "file",
+                "truncated": any(bool(item.get("truncated")) for item in results),
+                "has_more": any(bool(item.get("has_more")) for item in results),
+                "text": "\n\n".join(chunks)}
+    explicit = max_files is not None
+    size = 120 if max_files is None else int(max_files)
     target, rel = _resolve(path)
     if target is None:
-        return {"ok": False, "error": {"code": "outside_root", "path": rel}}
+        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
+                     _OUTSIDE_USE, path=rel)
     if not _os.path.exists(target):
-        return {"ok": True, "kind": "miss", "path": rel}
+        near = []
+        try:
+            near = _difflib.get_close_matches(
+                _os.path.basename(rel) or rel,
+                _os.listdir(_os.path.dirname(target) or _ROOT), n=3, cutoff=0.3)
+        except OSError:
+            pass
+        return _fail("not_found", "not_found", "no path at %s" % rel,
+                     "map('.') lists the workspace root; guide(query) says which module owns a topic",
+                     path=rel, did_you_mean=near)
     includes = _include_patterns(include)
 
     def wanted(name):
@@ -77,8 +98,8 @@ def map(path=".", max_files=120, include=None, offset=0):
         text = "  lines  path\n" + "\n".join(
             "%6d  %s" % (item["lines"], item["path"]) for item in rows)
         result = {"ok": True, "kind": "map", "root": rel, "files": rows,
-                  "count": len(rows), "total_files": len(rows), "offset": 0,
-                  "shown": [1, len(rows)] if rows else [],
+                  "count": len(rows), "total_files": len(rows), "offset": 0, "unit": "file",
+                  "shown": [1, len(rows)] if rows else [], "truncated": False,
                   "next": None, "has_more": False, "text": text}
         if not rows and includes:
             result["include_unmatched"] = includes
@@ -112,16 +133,20 @@ def map(path=".", max_files=120, include=None, offset=0):
         except OSError:
             nonempty = False
         if nonempty:
-            result = {"ok": False, "kind": "map", "root": _os.path.relpath(base, _ROOT),
-                      "count": 0, "total_files": 0, "dirs_matched": {},
-                      "include_unmatched": includes,
-                      "error": {"code": "empty_index",
-                                "message": "directory has entries but the filter yielded no files",
-                                "use": ("include matched no file: " + ", ".join(includes)
-                                        if includes else "call map(path) without include")}}
-            return result
+            return _fail("map", "empty_index",
+                         "directory has entries but the filter yielded no files",
+                         ("include matched no file: " + ", ".join(includes)
+                          if includes else "call map(path) without include"),
+                         root=_os.path.relpath(base, _ROOT), count=0, total_files=0,
+                         dirs_matched={}, include_unmatched=includes)
     start = max(0, int(offset or 0))
-    page = entries[start:start + max(1, int(max_files or 1))]
+    if size <= 0:
+        # max_files=0: every row. A tree sweep is one call, not seven pages of 120.
+        page = entries[start:]
+        truncated = False
+    else:
+        page = entries[start:start + size]
+        truncated = (start + len(page)) < total and not explicit
     end = start + len(page)
     text = "  lines  path\n" + "\n".join(
         "%6d  %s" % (entry["lines"], entry["path"]) for entry in page)
@@ -129,10 +154,10 @@ def map(path=".", max_files=120, include=None, offset=0):
         text += "\nnote: include matched no file: " + ", ".join(unmatched)
     result = {"ok": True, "kind": "map", "root": _os.path.relpath(base, _ROOT),
               "files": page, "count": total, "total_files": total, "dirs_matched": dirs,
-              "include_unmatched": unmatched, "offset": start,
+              "include_unmatched": unmatched, "offset": start, "unit": "file",
               "shown": [start + 1, end] if page else [],
               "next": {"offset": end, "unit": "file"} if end < total else None,
-              "has_more": end < total, "text": text}
+              "truncated": truncated, "has_more": end < total, "text": text}
     if unmatched:
         result["note"] = "include matched no file: " + ", ".join(unmatched)
     return result
@@ -176,30 +201,37 @@ def _outline_html(lines):
     return entries
 
 
-def outline(path, max_entries=200, keys=False):
+def outline(path, max_entries=None, keys=False):
     # The structural view: headings and definitions with line numbers, so a long file can
     # be navigated before (or instead of) reading it whole. This is not a shell equivalent;
     # it is the map read() and search() do not provide.
     path = _coerce_paths(path)
+    explicit = max_entries is not None
+    limit = 200 if max_entries is None else max(1, int(max_entries))
     if isinstance(path, (list, tuple, set)):
-        results = [outline(item, max_entries=max_entries, keys=keys) for item in path]
+        results = [outline(item, max_entries=limit, keys=keys) for item in path]
         chunks = []
         for item in results:
             rel = str(item.get("path") or "")
             chunks.append("# " + rel + "\n" + str(item.get("text") or ""))
         return {"ok": all(bool(item.get("ok")) for item in results), "kind": "outlines",
-                "files": results, "file_count": len(results), "text": "\n\n".join(chunks)}
+                "files": results, "file_count": len(results), "shown": len(results),
+                "total": len(results), "offset": 0, "unit": "file",
+                "truncated": any(bool(item.get("truncated")) for item in results),
+                "has_more": any(bool(item.get("has_more")) for item in results),
+                "text": "\n\n".join(chunks)}
     target, rel = _resolve(path)
     if target is None:
-        return _Result({"ok": False, "kind": "wrong_call", "path": rel,
-                        "error": {"code": "outside_root", "path": rel}})
+        return _Result(_fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
+                             _OUTSIDE_USE, path=rel))
     if not _os.path.exists(target):
-        return _Result({"ok": True, "kind": "miss", "path": rel})
+        return _Result(_fail("not_found", "not_found", "no file at %s" % rel,
+                             "map(path) lists files; read(path) needs an existing file",
+                             path=rel))
     if _os.path.isdir(target):
-        return _Result({"ok": False, "kind": "wrong_call", "path": rel,
-                        "error": {"code": "outline_is_file",
-                                  "message": "outline() takes a file; map() lists a directory",
-                                  "use": "map(path) for files, outline(file) for structure"}})
+        return _Result(_fail("wrong_call", "is_directory",
+                             "outline() takes a file; map() lists a directory",
+                             "map(path) for files, outline(file) for structure", path=rel))
     try:
         body = _read_text(target)
     except OSError as exc:
@@ -345,8 +377,7 @@ def outline(path, max_entries=200, keys=False):
                    if index + 1 < len(entries) else len(lines))
         item["end"] = max(item["line"], end)
     total_entries = len(entries)
-    limit = max(1, int(max_entries or 1))
-    truncated = total_entries > limit
+    truncated = total_entries > limit and not explicit
     entries = entries[:limit]
     if not entries:
         text = "# %s: no structural lines; use read() or search()" % rel
@@ -361,8 +392,10 @@ def outline(path, max_entries=200, keys=False):
             for item in entries)
     return _Result({"ok": True, "kind": "outline", "path": rel, "entries": entries,
                     "total_lines": len(lines), "total_entries": total_entries,
-                    "truncated": truncated,
-                    "next": {"offset": len(entries), "unit": "entry"} if truncated else None,
+                    "shown": len(entries), "total": total_entries, "offset": 0,
+                    "unit": "entry", "truncated": truncated,
+                    "has_more": len(entries) < total_entries,
+                    "next": {"offset": len(entries), "unit": "entry"} if len(entries) < total_entries else None,
                     "text": text})
 
 

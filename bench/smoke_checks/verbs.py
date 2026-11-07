@@ -4,9 +4,12 @@ WHAT IT IS
   The typed-call half of the action space on the same kernel as `files`: map with include and
   paging, a batch read and its page unit, a repeated read as a pointer (and a commit
   invalidating it), search by path list / serialized list / exact long line / context merge /
-  locators / count / include+ignore_case, splice, exec by argv and by command list, the
-  refusal codes (shell_string, bad_arguments, shell_via_exec, mutation_via_exec), and outline
-  for Markdown, Python, HTML and HTML-in-a-JS-template, plus help().
+  locators / count / include+ignore_case, splice, exec by argv, by command list and as a bare
+  shell string, the refusal codes (bad_arguments, shell_via_exec, mutation_via_exec,
+  unknown_verb, outside_root), and outline for Markdown, Python, HTML and HTML-in-a-JS-template,
+  plus help() and guide(headers=N). It also pins the paging contract: one error shape with a
+  `use` hint, `ok:false` for a miss or an unknown name, `offset` = start of the delivery,
+  `next` = resume cursor, `truncated` = a default limit cut it and `complete` = not truncated.
 
 ENTRY POINTS
   run(check, root, kernel)   called by bench/smoke.py::main after files
@@ -15,6 +18,7 @@ INVARIANTS
   - Each check asserts both the answer (`cell.stdout`) and the structured part it came from
     (`cell.result`/`cell.envelope`), because an agent reads the envelope, not the printout.
   - The exec refusals assert the *code* (`shell_via_exec`, `mutation_via_exec`), not the prose.
+  - The contract checks are regression pins for an audit: a defect that comes back fails here.
   - It depends on `files` having run first on the same kernel instance.
 
 WHERE TO CHANGE
@@ -120,7 +124,7 @@ def run(check, root, kernel):
         "path": "ambiguous.md", "old": "- same", "new": "no",
     }]})
     check("kernel: edit still refuses a non-unique match",
-          (cell.result or "").find('"reason": "ambiguous"') >= 0
+          (cell.result or "").find('"ambiguous"') >= 0 and cell.rejected
           and (root / "ambiguous.md").read_text() == "- same\n- same\n",
           (cell.result or "")[:300])
     cell = kernel.call("search", {"pattern": "red", "path": ["call_a.txt", "call_b.txt"]})
@@ -169,9 +173,12 @@ def run(check, root, kernel):
     check("kernel: call(exec) runs several argv commands",
           cell.tool == "exec" and "one" in cell.stdout and "two" in cell.stdout,
           (cell.stdout + cell.stderr)[:200])
-    cell = kernel.call("exec", {"argv": "echo one"})
-    check("kernel: call(exec) refuses a shell string",
-          "shell_string" in (cell.result or ""), (cell.result or "")[:200])
+    cell = kernel.call("exec", {"argv": "echo shell-string"})
+    check("kernel: call(exec) runs an argv shell string once, with a note",
+          "shell-string" in cell.stdout and not cell.rejected
+          and any("argv was a shell string" in note
+                  for note in (cell.envelope or {}).get("notes") or []),
+          (cell.stdout + (cell.result or ""))[:240])
     cell = kernel.call("exec", {"code": "print(1)"})
     check("kernel: call(exec) turns a bad keyword into bad_args",
           "bad_arguments" in (cell.result or "") and not cell.failed,
@@ -229,4 +236,157 @@ def run(check, root, kernel):
     cell = kernel.run("print(help('read')['text'])")
     check("kernel: help(topic) returns live signatures",
           "read(" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+    check("kernel: help(read) shows the schema's start/end, not offset/limit",
+          "start=" in cell.stdout and "offset=" not in cell.stdout, cell.stdout[:240])
+
+    # --- the contract shapes a model parses: one error dict, ok means success, paging ------
+    cell = kernel.call("write", {"path": "/tmp/cact-smoke-outside.txt", "content": "x"})
+    error = (cell.envelope or {}).get("error") or {}
+    check("kernel: every refusal is one error shape with code/message/use/signature",
+          cell.rejected and error.get("code") == "outside_root" and error.get("message")
+          and error.get("use") and error.get("signature")
+          and (cell.envelope or {}).get("kind") == "wrong_call",
+          str(cell.result)[:320])
+    check("kernel: the outside_root refusal states the one scratch story",
+          "workspace-only" in str(error.get("use")), str(error)[:240])
+    cell = kernel.call("read", {"path": "definitely-missing.txt"})
+    check("kernel: a missing path is not_found, not ok:true",
+          not (cell.envelope or {}).get("ok", True)
+          and ((cell.envelope or {}).get("error") or {}).get("code") == "not_found",
+          str(cell.result)[:240])
+    cell = kernel.call("outline", {"path": "definitely-missing.txt"})
+    check("kernel: outline of a missing path is not_found",
+          not (cell.envelope or {}).get("ok", True)
+          and ((cell.envelope or {}).get("error") or {}).get("code") == "not_found",
+          str(cell.result)[:240])
+    cell = kernel.call("map", {"path": "definitely-missing-dir"})
+    check("kernel: map of a missing path is not_found",
+          not (cell.envelope or {}).get("ok", True)
+          and ((cell.envelope or {}).get("error") or {}).get("code") == "not_found",
+          str(cell.result)[:240])
+    cell = kernel.call("help", {"topic": "nope"})
+    check("kernel: help(unknown topic) is unknown_verb with near names",
+          not (cell.envelope or {}).get("ok", True)
+          and ((cell.envelope or {}).get("error") or {}).get("code") == "unknown_verb"
+          and ((cell.envelope or {}).get("error") or {}).get("available"),
+          str(cell.result)[:240])
+    cell = kernel.call("nope", {})
+    check("kernel: an unknown verb is a refusal, not a traceback",
+          cell.rejected and not cell.failed
+          and ((cell.envelope or {}).get("error") or {}).get("code") == "unknown_verb",
+          (str(cell.result) + cell.stderr)[:240])
+
+    kernel.run("write('tail.txt', 'one\\ntwo\\nthree\\n')")
+    cell = kernel.call("write", {"path": "tail.txt", "content": "zzz\n"})
+    check("kernel: write refuses any shorter body without force",
+          cell.rejected and "shorter_write" in str(cell.result)
+          and (root / "tail.txt").read_text() == "one\ntwo\nthree\n",
+          str(cell.result)[:280])
+    cell = kernel.call("write", {"path": "tail.txt", "content": "zzz\n", "force": True})
+    check("kernel: write force=True replaces the file",
+          not cell.rejected and (root / "tail.txt").read_text() == "zzz\n",
+          str(cell.result)[:240])
+    cell = kernel.call("write", {"path": "escaped.md", "content": "line one\\nline two"})
+    check("kernel: a literal backslash-n body is noted, not silently one line",
+          any("backslash-n" in note for note in (cell.envelope or {}).get("notes") or [])
+          and (root / "escaped.md").read_text() == "line one\\nline two",
+          str(cell.envelope)[:300])
+
+    kernel.run("write('spl.txt', 'one\\ntwo\\n')")
+    cell = kernel.call("splice", {"path": "spl.txt", "start": 1, "text": "zero"})
+    check("kernel: splice without end is bad_arguments, not a silent replace",
+          cell.rejected and "bad_arguments" in str(cell.result)
+          and (root / "spl.txt").read_text() == "one\ntwo\n",
+          str(cell.result)[:280])
+    cell = kernel.call("splice", {"path": "spl.txt", "start": 2, "end": 1, "text": "INSERT"})
+    check("kernel: splice end=start-1 inserts before the line",
+          not cell.rejected and (root / "spl.txt").read_text() == "one\nINSERT\ntwo\n",
+          str(cell.result)[:240])
+
+    cell = kernel.call("read", {"path": "call_a.txt", "start": "five"})
+    check("kernel: a non-integer read start is bad_arguments, not a traceback",
+          cell.rejected and not cell.failed and "bad_arguments" in str(cell.result),
+          (str(cell.result) + cell.stderr)[:280])
+    cell = kernel.call("read", {"path": "call_a.txt", "start": 0})
+    check("kernel: read(start=0) is bad_arguments, not a silent clamp",
+          cell.rejected and "bad_arguments" in str(cell.result), str(cell.result)[:240])
+    cell = kernel.call("read", {"path": "call_a.txt", "start": 2, "end": 1})
+    check("kernel: read(start > end) is bad_arguments",
+          cell.rejected and "bad_arguments" in str(cell.result), str(cell.result)[:240])
+
+    kernel.run("write('paged.txt', '\\n'.join('row %d' % n for n in range(1, 701)))")
+    cell = kernel.call("read", {"path": "paged.txt"})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: the default read page is truncated and complete is its inverse",
+          page.get("truncated") is True and page.get("complete") is False
+          and page.get("has_more") is True and page.get("offset") == 1,
+          str(page)[:280])
+    cell = kernel.call("read", {"path": "paged.txt", "start": 1, "end": 5})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: an explicit read window is complete with has_more",
+          page.get("truncated") is False and page.get("complete") is True
+          and page.get("has_more") is True, str(page)[:280])
+    cell = kernel.call("map", {"path": ".", "include": "*.txt", "max_files": 2})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: map's explicit page size is served (complete with has_more)",
+          page.get("complete") is True and page.get("truncated") is False
+          and page.get("has_more") is True and page.get("offset") == 0
+          and page.get("unit") == "file", str(page)[:280])
+    cell = kernel.call("map", {"path": ".", "include": "*.txt", "max_files": 0})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: map max_files=0 returns every row in one answer",
+          page.get("next") is None and page.get("shown") == page.get("total")
+          and int(page.get("total") or 0) > 2, str(page)[:280])
+    kernel.run("write('many.md', '\\n'.join('## sec %d' % n for n in range(1, 30)))")
+    cell = kernel.call("outline", {"path": "many.md", "max_entries": 4})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: outline's first page offset is 0 and next is the resume cursor",
+          page.get("offset") == 0 and page.get("next") == {"offset": 4}
+          and page.get("truncated") is False and page.get("unit") == "entry",
+          str(page)[:280])
+    cell = kernel.call("outline", {"path": "many.md"})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: outline's truncated page is page.truncated (default page size)",
+          page.get("truncated") is False, str(page)[:240])
+    cell = kernel.call("search", {"pattern": "row", "path": "paged.txt", "count": True})
+    page = (cell.envelope or {}).get("page") or {}
+    data = (cell.envelope or {}).get("data") or {}
+    check("kernel: search count mode reports rows delivered, with hits labelled",
+          data.get("hits") == 700 and page.get("shown") == 1 and page.get("total") == 1
+          and page.get("unit") == "file", str(page) + str(data)[:120])
+    cell = kernel.call("search", {"pattern": "row", "path": "paged.txt", "max_results": 5})
+    data = (cell.envelope or {}).get("data") or {}
+    check("kernel: search labels hits vs hit_ranges",
+          data.get("hits") == 700 and "hit_ranges" in data and "ranges" not in data,
+          str(data)[:280])
+
+    kernel.run("write('bigdiff.txt', '\\n'.join('x' * 12 for _ in range(1200)))")
+    cell = kernel.call("session_diff", {})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: session_diff is a paged envelope with page.truncated",
+          page.get("unit") == "char" and page.get("truncated") is True
+          and page.get("has_more") is True and "...[diff truncated" in cell.stdout,
+          str(page)[:280])
+    kernel.run("write('bench/.tmp/scratch.txt', 'kept out of the walk')")
+    cell = kernel.call("session_diff", {})
+    data = (cell.envelope or {}).get("data") or {}
+    check("kernel: session_diff counts journaled writes to an ignored path",
+          int(data.get("ignored") or 0) >= 1
+          and any("not in this diff" in note
+                  for note in (cell.envelope or {}).get("notes") or []),
+          str(cell.envelope)[:320])
+
+    kernel.run("write('ctx.py', 'def alpha():\\n    return 1\\n')")
+    cell = kernel.call("edit", {"edits": [{"path": "ctx.py", "old": "return 2",
+                                                 "new": "return 3"}]})
+    context = ((cell.envelope or {}).get("data") or {}).get("context") or {}
+    check("kernel: a failed edit shows the enclosing definition from outline",
+          context.get("name") == "alpha"
+          and any("return 1" in str(text) for _, text in context.get("lines") or []),
+          str(context)[:280])
+    cell = kernel.call("guide", {"query": "demo", "limit": 1, "headers": 1})
+    check("kernel: guide(headers=N) inlines the top hit's header in one call",
+          "WHAT IT IS" in cell.stdout and "ENTRY POINTS" in cell.stdout,
+          cell.stdout[:240])
+
     kernel.run("undo('call_a.txt'); undo('call_b.txt')")

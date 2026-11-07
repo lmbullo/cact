@@ -6,7 +6,7 @@ WHAT IT IS
   cell's result is rendered as a state card instead of a transcript:
 
     [state]  turn, elapsed, prompt tokens, and the files this cell changed
-    [observe]/[page]  a typed verb's envelope: op/status, shown/total/next/unit/has_more/complete
+    [observe]/[page]  a typed verb's envelope: op/status, shown/total/next/unit/has_more/truncated/complete
     [data]   the typed result's text, verbatim (typed verbs page; the card does not clip them)
     [note] / [error]  explicit notes and the structured rejection
     [stderr] / [stdout]  for python/exec only: head, error lines, tail, plus an _OBS[n] handle
@@ -96,7 +96,7 @@ Every tool result is a state card, not a terminal transcript:
   [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels each `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the file continues; `truncated` only means the default page limit cut the requested output; read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it.
+Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature.
 """
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
@@ -285,6 +285,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
             if page.get("pointer"):
                 bits.append("pointer=true")
             bits.append("has_more=" + ("true" if page.get("has_more") else "false"))
+            bits.append("truncated=" + ("true" if page.get("truncated") else "false"))
             bits.append("complete=" + ("true" if page.get("complete") else "false"))
             parts.append("[page] " + " ".join(bits))
         for note in env.get("notes") or []:
@@ -328,7 +329,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
             message = err.get("message") or err.get("path") or ""
             hint = err.get("use")
             if not hint and code == "outside_root":
-                hint = "paths are relative to the workspace root ('.') or its absolute path"
+                hint = "typed editors are workspace-only; use exec(shell=...) for a scratch path"
             parts.append("[error] %s: %s%s" % (
                 code, message, ("; use " + str(hint)) if hint else ""))
     if cell.stderr:

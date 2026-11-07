@@ -12,8 +12,10 @@ ENTRY POINTS
   private gate: `_mutating_command`, `_HINT`, `_audit_spawn`, `_SpawnBlocked`.
 
 INVARIANTS
-  - `exec` never parses a shell string. A shell interpreter with `-c`/`-lc` in argv is refused
-    as `shell_via_exec` and points at `exec(shell=<string>)`, the one explicit shell path.
+  - `exec` never parses a shell string for a program: a shell interpreter with `-c`/`-lc` in
+    argv is refused as `shell_via_exec` and points at `exec(shell=<string>)`. Passing a bare
+    string as `argv` is the one exception: it is run once through `_run_shell` and the answer
+    carries a note, because "fail then retry with shell=" cost two turns for one command.
   - Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
     `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument) are refused
     as `kind: "wrong_call"` with a `use` hint, because they bypass the journal and would make
@@ -275,8 +277,9 @@ def _run_shell(command, timeout=60, cwd=None):
         stdout = "\n".join(str(item.get("stdout") or "") for item in items).strip()
         stderr = "\n".join(str(item.get("stderr") or "") for item in items).strip()
         return _Result({"ok": all(bool(item.get("ok")) for item in items), "kind": "commands",
-                        "count": len(items), "commands": items,
-                        "stdout": stdout, "stderr": stderr,
+                        "count": len(items), "shown": len(items), "total": len(items),
+                        "unit": "command", "offset": 0, "truncated": False,
+                        "commands": items, "stdout": stdout, "stderr": stderr,
                         "exit_code": next((item.get("exit_code") for item in items
                                             if item.get("exit_code") not in (0, None)), 0)})
     _RUN_LOG.append(str(command))
@@ -415,14 +418,20 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
         results = [{"argv": item.get("argv"), "exit_code": item.get("exit_code"),
                     "ok": item.get("ok")} for item in items]
         return _Result({"ok": ok, "kind": "commands", "count": len(items),
+                        "shown": len(items), "total": len(items), "unit": "command",
+                        "offset": 0, "truncated": False,
                         "results": results, "stdout": stdout, "stderr": stderr,
                         "exit_code": next((item.get("exit_code") for item in items
                                            if item.get("exit_code") not in (0, None)), 0)})
     if isinstance(argv, str):
-        return _Result({"ok": False, "kind": "wrong_call", "argv": argv, "error": {
-            "code": "shell_string",
-            "message": "exec() runs a program by argv; it does not parse a shell string",
-            "use": "exec(argv=['git','status']) -- or exec(shell=<command>) when you truly need shell syntax"}})
+        # A model that passes the whole command as argv gets it run once, with a note. The old
+        # shell_string refusal was correct but cost a retry on the most common call shape.
+        result = _run_shell(argv, timeout=timeout, cwd=cwd)
+        note = ("argv was a shell string; it ran through exec(shell=...) so shell syntax "
+                "applied. Pass argv=['prog','arg'] for a literal program.")
+        result["note"] = note
+        result["text"] = str(result.get("stdout") or "")
+        return result
     if (not isinstance(argv, (list, tuple)) or not argv
             or any(isinstance(item, (list, tuple, dict, set)) for item in argv)):
         return _Result({"ok": False, "kind": "bad_args", "error": {
@@ -511,15 +520,19 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
             "stdout": out or "", "stderr": err or ""})
 
 
-def _git_page(text, offset=0, max_chars=12000):
+def _git_page(text, offset=0, max_chars=None):
     text = str(text or "")
     start = max(0, int(offset or 0))
-    limit = int(max_chars or 0)
+    explicit = max_chars is not None
+    limit = 12000 if max_chars is None else max(0, int(max_chars))
     shown = text[start:] if limit <= 0 else text[start:start + limit]
-    return shown, len(text), (start + len(shown) if start + len(shown) < len(text) else None)
+    end = start + len(shown)
+    # offset is the START of this window, next is where to resume; the old shape returned the
+    # resume cursor as `offset`, so a first page looked like a continuation.
+    return shown, len(text), start, (end if end < len(text) else None), (end < len(text) and not explicit)
 
 
-def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=12000,
+def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=None,
              stat=False, cached=False, rev="HEAD", remote="origin", branch=None,
              cwd=None):
     # Typed git: no pager, no shell, no giant undifferentiated dump. diff/show page with
@@ -579,12 +592,13 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=120
     code = result.get("exit_code")
     ok = code in (0, None)
     if action in ("diff", "show"):
-        text, total, nxt = _git_page(out, offset, max_chars)
+        text, total, start, nxt, truncated = _git_page(out, offset, max_chars)
         return _Result({"ok": ok, "kind": "git_diff" if action == "diff" else "git_show",
                         "action": action, "paths": paths, "text": text,
-                        "total_chars": total, "next_offset": nxt,
+                        "total_chars": total, "total": total, "shown": len(text),
+                        "offset": start, "unit": "char",
                         "next": {"offset": nxt, "unit": "char"} if nxt is not None else None,
-                        "has_more": nxt is not None,
+                        "has_more": nxt is not None, "truncated": truncated,
                         "exit_code": code, "stderr": err})
     if action == "status":
         changed = []

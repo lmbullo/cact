@@ -15,11 +15,14 @@ WHAT IT IS
     error    {code, message, use} when ok is false
 
   `page` is the only paging contract. `shown` is a count (or the inclusive [a, b] range the
-  helper already reports), `next` is the next cursor, `unit` names what the cursor counts
+  helper already reports), `offset` is the cursor of the FIRST unit this response delivered,
+  `next` is the cursor to resume at, `unit` names what the cursor counts
   (line/char/hit/file/entry/module), `has_more` says the file/result continues, and
-  `complete` says this request was served (an explicit read window is complete even when the
-  file continues). A helper may keep extra top-level keys for python callers; the
-  envelope does not repeat them, so a model never sees the same fact twice.
+  `truncated`/`complete` are one pair: a built-in default page limit cut output the caller did
+  not ask to have cut (`truncated: true`, `complete: false`), or the request was served
+  (`truncated: false`, `complete: true`) even when `has_more` is true. A helper may keep extra
+  top-level keys for python callers; the envelope does not repeat them, so a model never sees
+  the same fact twice.
 
 ENTRY POINTS
   normalize(tool, value, handle=None) -> dict
@@ -33,10 +36,14 @@ INVARIANTS
   - Bulk payloads (`text`, `stdout`, `stderr`, `matches`, `files`, `entries`, `items`,
     `modules`, `hunk`) stay out of the envelope. Their delivery is stdout; their address is
     the handle. That keeps the structured half small and makes duplication impossible.
-  - `complete` is false only when the helper reports `truncated` (the page limit cut the
-    request) or, for non-file results, when `next`/`has_more` remains. An explicit read
-    window is complete even when `has_more` is true. `has_more` is separate and always
-    means the underlying file/result continues.
+  - `complete == not truncated`, everywhere. `has_more` is separate and always means the
+    underlying file/result continues; it never implies a failed request. A helper reports
+    `truncated` only when a built-in default (page size, max_chars) cut the output; an
+    explicit window (read `end`, `max_files`, `max_entries`, `max_results`, `max_chars`) is
+    served, so it is complete with `has_more` true.
+  - `offset` is never the next cursor: it is the start of what this response delivered
+    (0-based index for map/guide/outline/search, the first line for read, the first char for
+    git). `next` is the only resume cursor.
 
 WHERE TO CHANGE
   A new paging field ................. `page_of` and the helper that returns it
@@ -134,17 +141,15 @@ def page_of(kind, value):
             offset = int(offset)
         except (TypeError, ValueError):
             offset = None
-    if kind_name in ("map", "maps") and offset is None:
-        offset = 0
     # A repeated read is a pointer, not a delivery: `shown` must not claim a page of text.
     pointer = value.get("delivered") is False
     if pointer:
         shown = 0
     has_more = bool(value.get("has_more") or nxt is not None)
-    # `complete` is "this request was served"; `has_more` is "the file/result continues".
-    complete = not bool(value.get("truncated"))
-    if has_more and kind_name not in ("file", "files"):
-        complete = False
+    # One pair, everywhere: `truncated` says a default limit cut output the caller asked for;
+    # `complete` is exactly its inverse. `has_more` never changes either one.
+    truncated = bool(value.get("truncated"))
+    complete = not truncated
     # `next` is a replayable argument object, not a bare number whose unit the caller has to
     # remember: read is line-based, every other pager is offset-based.
     if nxt is None:
@@ -155,7 +160,7 @@ def page_of(kind, value):
         next_arg = {"offset": nxt}
     page = {"shown": shown, "total": total, "offset": offset, "next": next_arg,
             "unit": unit or UNITS.get(kind) or UNITS.get(kind_name),
-            "has_more": has_more, "complete": complete}
+            "has_more": has_more, "truncated": truncated, "complete": complete}
     if pointer:
         page["pointer"] = True
     if isinstance(value.get("hits"), int):

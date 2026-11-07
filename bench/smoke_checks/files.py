@@ -4,7 +4,8 @@ WHAT IT IS
   Drives a real kernel child through read (ranges, paging, truncation), write, an unclosed
   open() write, edit, an untyped deletion and a created-then-deleted file, diff/changes/
   session_diff, undo, batched edit, delete/mkdir, grep, map, a typed missing-file read, a
-  broad search aggregated by section, `read(section=)`, and guide() in both a hit and a miss.
+  broad search aggregated by section, `read(section=)`, guide() in both a hit and a miss, and
+  git status/log/files/branch plus a paged git diff.
 
 ENTRY POINTS
   run(check, root, kernel)   called by bench/smoke.py::main with the shared kernel
@@ -230,6 +231,14 @@ def run(check, root, kernel):
     cell = kernel.call("git", {"action": "branch"})
     check("kernel: call(git) branch names the current branch",
           bool(cell.stdout.strip()), (cell.stdout + cell.stderr)[:200])
+    kernel.run("write('a.txt', 'alpha\\nbeta\\ngamma\\n')")
+    cell = kernel.call("git", {"action": "diff", "max_chars": 5})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: call(git) diff pages on the delivered window, not the resume cursor",
+          page.get("offset") == 0 and page.get("unit") == "char"
+          and isinstance(page.get("total"), int)
+          and page.get("complete") is True and page.get("has_more") is True,
+          str(page)[:280])
 
     cell = kernel.run("r=run('echo shape'); print(r.stdout.strip(), r['stdout'].strip())")
     check("kernel: run() answers both r.stdout and r['stdout']",

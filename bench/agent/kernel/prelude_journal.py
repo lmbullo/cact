@@ -8,13 +8,17 @@ WHAT IT IS
 
 ENTRY POINTS
   Inside the cell namespace: _commit, open, _resolve, _read_text, _digest, _snapshot,
-  _tree_state, _row, changes(), diff(path, max_chars), undo(path, n), session_diff(path,
-  max_chars)
+  _tree_state, _row, changes(), diff(path, max_chars), diff_tool(path, max_chars),
+  session_diff(path, max_chars), undo(path, n)
   `_HINT` maps a refused shell verb to the typed helper that replaces it.
 
 INVARIANTS
   - Every mutating verb in prelude_verbs.py commits through `_commit`; nothing may write a
     tracked file another way, or changes()/diff()/undo() start lying.
+  - `diff()` stays the python helper that returns text; `diff_tool()` is the typed
+    `session_diff` and returns the one envelope shape: `page.truncated` (not an inline
+    "...[diff truncated]" with ok:true) plus `ignored` for journaled writes to a path the
+    tree walk skips (bench/.tmp/), so chars:0 never silently means "no changes".
   - `open()` is rebound here and routes a write through `_Writer`; headers.py pins
     `builtins.open` before this runs so the header index is never journalled.
   - `_BASE` is the session-start snapshot; `_snapshot()` (last fragment) fills it, so these
@@ -31,8 +35,8 @@ from __future__ import annotations
 
 # --- part 2/5: the journal, the write-through open(), snapshot/diff/undo ------------------
 _JOURNAL = r"""_HINT = {
-    "cat": "read(path)", "head": "read(path, offset=1, limit=N)",
-    "tail": "read(path, offset=total-N)", "less": "read(path)",
+    "cat": "read(path)", "head": "read(path, start=1, end=N)",
+    "tail": "read(path, start=total-N)", "less": "read(path)",
     "more": "read(path)", "wc": "read(path)['total_lines']",
     "stat": "map(path)", "grep": "grep(pattern, path)",
     "rg": "grep(pattern, path, regex=True)", "ag": "grep(pattern, path)",
@@ -256,6 +260,54 @@ def _delta():
 def session_diff(path=None, max_chars=8000):
     # Explicit name for the session journal; `git diff` is the working-tree tool.
     return diff(path=path, max_chars=max_chars)
+
+
+def diff_tool(path=None, max_chars=None):
+    # The typed session_diff: the same change set as diff(), as the one envelope shape.
+    # `ignored` counts journaled writes to paths the tree walk skips (bench/.tmp/), so an
+    # empty diff next to seven writes cannot read as "nothing changed".
+    explicit = max_chars is not None
+    limit = 8000 if max_chars is None else max(0, int(max_chars))
+    rel_filter = None
+    if path is not None:
+        _, rel_filter = _resolve(path)
+    now = _tree_state()
+    texts = []
+    files = []
+    for rel, before, after in _changed(now):
+        if rel_filter is not None and rel != rel_filter:
+            continue
+        state, adds, dels, text = _row(rel, before, after)
+        texts.append(text)
+        files.append({"path": rel, "state": state, "adds": adds, "dels": dels})
+    journaled = set()
+    for entry in _JOURNAL:
+        journaled.add(str(entry.get("path")))
+    ignored = sorted(p for p in journaled
+                     if p not in now and p not in _BASE
+                     and (rel_filter is None or p == rel_filter))
+    joined = "\n".join(texts)
+    total = len(joined)
+    text = joined if limit <= 0 else joined[:limit]
+    # A passed max_chars is an explicit window: the page is served, `has_more` says the rest
+    # is there. Only the default cap makes the response `truncated`.
+    truncated = len(text) < total and not explicit
+    if truncated:
+        text = text + "\n...[diff truncated; page with offset=%d]" % len(text)
+    notes = []
+    if ignored:
+        notes.append("%d journaled write(s) go to a path the tree walk skips (bench/.tmp/ or "
+                     "gitignored); they are not in this diff: %s"
+                     % (len(ignored), ", ".join(ignored[:6])))
+    result = {"ok": True, "kind": "diff", "path": rel_filter, "files": files,
+              "chars": len(text), "total_chars": total, "shown": len(text),
+              "total": total, "offset": 0, "unit": "char",
+              "next": {"offset": len(text), "unit": "char"} if truncated else None,
+              "truncated": truncated, "has_more": truncated,
+              "ignored": len(ignored), "ignored_paths": ignored, "text": text}
+    if notes:
+        result["note"] = "; ".join(notes)
+    return result
 
 
 def changes():
