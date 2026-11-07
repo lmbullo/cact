@@ -12,7 +12,7 @@
  *  Rule({width, note})                    the hairline above the prompt box
  *  SectionHeader({status, count})         `● running  1`
  *  TaskRow({task, selected, width, now, onSelect})  one task, one line, click or key selects
- *  LogHeader({task, events, width, now})  the run log's status line, navigation hint kept
+ *  LogHeader({task, width, now})          the run log's status line, navigation hint kept
  *  EmptyState({width})                    the first screen, before any task exists
  *
  * INVARIANTS
@@ -27,6 +27,9 @@
  *    and the HTTP API, where diagnosis needs it.
  *  - Telemetry (steps, tokens, wall time) is right-aligned and the prompt gives up room, so
  *    the eye can scan one column of numbers without the prompt jittering the layout.
+ *  - The log header is the single source of the run's state: dot, word and handle come from
+ *    `Task.status`, once. The log body never repeats them (log-view.isSilent) and the header
+ *    does not repeat the prompt either — that block is the first thing in the log, in full.
  *
  * WHERE TO CHANGE
  *  The top bar's contents or priority .... TopBar
@@ -163,54 +166,35 @@ export function TaskRow(props: {
 }
 
 /**
- * The run log's status line. The prompt gives up room first, then the optional counters;
- * `esc/enter: back` is never dropped, because a log you cannot leave is a trap.
+ * The run log's status line, and the log's one source of truth for the run's state: the dot,
+ * the status word and the handle come from `Task.status` and appear here and nowhere else. The
+ * live counters (steps, tokens, duration) sit on the right, the prompt is not repeated (the log
+ * opens with it in full), and `esc/enter: back` is never dropped — a log you cannot leave is a
+ * trap. The extras are dropped from the tail as the terminal narrows.
  */
-export function LogHeader({
-  task,
-  events,
-  width,
-  now,
-}: {
-  task: Task;
-  events: number;
-  width: number;
-  now: number;
-}) {
+export function LogHeader({ task, width, now }: { task: Task; width: number; now: number }) {
   const meta = STATUS[task.status];
   const label = `${meta.mark} ${meta.word}`;
-  const handle = `#${taskHandle(task.id)}`;
-  const handlePart = `  ${handle}`;
+  const handlePart = `  #${taskHandle(task.id)}`;
   const essential = "esc/enter: back";
-  const extras = [
-    taskProgress(task),
-    taskDuration(task, now),
-    events > 0 ? `${events} events` : "",
-  ].filter(Boolean);
+  const extras = [taskProgress(task), taskDuration(task, now)].filter(Boolean);
   // The box pads one column each side, so the line shares `width - 2`.
   const content = Math.max(0, width - 2);
   // Grow the right side from the essential hint, so what gets dropped is always the tail.
   const rightParts = [essential];
-  // Label and handle are fixed; the prompt gets a minimum of 24 columns before the hint.
-  const budget = content - label.length - handlePart.length - 26;
+  const budget = content - label.length - handlePart.length;
   for (const extra of extras) {
     if ([...rightParts, extra].join(" · ").length > budget) break;
     rightParts.push(extra);
   }
   const right = rightParts.join(" · ");
-  const room = content - label.length - handlePart.length - right.length - 3;
-  const prompt = room >= 4 ? clip(task.prompt, room) : "";
-  const gap = Math.max(
-    1,
-    content - label.length - handlePart.length - right.length - (prompt ? prompt.length + 2 : 0),
-  );
+  const gap = Math.max(1, content - label.length - handlePart.length - right.length);
   return (
     <box style={{ height: 1, flexShrink: 0, flexDirection: "row", paddingLeft: 1, paddingRight: 1 }}>
       <text>
         <span fg={meta.color}>{meta.mark}</span>
         <span fg={C.dim}>{` ${meta.word}`}</span>
-        <span fg={C.quiet}>{`  ${handle}`}</span>
-        {prompt ? <span fg={C.faint}>{`  ${prompt}`}</span> : null}
+        <span fg={C.quiet}>{handlePart}</span>
         <span>{" ".repeat(gap)}</span>
         <span fg={C.quiet}>{right}</span>
       </text>

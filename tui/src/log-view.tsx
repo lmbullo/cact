@@ -5,17 +5,24 @@
  *  `PromptView` opens the log with the task's whole prompt; `EventView` renders one TaskEvent as
  *  a single terminal line; `LogView` stacks them in a sticky-bottom scrollbox. Kinds covered:
  *  cell.start (the typed call or the python cell's arguments), turn (only a rejected/staged-finish
- *  notice), final (status + counters, then the agent's whole summary as wrapped prose), error,
- *  stderr, log, and the lifecycle kinds (started/finished/queued/pid). When the task has a start
- *  time, every row carries a dim `+12s` gutter so the run reads as a timeline.
+ *  notice), final (the closing summary block), error, stderr and log. The lifecycle kinds
+ *  (started/finished/queued/pid) render nothing: they are the task's state, which the log header
+ *  shows live from `Task` (see INVARIANTS). When the task has a start time, every row carries a
+ *  dim `+12s` gutter so the run reads as a timeline.
  *
  * ENTRY POINTS
  *  PromptView({task, width, origin})  the log's opening block: `▸ prompt` + the whole prompt
- *  EventView({event, width, origin})  one event -> one row, or null when it is silent
+ *  EventView({event, width, origin, status})  one event -> one row, or null when it is silent
  *  LogView({task, events, width})     the scrollbox; nothing when no task is open
  *
  * INVARIANTS
- *  - The log is bookended: the prompt block at the top and the final block at the bottom share
+ *  - One source of truth for the run's state: the log header (board-view.LogHeader) renders
+ *    `Task.status` live. The body never repeats it — no lifecycle row, no second status word on
+ *    the final block — so the screen cannot show `queue` and `queued` at once, or keep a stale
+ *    `queued` above a run that has moved on.
+ *  - The header also owns the live counters (steps, tokens, duration), so the closing block
+ *    carries only what the header cannot: why the run stopped, its cell and error counts.
+ *  - The log is bookended: the prompt block at the top and the summary block at the bottom share
  *    one shape — a marker + one word on the head row, then a blank row and the prose wrapped in
  *    the same INDENT column by theme.wrapText. Start and finish must line up, so a change to
  *    either block is a change to both (see `blockHead` / `bodyRows`).
@@ -29,11 +36,14 @@
  *    a rejected or staged finish the user gets, so it must never be dropped.
  *  - An unknown kind still prints one word (`? kind`), never the payload it carries.
  *  - No row here contains `─`: the log's only rule is the one hairline the prompt box owns.
+ *  - A finished task with nothing to show gets no `waiting for output…` line: that sentence
+ *    only tells the truth while the task is queued or running.
  *
  * WHERE TO CHANGE
  *  A new event kind .................... EventView's kind switch + types.ts
+ *  Which kinds stay silent ............. isSilent
  *  The opening prompt block ........... PromptView
- *  The counters on the final line ..... EventView's `final` case
+ *  The counters on the closing block .. EventView's `final` case
  *  How a block wraps .................. theme.wrapText (SUMMARY_MAX_LINES)
  *  The shared block column ............ INDENT (used by both blocks)
  *  The timeline gutter ................ `since` below
@@ -55,9 +65,29 @@ function since(ts: number | undefined, origin: number | undefined): string {
   return `${elapsed(ts - origin).padStart(6)} `;
 }
 
-/** The status look for a final event's word, falling back to a plain dot for unknown stops. */
-function finalLook(status: string): { mark: string; color: RGBA } {
-  return STATUS[status as TaskStatus] ?? { mark: "·", color: C.dim };
+/** The status colour for the closing block's marker; plain grey for an unknown stop. */
+function finalColor(status: string): RGBA {
+  return STATUS[status as TaskStatus]?.color ?? C.dim;
+}
+
+/** The one reason a turn row exists: the loop rejected or staged a finish. */
+function noticeOf(event: TaskEvent): string {
+  const notice = (event.data ?? {}).notice;
+  return typeof notice === "string" ? notice.trim() : "";
+}
+
+/**
+ * True for an event that renders no row. The lifecycle kinds (queued, started, pid, finished)
+ * are the task's state, which the log header shows live from `Task`; drawing the journal's copy
+ * would print the same fact twice — and print `queued` forever above a run that left it behind.
+ * A turn is silent unless it carries a notice (see noticeOf).
+ */
+function isSilent(event: TaskEvent): boolean {
+  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished") {
+    return true;
+  }
+  if (event.kind === "turn") return noticeOf(event) === "";
+  return false;
 }
 
 /**
@@ -125,10 +155,23 @@ export function PromptView({ task, width, origin }: { task: Task; width: number;
  * One event, one row — except the final event, which is the header row plus the agent's
  * summary wrapped over as many rows as it needs. The full payload still reaches the model.
  */
-export function EventView({ event, width, origin }: { event: TaskEvent; width: number; origin?: number }) {
+export function EventView({
+  event,
+  width,
+  origin,
+  status,
+}: {
+  event: TaskEvent;
+  width: number;
+  origin?: number;
+  /** The task's own status once the run has settled; it colours the closing marker. */
+  status?: TaskStatus;
+}) {
   const gutter = since(event.ts, origin);
   const fit = Math.max(8, width - 2 - gutter.length);
   const kind = event.kind;
+
+  if (isSilent(event)) return null;
 
   if (kind === "cell.start") {
     // A typed call shows its tool and its JSON arguments; a python cell shows its first call's
@@ -152,8 +195,7 @@ export function EventView({ event, width, origin }: { event: TaskEvent; width: n
   // A turn is normally silent (tool output is never rendered), but the loop records a
   // `notice` when it rejects or stages a finish: that reason must stay visible.
   if (kind === "turn") {
-    const notice = (event.data ?? {}).notice;
-    if (typeof notice !== "string" || !notice.trim()) return null;
+    const notice = noticeOf(event);
     const more = lineCount(notice) > 1 ? ` (+${lineCount(notice) - 1}L)` : "";
     return (
       <text fg={C.yellow}>
@@ -164,29 +206,25 @@ export function EventView({ event, width, origin }: { event: TaskEvent; width: n
 
   if (kind === "final") {
     const data = (event.data ?? {}) as Record<string, unknown>;
-    const status = String(data.status ?? "");
-    const look = finalLook(status);
+    // The marker takes its colour from the task's status once the run has settled, and only
+    // from the event when it has not: the header already spells the state out, so the closing
+    // block colours it and names itself instead of printing the same word or glyph twice.
+    const color = finalColor(status ?? String(data.status ?? ""));
     const meta = [
       data.stop ? `stop=${String(data.stop)}` : "",
-      data.steps !== undefined ? `${String(data.steps)} steps` : "",
       data.calls !== undefined ? `${String(data.calls)} cells` : "",
       data.errors !== undefined ? `${String(data.errors)} errors` : "",
-      data.wallMs !== undefined ? `${String(data.wallMs)}ms` : "",
-      (data.usage as Record<string, number> | undefined)?.total_tokens
-        ? `${String((data.usage as Record<string, number>).total_tokens)} tok`
-        : "",
     ]
       .filter(Boolean)
       .join(" · ");
 
     // The summary is the editor's note and closes the bracket the prompt opened: same head
     // shape, one blank row, the same INDENT column, wrapped to the pane and never clipped.
-    const word = status || "final";
     const { lines, dropped } = wrapText(event.text ?? "", Math.max(8, fit - INDENT.length));
 
     return (
       <box style={{ flexDirection: "column", flexShrink: 0, paddingTop: 1, paddingBottom: 1 }}>
-        {blockHead(gutter, look.mark, look.color, word, meta, fit)}
+        {blockHead(gutter, "▸", color, "summary", meta, fit)}
         {lines.length > 0 ? bodyRows(lines, dropped, C.dim) : null}
       </box>
     );
@@ -210,20 +248,22 @@ export function EventView({ event, width, origin }: { event: TaskEvent; width: n
   if (kind === "log") {
     return <text fg={C.faint}>{gutter + clip(oneLine(event.text ?? ""), fit)}</text>;
   }
-  if (kind === "started" || kind === "finished" || kind === "queued" || kind === "pid") {
-    return <text fg={C.quiet}>{gutter + clip(oneLine(event.text ?? kind), fit)}</text>;
-  }
   // An unknown kind still gets one word, never the payload it carries.
   return <text fg={C.quiet}>{gutter + clip(`? ${kind}`, fit)}</text>;
 }
 
 /**
  * One task's log inside a scrollbox: the prompt it started from, the event stream, and the final
- * summary. A null task renders nothing; before the first event the prompt still shows, because it
- * is the one thing known about the run.
+ * summary. A null task renders nothing; before the first renderable event the prompt still shows,
+ * because it is the one thing known about the run. The rows are the silent-filtered events, so
+ * `waiting for output…` is decided by what is actually on screen, not by the journal's length.
  */
 export function LogView({ task, events, width }: { task: Task | null; events: TaskEvent[]; width: number }) {
   if (!task) return null;
+  const rows = events.filter((event) => !isSilent(event));
+  // The header owns the state; once the task has settled, the closing marker borrows its colour.
+  const live = task.status === "queued" || task.status === "running";
+  const settled = live ? undefined : task.status;
   return (
     <scrollbox
       style={{ flexGrow: 1, flexBasis: 0, minHeight: 0 }}
@@ -233,11 +273,17 @@ export function LogView({ task, events, width }: { task: Task | null; events: Ta
     >
       <box style={{ flexDirection: "column", width: "100%", paddingLeft: 1 }}>
         <PromptView task={task} width={width} origin={task.startedAt} />
-        {events.length === 0 ? (
-          <text fg={C.quiet}>{`${INDENT}waiting for output…`}</text>
+        {rows.length === 0 ? (
+          live ? <text fg={C.quiet}>{`${INDENT}waiting for output…`}</text> : null
         ) : (
-          events.map((event) => (
-            <EventView key={`${task.id}:${event.seq}`} event={event} width={width} origin={task.startedAt} />
+          rows.map((event) => (
+            <EventView
+              key={`${task.id}:${event.seq}`}
+              event={event}
+              width={width}
+              origin={task.startedAt}
+              status={settled}
+            />
           ))
         )}
       </box>

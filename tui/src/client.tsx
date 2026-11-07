@@ -330,7 +330,8 @@ export function App({
           return;
         }
         openLog(data.task.id);
-        notify("queued");
+        // No "queued" toast: the log header already shows the task's state, live, and the
+        // server may have started it before this response even arrived.
       } catch (error) {
         if (inputRef.current) inputRef.current.setText(previous);
         setInput(previous);
@@ -586,7 +587,7 @@ export function App({
         overflow: "hidden",
       }}
     >
-      {logTask ? <LogHeader task={logTask} events={events.length} width={width} now={now} /> : null}
+      {logTask ? <LogHeader task={logTask} width={width} now={now} /> : null}
     </box>
   );
 

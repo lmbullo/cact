@@ -5,8 +5,11 @@
  *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
  *  over the WebSocket exactly as python/worker.py emits them. The frame must open with the whole
  *  prompt, show one line per event, keep a long `run(...)` argument on a bounded row, keep the
- *  prompt box where it was, and close on the status line with the agent's whole summary wrapped
+ *  prompt box where it was, and close on the summary block with the agent's whole summary wrapped
  *  below it in the same column the prompt used.
+ *
+ *  The run's state is rendered exactly once — by the log header, from `Task.status` — so the
+ *  body must never repeat the status word and the lifecycle events must add no row at all.
  *
  * ENTRY POINTS
  *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
@@ -19,11 +22,15 @@
  *    the board off the frame, so the digest assertions are load-bearing. The two exceptions are
  *    the opening prompt and the final summary, which are wrapped, never clipped, and asserted
  *    whole.
+ *  - Exactly one status word per log is the invariant: the header's. A lifecycle row or a second
+ *    status word on the closing block is a regression, not a wording preference.
  *  - React `act(...)` warnings in `bun test` are expected noise.
  *
  * WHERE TO CHANGE
  *  How an event renders .... src/log-view.tsx (EventView)
+ *  Which kinds are silent .. src/log-view.tsx (isSilent)
  *  The opening block ........ src/log-view.tsx (PromptView)
+ *  The status line .......... src/board-view.tsx (LogHeader)
  *  A new event kind ........ python/worker.py emit(), src/types.ts, a case here
  */
 import { afterAll, expect, test } from "bun:test";
@@ -91,6 +98,8 @@ test("live log renders one line per event and truncates long payloads", async ()
   const promptBody = logFrame.split("\n").find((line) => /^ {5}live job/.test(line))!;
   expect(promptBody).toMatch(/^ {5}live job/);
   const promptIndent = promptBody.length - promptBody.trimStart().length;
+  // The prompt appears once: the header carries the state, not a clipped copy of the block.
+  expect(logFrame.split("\n").filter((line) => line.includes("live job")).length).toBe(1);
   // With the prompt as the only content, the log says it is waiting for the first event.
   expect(logFrame).toContain("waiting for output…");
 
@@ -169,23 +178,36 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(noticeLine).toContain("↺");
   expect(noticeLine).toContain("project check still fails");
 
-  // The final event is a status row followed by the agent's summary in full: wrapped to the
-  // pane, never clipped, set in a column of its own two rows below the status line. A task
-  // with a start time also carries the timeline gutter, which the wrap must leave room for.
-  sockets.at(-1)!.send(JSON.stringify({ type: "task", task: { ...task, startedAt: 1 } }));
-  await settle();
-  await flush();
+  // The final event closes the log with the summary block. The header above already owns the
+  // run's state and its live counters, so the closing head names itself (`▸ summary`) and
+  // carries only what the header cannot: why the run stopped, its cell and error counts. That
+  // is the one source of truth — no second status word, no copied steps or tokens. A task with
+  // a start time also carries the timeline gutter, which the wrap must leave room for.
   const summary = "DONE: " + "y".repeat(300);
   await push(6, {
     kind: "final",
     text: summary,
-    data: { status: "done", stop: "DONE", steps: 7, calls: 3, wallMs: 1234 },
+    data: { status: "done", stop: "DONE", steps: 7, calls: 3, errors: 0, wallMs: 1234 },
   });
+  sockets.at(-1)!.send(JSON.stringify({
+    type: "task",
+    task: { ...task, status: "done", startedAt: 1, steps: 7, usage: { total_tokens: 4210 } },
+  }));
+  await settle();
+  await flush();
   frame = captureCharFrame();
   const finalRows = frame.split("\n");
-  const finalLine = finalRows.find((line) => line.includes("✓ done"))!;
+  const header = finalRows.find((line) => line.includes("esc/enter: back"))!;
+  expect(header).toContain("✓ done");
+  expect(header).toContain("7 steps");
+  expect(header).toContain("4210 tok");
+  // One status word on the whole log: the header's.
+  expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
+  const finalLine = finalRows.find((line) => line.includes("▸ summary"))!;
   expect(finalLine).toContain("stop=DONE");
-  expect(finalLine).toContain("7 steps");
+  expect(finalLine).toContain("3 cells");
+  expect(finalLine).not.toContain("7 steps");
+  expect(finalLine).not.toContain("done");
   // The summary body is the wrapped block below it, and no word of it is lost.
   const summaryStart = finalRows.findIndex((line) => line.includes("DONE: y"));
   expect(summaryStart).toBeGreaterThan(finalRows.indexOf(finalLine));
@@ -202,6 +224,19 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(frame).toContain("? observation");
   expect(frame).not.toContain("z".repeat(120));
   expect(frame).not.toContain("w".repeat(120));
+
+  // The lifecycle kinds are the task's state, which the header already shows: they add no row.
+  // In particular a journal `queued` row can never sit stale above a run that has moved on.
+  const before = captureCharFrame();
+  await push(8, { kind: "queued", text: "queued" });
+  await push(9, { kind: "started", text: "agent started (deepseek-flash, effort=low)" });
+  await push(10, { kind: "pid", text: "worker pid 4321" });
+  await push(11, { kind: "finished", text: "done" });
+  const after = captureCharFrame();
+  expect(after).toBe(before);
+  expect(after).not.toContain("queued");
+  expect(after).not.toContain("agent started");
+  expect(after).not.toContain("worker pid");
 
   await dispose();
 });

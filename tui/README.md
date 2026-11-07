@@ -147,10 +147,16 @@ final summary in full at the end. The prompt and the summary are the bracket aro
 start and finish — and they are set in the same shape. Rows carry a dim elapsed-time gutter once
 the task has a start time, so a long run reads as a timeline.
 
+The run's state has exactly one source: the status line at the top, drawn from `Task.status`.
+The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no second status word on
+the summary block — so the screen cannot say `queue` and `queued` at once, and nothing can go on
+saying `queued` after the run has left that state. Lifecycle events stay in `events/<id>.jsonl`
+as journal history; they are not rendered.
+
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
- ● running  #4f7c1  add a retry to the fetch helper   esc/enter: back · 3 steps · 4210 tok · 11s
+ ● running  #4f7c1                            esc/enter: back · 3 steps · 4210 tok · 11s
 
     0ms ▸ prompt  deepseek-flash · low
 
@@ -162,7 +168,7 @@ the task has a start time, so a long run reads as a timeline.
    4.5s · 'a.py'
    6.0s ↺ [finish] final_answer rejected: the project check still fails
 
-   7.5s ✓ done  stop=DONE · 7 steps · 3 cells · 0 errors · 18432ms · 4210 tok
+   7.5s ▸ summary  stop=DONE · 3 cells · 0 errors
 
      Retry added to the fetch helper; the backoff path is covered by a test.
 
@@ -178,8 +184,9 @@ the task has a start time, so a long run reads as a timeline.
 
 The log is the same screen with its content pane swapped: the masthead, the breath under it, a
 status line, the events, and the one hairline over the prompt. The status line carries the dot,
-the status word, the short handle, the prompt, then `esc/enter: back` and the live counters; the
-hint is never dropped and the counters disappear from the tail as the terminal narrows.
+the status word, the short handle, then `esc/enter: back` and the live counters; the hint is
+never dropped and the counters disappear from the tail as the terminal narrows. It does not
+repeat the prompt — the log opens with that in full, right below.
 
 A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
 A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
@@ -187,32 +194,36 @@ A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.
 shows the arguments of its first call, so `read('a.py')` reads as `· 'a.py'`; the cell index and
 counters are dropped and only the first line of a multi-line cell is kept.
 
-The log is monochrome by design: the gutter, the `·` bullet and the lifecycle lines use the
-quietest greys, the arguments use body ink, and nothing is bold. Colour appears only where it
-means something — amber for a rejected or staged finish, clay for an error, the status dot on the
-final line. That is the difference between a log you scan and a log that glares.
+The log is monochrome by design: the gutter, the `·` bullet and the quiet rows use the quietest
+greys, the arguments use body ink, and nothing is bold. Colour appears only where it means
+something — amber for a rejected or staged finish, clay for an error, the closing marker's
+status colour. That is the difference between a log you scan and a log that glares.
 
-The final event is the one row that grows: its status line (`✓ done  stop=DONE · 7 steps · …`) is
-followed by one blank row and the agent's whole summary — paragraph breaks and bullets included —
-word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
-`SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped.
+The final event is the one block that grows: its head row (`▸ summary  stop=DONE · 3 cells ·
+0 errors`) is followed by one blank row and the agent's whole summary — paragraph breaks and
+bullets included — word-wrapped into an indented column by `theme.wrapText`. Nothing is
+clipped. Past `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than
+dropped. The head carries only what the status line cannot: why the run stopped, its cell and
+error counts. The status word, the steps, the tokens and the wall time live up there; the
+closing marker only borrows the run's status colour.
 
 The log opens with the same block shape, upside: a head row (`0ms ▸ prompt`, the model in the
 quiet tail) and the prompt wrapped into the same four-column indent, so the start and the finish
 of a run line up under each other. The prompt is shown whole — a long one wraps instead of being
 clipped — and it keeps its bright body ink, while the summary sits a shade quieter: the reader's
-words, then the agent's. Before the first event the prompt is the whole log, with `waiting for
-output…` beneath it.
+words, then the agent's. Before the first renderable event the prompt is the whole log, with
+`waiting for output…` beneath it; a finished task with nothing to show gets no such line, because
+that sentence only tells the truth while the task is queued or running.
 
-The header's steps/tokens/duration are the live values, the same ones the board row shows, and
-the event count appears once the journal has one. The prompt is clipped before the hint, never
-after it.
+The status line's steps/tokens/duration are the live values, the same ones the board row shows.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
 one exception: a turn carrying a `notice` (a rejected or staged `final_answer`, recorded by
 `bench/agent/tool_loop.py`) prints its first line and a `(+NL)` count — that is how the reason a
 finish did not take becomes visible. The full payload is still journalled and reaches the model.
-The log keeps up to 1000 events in memory, seeded from the journal (last 800) on open.
+The log keeps up to 1000 events in memory, seeded from the journal (last 800) on open; the
+silent kinds are filtered at render time, so `waiting for output…` counts what is actually on
+screen rather than the journal's length.
 
 `esc` (empty prompt) or `enter` (empty prompt) goes back; `Ctrl-K` cancels from either screen.
 There is only one prompt box, mounted once below whichever view is showing, so switching views
@@ -319,7 +330,10 @@ Cancelling a queued task marks it `cancelled` immediately. Cancelling a running 
 
 Each task's journal is append-only JSONL with `seq`, `ts`, `kind`, and kind-specific fields.
 Kinds: `queued`, `started`, `pid`, `cell.start`, `turn`, `log`, `stderr`, `error`, `final`,
-`finished`. Payloads are capped before storage: strings at 16000 chars, arrays at 40 items,
+`finished`. The first four are journal history only: their live state is `Task.status` (and
+`Task.pid`), which the board and the log status line render, so the TUI draws them nowhere.
+`cell.start`, `turn` (with a `notice`), `log`, `stderr`, `error` and `final` are what the log
+body shows. Payloads are capped before storage: strings at 16000 chars, arrays at 40 items,
 nesting at depth 12 (`[depth]` marks the cut), so nested call arguments survive and one huge
 observation cannot bloat a journal.
 
