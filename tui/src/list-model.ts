@@ -15,9 +15,11 @@
  *  selectedRowIndex(rows, selected)     row index for the highlighted task (-1 when absent)
  *  scrollWindow(rowCount, budget, focus) visible slice {start, size} keeping focus in view
  *  taskProgress(task)                   live `steps / tokens` label ("" until one is known)
+ *  taskDuration(task, now)              live/final wall time label ("" until it starts)
  *
  * INVARIANTS
- *  - Deterministic and side-effect free: same input, same output, no Date.now/Math.random.
+ *  - Deterministic and side-effect free: same input, same output, no clock. `taskDuration`
+ *    takes `now` as an argument for the same reason.
  *  - Ties are broken by `createdAt`, so a re-render never reshuffles the list.
  *  - `scrollWindow` never returns a negative start and never exceeds rowCount.
  *
@@ -25,8 +27,10 @@
  *  Section order or row shape ... STATUS_ORDER, rank, buildRows
  *  Keyboard movement ............ stepSelection
  *  Visible window maths ......... scrollWindow
+ *  A row's duration label ....... taskDuration
  */
 import type { Task, TaskStatus } from "./types";
+import { elapsed } from "./theme";
 
 /** Section order: live work first, then finished work; oldest first inside a section. */
 export const STATUS_ORDER: TaskStatus[] = [
@@ -53,6 +57,20 @@ export function taskProgress(task: Task): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/**
+ * Wall time for a row tail: finished tasks use their recorded span, a running task uses
+ * `now - startedAt`, and anything without a start reads empty so the column stays silent.
+ */
+export function taskDuration(task: Task, now: number): string {
+  const start = task.startedAt;
+  if (!start) return task.wallMs !== undefined ? elapsed(task.wallMs) : "";
+  const end = task.finishedAt ?? (task.status === "running" ? now : undefined);
+  if (end === undefined || end < start) {
+    return task.wallMs !== undefined ? elapsed(task.wallMs) : "";
+  }
+  return elapsed(end - start);
 }
 
 /** Board order: status band first (running, queued, done, failed), then oldest task first. */

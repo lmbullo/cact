@@ -66,34 +66,41 @@ additionally `chdir`s into it.
 
 ## 3. Board contract
 
-One row per task: id, state as a single lowercase word, live `steps · tokens` counters when it
-has them, and the prompt. Counters come from turn events (`Task.progress`), so a running row
-moves before the final answer; a finished row falls back to the final `steps`/`usage` counters.
-Row id is `t-<base36 timestamp>-<5 hex>`.
+One row per task: id, state as a single lowercase word, live `steps · tokens` when the task
+has them, wall time on the right, and the prompt. Counters come from turn events
+(`Task.progress`), so a running row moves before the final answer; a finished row falls back
+to the final `steps`/`usage` counters and its recorded span. Row id is `t-<base36 timestamp>-<5 hex>`.
+
+The top bar is the same on both screens: a `▌ code` brand, the workspace with `$HOME`
+shortened to `~`, then the model, effort and live counts on the right. It reads `offline`
+in red while the socket is down and `idle` when the board is empty.
 
 ```
-  ─ running (1)
-  › t-m3k9a1x2-4f7c1 running  3 steps · 4210 tok  add a retry to the fetch helper ←
-  ─ queue (2)
-    t-m3k9b7c4-1a9de queue    write tests for the parser
-  ─ done (1)
-    t-m3k9f5g6-0c4aa done     rename the config loader
-────────────────────────────────────────────────────────────────
+ ▌ code  ~/some/project                      deepseek-flash · low · 1 running · 1 queue
+  ● running ──────────────────────────────────────────────────────────────────────── 1
+  › t-m3k9a1x2-4f7c1 running add a retry to the fetch helper   3 steps · 4210 tok  11s ←
+  ○ queue ─────────────────────────────────────────────────────────────────────────── 1
+    t-m3k9b7c4-1a9de queue   write tests for the parser
+  ✓ done ──────────────────────────────────────────────────────────────────────────── 1
+    t-m3k9f5g6-0c4aa done    rename the config loader                                15s
+────────────────────────────────────────────────────────────────────────────────────────
   › task for /home/you/some/project…
-────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 Grouping order: `running`, `queued`, `done`, `partial`, `failed`, `cancelled`. The `queued`
-state renders as the shorter word `queue` in headers and rows.
+state renders as the shorter word `queue` in headers and rows. Telemetry is right-aligned
+and the prompt gives up room first, so steps, tokens and wall time form one readable
+column. A running row's wall time ticks once a second; an idle board does not re-render.
 
-| State | Section header | Row word | Colour |
-|---|---|---|---|
-| `running` | `─ running (n)` | `running` | green |
-| `queued` | `─ queue (n)` | `queue` | yellow |
-| `done` | `─ done (n)` | `done` | dim |
-| `partial` | `─ partial (n)` | `partial` | yellow |
-| `failed` | `─ failed (n)` | `failed` | red |
-| `cancelled` | `─ cancelled (n)` | `cancelled` | faint |
+| State | Section header | Row word | Dot | Colour |
+|---|---|---|---|---|
+| `running` | `● running ─── n` | `running` | `●` | green |
+| `queued` | `○ queue ───── n` | `queue` | `○` | yellow |
+| `done` | `✓ done ────── n` | `done` | `✓` | dim |
+| `partial` | `◐ partial ─── n` | `partial` | `◐` | yellow |
+| `failed` | `✖ failed ──── n` | `failed` | `✖` | red |
+| `cancelled` | `⊘ cancelled ─ n` | `cancelled` | `⊘` | faint |
 
 Selected row: `›` left, `←` right. Mouse click selects (does not open) and never copies.
 Left-drag selects rendered text; releasing the button copies the selection to the clipboard
@@ -106,25 +113,38 @@ task. The rule above the prompt reports `reconnecting`, the last toast, or `no a
 priority. A task that hits its step or wall cap but still produces a summary is `partial`, not
 `failed`; its final text stays in the log.
 
+Before the first task the board shows `no tasks yet`, one hint line and the fire-and-forget
+reminder; it never invents a fake section or an empty table.
+
 ## 4. Live run log
 
 `Enter` on an empty prompt opens the selected task's log: one row per tool call, plus one `↺`
-row when the loop rejected or staged a finish.
+row when the loop rejected or staged a finish. Rows carry a dim elapsed-time gutter once the
+task has a start time, so a long run reads as a timeline.
 
 ```
-  ● running  add a retry to the fetch helper   3 steps · 4210 tok · esc/enter: back · ctrl-k cancel · 12 events
-  ▸ read({"path":"src/client.tsx"})
-  ▸ exec({"argv":["bun","test"]})
-  ▸ 'src/client.tsx'
-  ↺ [finish] final_answer rejected: the project check still fails
-  ● done stop=DONE · 7 steps · 3 cells · errors 0 · 18432ms · 4210 tok  = all tests pass
+ ▌ code  ~/some/project                      deepseek-flash · low · 1 running · 1 queue
+ ● running  add a retry to the fetch helper  esc/enter: back · 3 steps · 4210 tok · 11s · ctrl-k · 5 events
+   1.5s ▸ read({"path":"src/client.tsx"})
+   3.0s ▸ exec({"argv":["bun","test"]})
+   4.5s ▸ 'a.py'
+   6.0s ↺ [finish] final_answer rejected: the project check still fails
+   7.5s ● done stop=DONE · 7 steps · 3 cells · 0 errors · 18432ms · 4210 tok = all tests pass
+────────────────────────────────────────────────────────────────────────────────────────
+  › task for /home/you/some/project…
+────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
 A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
-`exec({"argv":["bun","test"]})`. A python cell shows the arguments of its first call, so
-`read('a.py')` reads as `▸ 'a.py'`; the cell index and counters are dropped and only the first
-line of a multi-line cell is kept. Calls render in gruvbox purple (`#d3869b`).
+`exec({"argv":["bun","test"]})`; the verb is dim and the arguments are the tool colour. A
+python cell shows the arguments of its first call, so `read('a.py')` reads as `▸ 'a.py'`; the
+cell index and counters are dropped and only the first line of a multi-line cell is kept.
+Calls render in gruvbox purple (`#d3869b`).
+
+The log header pins the navigation hint first and clips the prompt before it: `esc/enter: back`
+is never dropped, and the optional counters disappear from the tail as the terminal narrows.
+The header's steps/tokens/duration are the live values, the same ones the board row shows.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
 one exception: a turn carrying a `notice` (a rejected or staged `final_answer`, recorded by
@@ -265,8 +285,8 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, progress, prompt, view rendering, selection, checks
-                    # 16 tests, 7 files; React act(...) warnings are expected noise
+bun test            # tests/: list, log, progress, prompt, view rendering, selection, checks,
+                    # theme helpers — 19 tests, 8 files; React act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

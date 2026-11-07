@@ -78,8 +78,8 @@ test("releasing a mouse drag copies the selection and clears the highlight", asy
 
   await waitFor(() => captureCharFrame().includes("eeee5555"));
   await flush();
-  // Row 1 is the task row below the `─ running (1)` section header.
-  await mockMouse.drag(2, 1, 24, 1);
+  // Rows from the top: 0 = top bar, 1 = `● running` section header, 2 = the task row.
+  await mockMouse.drag(2, 2, 24, 2);
   await settle();
   await flush();
 
@@ -90,7 +90,7 @@ test("releasing a mouse drag copies the selection and clears the highlight", asy
   await flush();
 
   // A plain click is a task selection, not a copy.
-  await mockMouse.click(2, 1);
+  await mockMouse.click(2, 2);
   await settle();
   await flush();
   expect(copied.length).toBe(1);

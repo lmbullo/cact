@@ -8,22 +8,26 @@
  *
  * ENTRY POINTS
  *  C                        RGBA palette; explicit hex so the host terminal scheme cannot change it
- *  STATUS                   TaskStatus -> {word, color}; one word per row
+ *  STATUS                   TaskStatus -> {word, mark, color}; one word and one dot per row
  *  PROMPT_MAX_ROWS          how tall the prompt grows before it scrolls internally
  *  clip(text, width)        collapse to one line and ellipsize to a width
  *  oneLine(text)            collapse whitespace, drop CRs
  *  lineCount(text)          non-empty line count, for the `(+42L)` tail
  *  toolArgs(code)           the arguments of a python cell's first call, for the run log
+ *  shortPath(path)          `$HOME` -> `~`, so the top bar stays one line
+ *  elapsed(ms)              compact duration: `0.8s`, `12s`, `2m04s`, `1h02m`
  *
  * INVARIANTS
  *  - Pure functions only: a view may call them in render, and they are cheap enough for that.
  *  - Palette values are hex literals, never ansi() slots (see the README's TUI contract).
  *  - `clip` always collapses whitespace first, so a multi-line payload never breaks a row.
+ *  - `elapsed` never returns a negative or a fractional second past 10s; the bar is not a stopwatch.
  *
  * WHERE TO CHANGE
  *  A colour ......................... C
- *  A status word or colour .......... STATUS
+ *  A status word, dot or colour ..... STATUS
  *  How a payload is shortened ........ clip / oneLine / lineCount / toolArgs
+ *  The top bar's duration grammar .... elapsed
  */
 import { RGBA } from "@opentui/core";
 import type { TaskStatus } from "./types";
@@ -49,16 +53,17 @@ export const C = {
   red: hex("#fb4934"), // red
   tool: hex("#d3869b"), // gruvbox purple, tool calls in the run log
   orange: hex("#fe8019"), // orange
+  aqua: hex("#8ec07c"), // aqua, the brand mark and the live dot
 };
 
-/** One short word per status, so a row reads `3 running fix the flaky test`. */
-export const STATUS: Record<TaskStatus, { word: string; color: RGBA }> = {
-  running: { word: "running", color: C.green },
-  queued: { word: "queue", color: C.yellow },
-  done: { word: "done", color: C.dim },
-  partial: { word: "partial", color: C.yellow },
-  failed: { word: "failed", color: C.red },
-  cancelled: { word: "cancelled", color: C.faint },
+/** One short word and one dot per status, so a row reads `● running 3 steps prompt`. */
+export const STATUS: Record<TaskStatus, { word: string; mark: string; color: RGBA }> = {
+  running: { word: "running", mark: "●", color: C.green },
+  queued: { word: "queue", mark: "○", color: C.yellow },
+  done: { word: "done", mark: "✓", color: C.dim },
+  partial: { word: "partial", mark: "◐", color: C.yellow },
+  failed: { word: "failed", mark: "✖", color: C.red },
+  cancelled: { word: "cancelled", mark: "⊘", color: C.faint },
 };
 
 /** The prompt grows with its content up to this many rows, then scrolls internally. */
@@ -79,6 +84,26 @@ export function oneLine(text: string): string {
 /** Count non-empty lines, so a big error dump reads `(+42L)` instead of 42 rows. */
 export function lineCount(text: string): number {
   return text.replace(/\r/g, "").split("\n").filter((line) => line.trim().length > 0).length;
+}
+
+/** Abbreviate the home directory so the top bar can name a workspace on one line. */
+export function shortPath(path: string): string {
+  const home = process.env.HOME;
+  if (!home) return path;
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
+/** Compact duration for a row tail: `0.8s`, `12s`, `2m04s`, `1h02m`. */
+export function elapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
 /**

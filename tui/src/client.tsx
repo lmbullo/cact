@@ -13,7 +13,7 @@
  *
  * ENTRY POINTS
  *  main()                       createCliRenderer + createRoot(<App/>); not run on import
- *  App({httpUrl, workspace})    the whole screen: header, list or log, prompt box, toast
+ *  App({httpUrl, workspace})    the whole screen: top bar, log header, list or log, prompt box, toast
  *
  * KEYS
  *  Ctrl-C / Ctrl-Q quit, Ctrl-K cancel the selected task, Ctrl-R reconnect,
@@ -32,12 +32,13 @@
  *  - Events are capped (last 1000) and de-duplicated by `seq`; a snapshot that no longer
  *    contains the open task falls back to the list.
  *  - Live progress is `taskProgress(task)`: `Task.progress` from the server's turn handling,
- *    falling back to the final `steps`/`usage` once a task ends.
+ *    falling back to the final `steps`/`usage` once a task ends. Wall time is
+ *    `taskDuration(task, now)`, and `now` only ticks while a task is running.
  *
  * WHERE TO CHANGE
  *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
  *  A colour, a status word, a clip rule ...... theme.ts
- *  Live steps/tokens ........................ taskProgress in list-model.ts, TaskRow, log final
+ *  Live steps/tokens/duration ............... list-model.ts, TaskRow, log header
  *  Keys / focus rules ....................... the useKeyboard block below
  *  Selection copy ........................... clipboard.ts, the useSelectionHandler call below
  *  Ordering, rows, scrolling ................ list-model.ts
@@ -48,7 +49,6 @@ import {
   type CliRenderer,
   type TextareaRenderable,
   type KeyEvent,
-  TextAttributes,
 } from "@opentui/core";
 import {
   createRoot,
@@ -64,11 +64,10 @@ import {
   orderTasks,
   scrollWindow,
   selectedRowIndex,
-  taskProgress,
   stepSelection,
 } from "./list-model";
 import { C, PROMPT_MAX_ROWS, clip } from "./theme";
-import { Rule, SectionHeader, TaskRow } from "./board-view";
+import { EmptyState, LogHeader, Rule, SectionHeader, TaskRow, TopBar } from "./board-view";
 import { LogView } from "./log-view";
 import { copyText } from "./clipboard";
 
@@ -97,6 +96,8 @@ export function App({
   const [promptRows, setPromptRows] = useState(1);
   const [toast, setToast] = useState("");
   const [socketEpoch, setSocketEpoch] = useState(0);
+  /** Wall clock for live row durations; only ticks while something is running. */
+  const [now, setNow] = useState(() => Date.now());
   /** "list" is the default screen; "log" is the per-task live run view opened on demand. */
   const [view, setView] = useState<"list" | "log">("list");
 
@@ -269,6 +270,17 @@ export function App({
   // Hooks must run on every render, so the flat row list is built before the log view returns.
   const listRows = useMemo(() => buildRows(ordered), [ordered]);
   const selectedTask = ordered.find((task) => task.id === selected) ?? null;
+  const runningCount = ordered.filter((task) => task.status === "running").length;
+  const queuedCount = ordered.filter((task) => task.status === "queued").length;
+
+  // A live clock, but only while a row can actually use it: an idle board must not re-render.
+  const live = runningCount > 0;
+  useEffect(() => {
+    if (!live) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live]);
 
   const cycleSelection = useCallback(
     (delta: number) => {
@@ -478,15 +490,6 @@ export function App({
         : "";
 
 
-  const header = (title: string, hint: string) => (
-    <box style={{ height: 1, flexShrink: 0, flexDirection: "row", paddingLeft: 1, paddingRight: 1 }}>
-      <text>
-        <span fg={C.text} attributes={TextAttributes.BOLD}>{title}</span>
-        <span fg={C.faint}>{`  ${clip(hint, Math.max(4, width - title.length - 3))}`}</span>
-      </text>
-    </box>
-  );
-
   // The box grows with the text, whether it wraps on its own or the user presses Enter,
   // up to PROMPT_MAX_ROWS; past that the textarea scrolls internally.
   const promptHeight = Math.max(1, Math.min(PROMPT_MAX_ROWS, promptRows));
@@ -495,7 +498,7 @@ export function App({
       ? ` ${Math.min(promptRow + 1, PROMPT_MAX_ROWS)}/${PROMPT_MAX_ROWS}`
       : "";
 
-  const rowBudget = Math.max(1, height - 2 - promptHeight);
+  const rowBudget = Math.max(1, height - 3 - promptHeight);
   const focusRow = selectedRowIndex(listRows, selected);
   const { start: winStart, size: winSize } = scrollWindow(listRows.length, rowBudget, focusRow);
   const visible = listRows.slice(winStart, winStart + winSize);
@@ -558,19 +561,7 @@ export function App({
         overflow: "hidden",
       }}
     >
-      {logTask
-        ? header(
-            `● ${logTask.status}  ${clip(logTask.prompt, Math.max(12, width - 30))}`,
-            [
-              taskProgress(logTask),
-              "esc/enter: back",
-              "ctrl-k cancel",
-              `${events.length} events`,
-            ]
-              .filter(Boolean)
-              .join(" · "),
-          )
-        : null}
+      {logTask ? <LogHeader task={logTask} events={events.length} width={width} now={now} /> : null}
     </box>
   );
 
@@ -587,17 +578,18 @@ export function App({
       {logTask ? (
         <LogView task={logTask} events={events} width={width} />
       ) : listRows.length === 0 ? (
-        <text fg={C.faint}>{"  no tasks yet — describe one below"}</text>
+        <EmptyState width={width} />
       ) : (
         visible.map((row) =>
           row.kind === "section" ? (
-            <SectionHeader key={`section:${row.status}`} status={row.status} count={row.count} />
+            <SectionHeader key={`section:${row.status}`} status={row.status} count={row.count} width={width} />
           ) : (
             <TaskRow
               key={`task:${row.task.id}`}
               task={row.task}
               selected={row.task.id === selected}
               width={width}
+              now={now}
               onSelect={selectTask}
             />
           ),
@@ -608,6 +600,16 @@ export function App({
 
   return (
     <box style={{ width: "100%", height: "100%", flexDirection: "column", backgroundColor: C.bg }}>
+      <TopBar
+        workspace={workspace}
+        model={server?.model}
+        effort={server?.effort}
+        running={runningCount}
+        queued={queuedCount}
+        total={ordered.length}
+        connected={connected}
+        width={width}
+      />
       {headerBar}
       {contentPane}
       {ruleAbove}
