@@ -107,6 +107,22 @@ def run(check, root, kernel):
     check("kernel: a commit invalidates the read pointer",
           "beta" in cell.stdout and "already delivered" not in cell.stdout,
           (cell.stdout + cell.stderr)[:220])
+    kernel.run(r"write('indent.md', '- alpha\n  beta\n- gamma\n')")
+    cell = kernel.call("edit", {"edits": [{
+        "path": "indent.md", "old": "   - alpha\n     beta", "new": "  - ALPHA\n    BETA",
+    }]})
+    check("kernel: edit accepts a unique leading-indentation-only match",
+          '"indentation"' in (cell.result or "")
+          and (root / "indent.md").read_text() == "  - ALPHA\n    BETA\n- gamma\n",
+          (cell.result or "")[:300])
+    kernel.run(r"write('ambiguous.md', '- same\n- same\n')")
+    cell = kernel.call("edit", {"edits": [{
+        "path": "ambiguous.md", "old": "- same", "new": "no",
+    }]})
+    check("kernel: edit still refuses a non-unique match",
+          (cell.result or "").find('"reason": "ambiguous"') >= 0
+          and (root / "ambiguous.md").read_text() == "- same\n- same\n",
+          (cell.result or "")[:300])
     cell = kernel.call("search", {"pattern": "red", "path": ["call_a.txt", "call_b.txt"]})
     check("kernel: call(search) searches a path list",
           "call_b.txt:1" in cell.stdout, (cell.stdout + cell.stderr)[:200])

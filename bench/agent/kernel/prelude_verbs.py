@@ -126,6 +126,53 @@ def mkdir(path):
             "text": "created %s/" % rel}
 
 
+def _closest_lines(body, old):
+    probe = old.splitlines()[0].strip() if old.splitlines() else old
+    return [{"line": number, "text": line.strip()[:200]}
+            for number, line in enumerate(body.splitlines(), 1)
+            if _difflib.SequenceMatcher(None, probe, line.strip()).ratio() > 0.6][:3]
+
+
+def _replace_text(body, old, new, all=False):
+    # Exact replacement is the contract. If that misses, accept a unique block whose lines
+    # differ only in leading whitespace: copying an indented prose bullet into a header that
+    # starts at column 1 was one of the repeated edit failures. Never fuzzy-match content;
+    # a non-unique or differently-worded block still refuses and returns the closest lines.
+    count = body.count(old)
+    if count == 1 and not all:
+        return body.replace(old, new, 1), {"match": "exact"}
+    if count and all:
+        return body.replace(old, new), {"match": "exact", "replaced": count}
+    if count > 1:
+        return None, {"reason": "ambiguous", "count": count,
+                      "use": "extend old until unique, or pass all=True"}
+    old_lines = old.splitlines()
+    if not old_lines or all:
+        return None, {"reason": "not_found", "closest": _closest_lines(body, old)}
+    body_lines = body.splitlines(keepends=True)
+    plain = [line.rstrip("\r\n") for line in body_lines]
+    wanted = [line.lstrip() for line in old_lines]
+    hits = []
+    for index in range(0, len(plain) - len(wanted) + 1):
+        if [line.lstrip() for line in plain[index:index + len(wanted)]] == wanted:
+            hits.append(index)
+    if len(hits) == 1:
+        start = hits[0]
+        end = start + len(wanted)
+        before = "".join(body_lines[:start])
+        after = "".join(body_lines[end:])
+        replacement = new
+        if (after or body.endswith(("\n", "\r"))) and not replacement.endswith(("\n", "\r")):
+            replacement += "\n"
+        return before + replacement + after, {"match": "indentation",
+                                              "lines": [start + 1, end]}
+    if len(hits) > 1:
+        return None, {"reason": "ambiguous", "count": len(hits),
+                      "lines": [index + 1 for index in hits],
+                      "use": "several blocks match after ignoring leading whitespace; include more lines"}
+    return None, {"reason": "not_found", "closest": _closest_lines(body, old)}
+
+
 def edit(path, old, new, all=False, replace_all=None):
     target, rel = _resolve(path)
     if target is None:
@@ -135,17 +182,14 @@ def edit(path, old, new, all=False, replace_all=None):
     if replace_all is not None:
         all = bool(replace_all)
     body = _read_text(target)
-    count = body.count(old)
-    if count == 0:
-        probe = old.splitlines()[0].strip() if old.splitlines() else old
-        near = [{"line": number, "text": line.strip()[:200]}
-                for number, line in enumerate(body.splitlines(), 1)
-                if _difflib.SequenceMatcher(None, probe, line.strip()).ratio() > 0.6][:3]
-        return {"ok": True, "kind": "no_change", "path": rel, "reason": "not_found", "closest": near}
-    if count > 1 and not all:
-        return {"ok": True, "kind": "ambiguous", "path": rel, "count": count,
-                "action": "extend old until unique, or pass all=True"}
-    updated = body.replace(old, new) if all else body.replace(old, new, 1)
+    updated, info = _replace_text(body, old, new, all)
+    if updated is None:
+        if info["reason"] == "not_found":
+            return {"ok": True, "kind": "no_change", "path": rel,
+                    "reason": "not_found", "closest": info.get("closest") or [],
+                    "use": "copy a closest line exactly, or splice(path, line, line, new)"}
+        return {"ok": True, "kind": info["reason"], "path": rel,
+                **{key: value for key, value in info.items() if key != "reason"}}
     entry = _commit(target, rel, updated, "edit")
     at = updated.find(new)
     first = updated[:at].count("\n") + 1 if at >= 0 else 1
@@ -153,7 +197,9 @@ def edit(path, old, new, all=False, replace_all=None):
     lo = max(1, first - 3)
     hi = min(len(lines), first + new.count("\n") + 3)
     hunk = "\n".join(f"{n:>6}| {lines[n - 1]}" for n in range(lo, hi + 1))
-    return {"ok": True, "kind": "edit", "path": rel, "replaced": count if all else 1,
+    return {"ok": True, "kind": "edit", "path": rel,
+            "replaced": info.get("replaced", 1),
+            "match": info.get("match", "exact"), "matched_lines": info.get("lines"),
             "lines": entry["after_lines"], "hunk": hunk, "hunk_lines": [lo, hi],
             "adds": entry["adds"], "dels": entry["dels"]}
 
@@ -202,6 +248,7 @@ def edit_many(edits=None, path=None):
     originals = {}
     bodies = {}
     order = []
+    matches = []
     writes = 0
     for index, item in enumerate(edits):
         item_path = item.get("path") or path
@@ -219,27 +266,28 @@ def edit_many(edits=None, path=None):
             bodies[rel] = originals[rel]
             order.append((target, rel))
         body = bodies[rel]
-        count = body.count(old)
-        if count == 0:
-            probe = old.splitlines()[0].strip() if old.splitlines() else old
-            near = [{"line": number, "text": line.strip()[:200]}
-                    for number, line in enumerate(body.splitlines(), 1)
-                    if _difflib.SequenceMatcher(None, probe, line.strip()).ratio() > 0.6][:3]
-            return {"ok": False, "kind": "edit_failed", "index": index, "path": rel,
-                    "reason": "not_found", "closest": near}
-        if count > 1 and not bool(item.get("all")):
-            return {"ok": False, "kind": "edit_failed", "index": index, "path": rel,
-                    "reason": "ambiguous", "count": count,
-                    "action": "extend old until unique, or pass all=True"}
-        bodies[rel] = body.replace(old, new) if bool(item.get("all")) else body.replace(old, new, 1)
+        updated, info = _replace_text(body, old, new, bool(item.get("all")))
+        if updated is None:
+            result = {"ok": False, "kind": "edit_failed", "index": index, "path": rel,
+                      "reason": info["reason"]}
+            result.update({key: value for key, value in info.items() if key != "reason"})
+            if info["reason"] == "not_found":
+                result["use"] = "copy a closest line exactly, or splice(path, line, line, new)"
+            return result
+        bodies[rel] = updated
+        matches.append((rel, info.get("match", "exact"), info.get("lines")))
         writes += 1
     changed = []
     for target, rel in order:
         if bodies[rel] != originals[rel]:
             _commit(target, rel, bodies[rel], "edit")
             changed.append(rel)
+    fuzzy = [{"path": rel, "lines": lines} for rel, match, lines in matches
+             if match == "indentation"]
     return {"ok": True, "kind": "edits", "paths": changed, "edits": len(edits),
-            "replaced": writes,
+            "replaced": writes, "matches": [match for _, match, _ in matches],
+            "matched_lines": fuzzy,
+            "note": "matched leading-indentation differences" if fuzzy else None,
             "text": "edited %d file(s) in %d replacement(s): %s" % (
                 len(changed), writes, ", ".join(changed)) if changed else "no change"}
 

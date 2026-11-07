@@ -185,7 +185,7 @@ VERBS: dict[str, dict] = {
     },
     "edit": {
         "function": "edit_many",
-        "summary": "Apply one or several exact old->new replacements in one atomic call. Every old must match exactly (or all=True), otherwise nothing changes; there is no single-file form in the typed schema, so a multi-file change is one call, never two parallel edits.",
+        "summary": "Apply one or several old->new replacements in one atomic call. exact old is the normal match; if only leading indentation differs, a unique block is accepted and reported as match=indentation. Ambiguous or differently-worded old text changes nothing and returns the closest lines. There is no single-file form: put every edit in edits=[{path, old, new}, ...].",
         "mutates": True,
         "schema": {
             "type": "object",
@@ -203,7 +203,7 @@ VERBS: dict[str, dict] = {
                         "required": ["path", "old", "new"],
                         "additionalProperties": False,
                     },
-                    "description": "One or more replacements; all are validated before anything is written. Use this for every edit, including a single file.",
+                    "description": "One or more replacements; all are validated before anything is written. Use this for every edit, including a single file. A unique leading-indentation-only match is accepted; the result names match=indentation.",
                 },
             },
             "required": ["edits"],
@@ -212,7 +212,7 @@ VERBS: dict[str, dict] = {
     },
     "splice": {
         "function": "splice",
-        "summary": "Replace 1-based inclusive lines start..end with text; end < start inserts before start, text='' deletes. Use it to avoid re-emitting unchanged lines.",
+        "summary": "Replace 1-based inclusive lines start..end with text; end < start inserts before start, text='' deletes. Use this when read/outline gave you line numbers and you want to avoid re-emitting an exact old block; it is the line-anchored alternative to edit.",
         "mutates": True,
         "schema": {
             "type": "object",
