@@ -29,7 +29,7 @@ WHERE TO CHANGE
                                      (RUN_PRELUDE); kernel/process.py is the supervisor
   Finish protocol or stop reason ... tool_loop.py (a reply dialect overrides `_reply`, see repl.py)
   Production defaults .............. config.py
-  A new module header or section ... that module's docstring; `python3 bench/map.py --check`
+  A new module header or section ... that module's docstring; `python3 bench/guide.py --check`
                                      and bench/smoke.py fail when it is incomplete
 
 """

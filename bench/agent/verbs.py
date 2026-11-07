@@ -41,7 +41,7 @@ from __future__ import annotations
 VERBS: dict[str, dict] = {
     "guide": {
         "function": "guide",
-        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked one-line rows (truthful total/next; default limit 10; offset pages), path gives one module's whole header. Read-only and in-kernel (no bench/map.py process). Only source headers are indexed; current docs use map/outline/search.",
+        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked one-line rows (truthful total/next; default limit 10; offset pages), path gives one module's whole header. Read-only and in-kernel (no bench/guide.py process). Only source headers are indexed; current docs use map/outline/search.",
         "mutates": False,
         "schema": {
             "type": "object",

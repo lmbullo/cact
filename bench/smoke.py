@@ -9,7 +9,7 @@ WHAT IT IS
 
     suites    every suite imports; task counts and ids are intact
     helpers   pure helpers: reply parsing, card digests, budgets, generated verb specs
-    index     the header index and `bench/map.py --check`
+    index     the header index and `bench/guide.py --check`
     docs      every repository path a document names still exists
     plans     the check plan, the Verifier, read coverage, run_check's three states
     protocol  a stale child is restarted, the current PROTOCOL is accepted

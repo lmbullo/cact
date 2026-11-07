@@ -8,8 +8,8 @@ full repository reference is `../README.md`.
 Read the source headers first:
 
 ```bash
-python3 ../bench/map.py --query tui
-python3 ../bench/map.py --check     # fails when a module header loses a section
+python3 ../bench/guide.py --query tui
+python3 ../bench/guide.py --check     # fails when a module header loses a section
 ```
 
 The only files with no header are the two shell entry points, `bin/code` and `bin/code-stop`: they
@@ -236,31 +236,16 @@ its final message becomes `failed` with the last stderr line as the error. Tasks
 `running` when the server restarted are marked `failed` with `server restarted while this task
 was running`.
 
-## 10. Safety and the tool gate
+## 10. Safety
 
-With the default `CODE_TUI_ALLOW_RUN=1`, the agent has an unsandboxed Python kernel and shell in
-the launch directory: it can edit files and run commands as the invoking user. For untrusted
-work use `CODE_TUI_ALLOW_RUN=0`: the kernel runs under `bwrap` with a read-only `/`, the
-workspace is bind-mounted writable, and `exec`/`git`/`run()` are not injected. Test-repair tasks
-are then much harder.
+The tool surface and the mutation gate are `AGENTS.md` §4 invariant 2; this section is only what
+is TUI-specific.
 
-`exec(argv)` runs a program directly (tests, builds, servers, read-only git) with `cwd`, `env`,
-`stdin` and `commands=[[...]]`; no shell parses it, so `cwd=` replaces `cd` and there are no
-pipes or redirection. `run(command)` is the python shell escape hatch. Both share the mutation
-gate: changing tracked files through `tee`, `cp`, `mv`, `rm`, `sed -i`, `git apply/...` or `>`
-is refused as `kind: "wrong_call"` with the helper to use instead. A typed call is bound to the
-verb's live signature first, so a keyword that does not exist (e.g. `exec` with `code=`) comes
-back as `kind: "bad_args"` with `error.code: "bad_arguments"` and a `use` hint. A shell
-interpreter with `-c`/`-lc` inside argv is refused as `shell_via_exec`; use
-`exec(shell=<string>)`. Direct spawning (`subprocess.Popen`, `os.system`, `os.exec*`,
-`os.posix_spawn`, `os.spawn`) runs through the same classifier. The kernel provides `read()` (one
-path or a list; `has_more`/`truncated` distinct; a repeated range is an `already_read` pointer
-unless `repeat=True`), `search()` (`grep()` alias; exact lines with merged context), `outline()`,
-`guide()`, `map()` (`include` glob; ignored trees skipped), `write()`, `edit()`, `splice()`,
-`apply()`; typed `recall()` searches earlier cell output. `exec()` and `git()` arrive with the
-process prelude, so they are absent when `CODE_TUI_ALLOW_RUN=0`. Mutations are journalled
-together so `changes()`/`diff()`/`undo()` cover multi-file edits. A program launched through
-`exec`/`run()` can still write files: the journal is a typed-helper contract, not a sandbox.
+With the default `CODE_TUI_ALLOW_RUN=1` the agent has an unsandboxed Python kernel and shell in
+the launch directory: it edits files and runs commands as the invoking user. For untrusted work
+use `CODE_TUI_ALLOW_RUN=0`: the kernel runs under `bwrap` with a read-only `/`, the workspace is
+bind-mounted writable, and `exec`/`git`/`run()` are not injected (`exec()` and `git()` arrive with
+the process prelude), so test-repair tasks become much harder.
 
 The server binds `127.0.0.1` with no authentication. Do not expose the port.
 

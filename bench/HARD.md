@@ -1,8 +1,8 @@
 # HARD.md — evidence for the typed envelope (read before simplifying the tool surface)
 
-You are the reader. This is a decision record, not a tutorial: it exists so an agent changing
-the action space does not delete a mechanism that is carrying the benchmark. Run the commands
-before and after such a change; do not trust the numbers as current forever.
+You are the reader. This is a decision record: it exists so an agent changing the action space
+does not delete a mechanism that is carrying the benchmark. The gate chain and the mutation
+contract are `AGENTS.md` §4-§5; this file owns only what was measured.
 
 Short version: `read`, `mutation` and `edge` are saturated, so they cannot measure the envelope.
 The `hard` suite can, and it says the envelope does not make the model smarter — it makes the

@@ -7,7 +7,7 @@ no persuasion, no screenshots-for-humans.
 
 Precedence when sources disagree:
 
-1. the module header / the code (`python3 bench/map.py --query <topic>`)
+1. the module header / the code (`python3 bench/guide.py --query <topic>`)
 2. this file (the short contract)
 3. `README.md` (the full reference)
 4. every other document
@@ -17,11 +17,11 @@ Fix the lower layer in the same change that breaks it.
 ## 0. Fast path
 
 ```bash
-python3 bench/map.py --check                 # gate: every module header is complete
-python3 bench/map.py --query "<topic>"      # which module owns this
-python3 bench/map.py --module <path>        # one module's header whole
-python3 -m ruff check .                     # gate: the code contract (ruff.toml)
-python3 bench/smoke.py                      # offline contract check, no key, no network
+python3 bench/guide.py --check           # gate: every module header is complete
+python3 bench/guide.py --query "<topic>" # which module owns this
+python3 bench/guide.py --module <path>   # one module's header whole
+python3 -m ruff check .                  # gate: the code contract (ruff.toml)
+python3 bench/smoke.py                   # offline contract check, no key, no network
 ```
 
 Then read only the header and the line range you need (`read(path, section=...)` inside a code
@@ -52,7 +52,7 @@ These are architecture, not style. A change that breaks one is a regression even
 
 - **Self-describing surface.** Every source module opens with WHAT IT IS / ENTRY POINTS /
   INVARIANTS / WHERE TO CHANGE. `bench/agent/headers.py` parses those sections into rows;
-  `bench/map.py` and the in-kernel `guide()` verb both read them. `help(tool)` returns the live
+  `bench/guide.py` and the in-kernel `guide()` verb both read them. `help(tool)` returns the live
   signature, and the provider schema comes from the same registry entry. An agent must never
   need to read an implementation to learn how to call it. `bench/smoke.py` checks that every
   ENTRY POINTS callable resolves to a declared symbol, so a header cannot advertise a deleted
@@ -69,11 +69,12 @@ These are architecture, not style. A change that breaks one is a regression even
   `error.code: "bad_arguments"`, plus the signature hint), refused mutations (`wrong_call`) and
   check failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`). Do not replace a
   structured answer with prose only a human can parse.
-- **Legibility is enforced, not requested.** Four cheap offline gates: `bench/map.py --check`
+- **Legibility is enforced, not requested.** Four cheap offline gates: `bench/guide.py --check`
   for the module header, `ruff.toml` (E/F/W/B, blank-line convention included) for the code,
   a one-line contract docstring on every public function and class, and
-  `bench/smoke_checks/docs.py`, which resolves every repository path these documents name so a
-  rename cannot leave a dead pointer. A public name without
+  `bench/smoke_checks/docs.py`, which resolves every repository path these documents name (a
+  rename cannot leave a dead pointer) and fails when one document copies a paragraph from
+  another (a copied fact drifts until one copy lies). A public name without
   a docstring is a defect; so is a name one character away from another (`check` vs `checks`,
   `run` vs `runs`, `ws.py` next to `ws/`). Names come in prefix families, never near-duplicates.
 - **Design the tool for the job.** `exec` takes argv + cwd, not a command string: no quoting, no
@@ -172,7 +173,7 @@ These are architecture, not style. A change that breaks one is a regression even
 11. **`bench/run.py` has two import blocks** — script mode (`python3 bench/run.py`) and package
     mode (`python3 -m bench.run`). Keep both working.
 12. **Every module explains itself, and something checks.** A source module carries all four
-    header sections; `bench/agent/headers.py` parses them and `python3 bench/map.py --check`
+    header sections; `bench/agent/headers.py` parses them and `python3 bench/guide.py --check`
     (also a smoke check) exits 1 when one is missing. `kernel/prelude.py` ships `headers.py`'s
     *source* to the child in `KERNEL_HEADERS` and execs it into a private `_HEADERS` namespace,
     exporting only `guide()`: keep that file stdlib-only, free of `__file__`, and read-only, or
@@ -191,9 +192,9 @@ Run in this order. A failure is a contract change, not a flaky test.
 
 | Command | Covers | Expected |
 |---|---|---|
-| `python3 bench/map.py --check` | every module header has its four sections | exit 0 |
+| `python3 bench/guide.py --check` | every module header has its four sections | exit 0 |
 | `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths, `guide()`, ruff | exit 0 |
+| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths and one-owner prose, `guide()`, ruff | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
 | `cd tui && bun test` | rendering/detection tests, 6 files | 13 pass; React `act(...)` warnings are expected noise |
@@ -225,7 +226,7 @@ Needs network and a key. Without one, stop at the offline gates and say so.
 | TUI queue/journal/API | `tui/src/server.ts`, `tui/src/types.ts` | `bun test`, `bench/live.py` |
 
 Adding a module means adding its four-section header before its first line of code, a one-line
-contract docstring on every public function and class, then `python3 bench/map.py --check` and
+contract docstring on every public function and class, then `python3 bench/guide.py --check` and
 `python3 -m ruff check .`. Name it so a `search` for the concept finds one family of files
 (`check_run.py` / `check_plan.py`), never a name one character away from an existing module.
 Adding a kernel helper means also adding the matching rule text
@@ -243,6 +244,10 @@ know it exists. If it replaces a mutating shell verb, add it to `_RUN_SHELL_MUTA
   TS conventions are not gated, so match the file you are editing.
 - Prefer one call that does the job over a pipeline of calls; prefer a typed tool over
   `exec(shell=...)`; prefer deleting a duplicate catalog over syncing two copies.
+- One fact, one owner. `AGENTS.md` owns invariants and recipes, `README.md` owns machinery,
+  `tui/README.md` owns the wire contract, `HARD.md` owns the evidence, a module header owns that
+  module. Point at the owner instead of restating it: `bench/smoke_checks/docs.py` fails on a
+  paragraph that appears in two documents.
 - A doc claim must be executable or checkable. If you cannot verify it, cut it.
 - Commit style: `area(scope): lowercase summary`, e.g.
   `bench(agent/kernel): add grep, write, edit`.

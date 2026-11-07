@@ -14,14 +14,14 @@ WHAT IT IS
   Kernel cells cannot import `bench`: their cwd is a task workspace and their interpreter is
   a bare `python3 -c`. `kernel/prelude.py` therefore ships *this file's source* to the child in
   KERNEL_HEADERS, execs it into a private `_HEADERS` namespace, and exposes one verb,
-  `guide()`, so the verb and `python3 bench/map.py` run identical code. Everything here is
+  `guide()`, so the verb and `python3 bench/guide.py` run identical code. Everything here is
   stdlib-only (`_OPEN` pins builtins.open before the prelude replaces it), side-effect-free,
   and resolves the tree from the current working directory when `root` is omitted — which is
   why it works unchanged in both processes, and why it must never import `bench` or read
   `__file__`.
 
 ENTRY POINTS
-  python3 bench/map.py [--query TEXT | --module PATH | --json | --check]
+  python3 bench/guide.py [--query TEXT | --module PATH | --json | --check]
   guide(root=None, query=None, path=None, limit=10, chars=20000, offset=0) -> dict
   index(root=None) -> list[dict];  problems(root=None)
   header(path) -> (header text, line count);  split(text) -> (title, sections)
@@ -48,7 +48,7 @@ WHERE TO CHANGE
   The header grammar (sections, delimiters) ... SECTIONS, _SECTION_RE, _QUOTES, split()
   Which files are indexed ................ SKIP_DIRS, LANGUAGES, _walk()
   Ranking, limits, truncation ............ guide(), render()
-  The CLI ............................... bench/map.py
+  The CLI ............................... bench/guide.py
 """
 from __future__ import annotations
 

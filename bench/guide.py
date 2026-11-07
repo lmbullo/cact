@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""The contract CLI: what every module is, and which one owns the thing you are about to change.
+"""guide: the CLI form of the `guide()` verb — what every module is, and which one owns a topic.
 
 WHAT IT IS
   `bench/agent/headers.py` turns the WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE
-  header of every module into rows; this is the terminal front for those rows. It is the
-  first command an agent should run in this repo: one screen instead of the whole tree, and a
-  gate (`--check`) that fails when a module stops explaining itself.
+  header of every module into rows; this is the terminal front for those rows, and the same
+  concept the kernel exposes as `guide(query)` / `guide(path)`. One name for one thing: the `map`
+  verb lists files, `guide` (verb or this CLI) reads source headers. It is the first command an
+  agent should run in this repo: one screen instead of the whole tree, plus a gate (`--check`)
+  that fails when a module stops explaining itself.
 
 ENTRY POINTS
-  python3 bench/map.py                     the map: one line per module
-  python3 bench/map.py --query checks      ranked modules that own "checks", with their headers
-  python3 bench/map.py --module bench/agent/check_plan.py  one module's full header
-  python3 bench/map.py --json [--query Q]  the same data as JSON, for a program
-  python3 bench/map.py --limit N           cap the rows for --query (default 6)
-  python3 bench/map.py --check             exit 1 if a header is missing a section
+  python3 bench/guide.py                     the index: one line per module
+  python3 bench/guide.py --query checks      ranked modules that own "checks", with their headers
+  python3 bench/guide.py --module bench/agent/check_plan.py  one module's full header
+  python3 bench/guide.py --json [--query Q]  the same data as JSON, for a program
+  python3 bench/guide.py --limit N           cap the rows for --query (default 6)
+  python3 bench/guide.py --check             exit 1 if a header is missing a section
   main(argv=None) -> exit code; the flags are mutually exclusive except --json
 
 INVARIANTS
@@ -43,9 +45,9 @@ from bench.agent import headers  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print the map, one query, or one header; `--check` is the header gate (exit 1 on a gap)."""
+    """Print the index, one query, or one header; `--check` is the header gate (exit 1 on a gap)."""
     parser = argparse.ArgumentParser(
-        prog="bench/map.py",
+        prog="bench/guide.py",
         description="The repo contract index: module -> what it is, where to change it.")
     parser.add_argument("--query", "-q", default=None,
                         help="terms to match against paths, titles and headers")

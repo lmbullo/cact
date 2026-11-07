@@ -1,17 +1,22 @@
-"""docs: every repository path a document names must resolve to a real file.
+"""docs: the four documents stay pointers, never dead links and never copies of each other.
 
 WHAT IT IS
-  Four documents are the contract an agent reads before editing: `AGENTS.md`, `README.md`,
-  `tui/README.md`, `bench/HARD.md`. Each points at source files by backticked path. The layout
-  changes often, and a renamed module leaves a dead pointer that nothing else notices. This
-  group resolves every path-shaped reference against the real tree, so a document that names a
-  deleted file fails the offline gate instead of costing the next agent a wasted `read`.
+  Two offline checks over the documents an agent reads before editing: `AGENTS.md`, `README.md`,
+  `tui/README.md`, `bench/HARD.md`.
+    paths   every backticked path a document names resolves in the tree, so a rename cannot
+            leave a pointer that costs the next agent a wasted `read`.
+    unique  no paragraph of one document is copied verbatim into another. Each fact has one
+            owner (AGENTS.md: invariants/recipes; README.md: machinery; tui/README.md: the wire
+            contract; HARD.md: measured evidence), and duplicated prose drifts until one copy
+            lies, which an agent cannot detect by reading either copy.
 
 ENTRY POINTS
   run(check)                        called by bench/smoke.py::main after `index`
   DOCS                              the documents that are checked
   _references(text)                 backticked spans that look like a repository path
   _resolves(ref, doc_dir, paths)    whether a reference names something in the tree
+  _paragraphs(text)                 the comparison unit for the unique check
+  _copies(docs)                     (text, path, path) for every paragraph two documents share
 
 INVARIANTS
   - Only path-shaped spans are checked: a span needs a `/`, and its last segment must carry a
@@ -25,12 +30,16 @@ INVARIANTS
     directories are rebuilt on demand, absent in a fresh clone, and not part of the contract.
     Committed fixtures are checked like any other path: they are graded input and a rename
     there matters more than elsewhere.
+  - The unique check compares whole paragraphs after whitespace normalisation and only above
+    `_DUP_CHARS`, so a shared sentence (`You are the reader.`) or a shared code block is not a
+    copy. It is exact: paraphrased duplication is a review call, not a gate.
   - Read-only: it reads the documents and lists the tree; it writes nothing and needs no key.
 
 WHERE TO CHANGE
   The documents that are checked ....... DOCS
   What counts as a path reference ...... _references()
   Which trees are generated ............ _GENERATED (not this file's callers)
+  The copy threshold ................... _DUP_CHARS, _paragraphs()
 """
 from __future__ import annotations
 
@@ -40,6 +49,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ("AGENTS.md", "README.md", "tui/README.md", "bench/HARD.md")
+_DUP_CHARS = 200
 # Generated or tool-managed trees: absent in a fresh clone, so a pointer into one may dangle.
 _GENERATED = frozenset({
     ".git", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
@@ -85,8 +95,34 @@ def _resolves(ref, doc_dir, paths):
     return any(path == want or path.endswith("/" + want) for path in paths)
 
 
+def _paragraphs(text):
+    """Normalized whitespace paragraphs above `_DUP_CHARS`, the unit the unique check compares."""
+    out = []
+    for block in re.split(r"\n\s*\n", text or ""):
+        flat = " ".join(block.split())
+        if len(flat) >= _DUP_CHARS:
+            out.append(flat)
+    return out
+
+
+def _copies(docs):
+    """`(paragraph, first_path, second_path)` for every paragraph two documents share verbatim."""
+    owner: dict[str, str] = {}
+    found = []
+    for name in docs:
+        try:
+            text = (ROOT / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for paragraph in _paragraphs(text):
+            first = owner.setdefault(paragraph, name)
+            if first != name:
+                found.append((paragraph, first, name))
+    return found
+
+
 def run(check):
-    """Every repo path named in the four documents resolves; no dead pointers after a rename."""
+    """Every repo path named in the four documents resolves, and no document copies another."""
     paths = list(_walk(ROOT))
     dead = []
     for name in DOCS:
@@ -100,3 +136,6 @@ def run(check):
             if not _resolves(ref, doc.parent, paths):
                 dead.append(f"{name}: {ref}")
     check("docs: every named path exists", not dead, "; ".join(dead[:6]))
+    copies = [f"{second} copies {first}: {paragraph[:60]}"
+              for paragraph, first, second in _copies(DOCS)]
+    check("docs: no paragraph is copied between documents", not copies, "; ".join(copies[:4]))

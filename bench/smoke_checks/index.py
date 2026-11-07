@@ -6,7 +6,7 @@ WHAT IT IS
   name the owning module, an unknown module must be a miss and not an exception, and a known
   module must read back whole. Every ENTRY POINTS line that names a callable must resolve to a
   symbol declared somewhere in the Python source, so a header cannot advertise a function that
-  was deleted. Then `python3 bench/map.py --check` must exit clean.
+  was deleted. Then `python3 bench/guide.py --check` must exit clean.
 
 ENTRY POINTS
   run(check)                    called by bench/smoke.py::main after helpers
@@ -17,7 +17,7 @@ INVARIANTS
   - One example path is asserted (`bench/agent/kernel/prelude.py`): if the kernel package is
     renamed or re-split, this check moves with it, because the index is how an agent finds
     the action space.
-  - The map CLI is invoked in-process with a redirected stdout, so no child and no shell.
+  - The guide CLI is invoked in-process with a redirected stdout, so no child and no shell.
   - The entry-point check is deliberately lenient about *where* a name is declared: a
     re-export (`bench/agent/__init__.py` names `guide`) is legitimate. It only flags a name
     that appears nowhere in the source, which is real drift (a deleted function still in a
@@ -36,7 +36,7 @@ import pathlib
 import re
 
 import bench.agent.headers as headers
-import bench.map as map_cli
+import bench.guide as guide_cli
 from bench.smoke_support import ROOT
 
 # Words that precede a `(` in header prose, not callables a module declares.
@@ -97,7 +97,7 @@ def _entry_point_gaps(rows, names):
 
 
 def run(check):
-    """The header index reaches an agent (`guide`), pages truthfully, and agrees with map.py."""
+    """The header index reaches an agent (`guide`), pages truthfully, and agrees with the CLI."""
     # --- the contract index: every module explains itself --------------------------------
     rows = headers.index(ROOT)
     paged = headers.guide(ROOT, query="read", limit=1, offset=1)
@@ -117,9 +117,9 @@ def run(check):
           str([r["path"] for r in hit["modules"]]))
     check("headers: an unknown module is a miss, not an exception",
           headers.guide(ROOT, path="no/such.py")["modules"] == [])
-    check("headers: one module reads back whole", "ENTRY POINTS" in headers.guide(ROOT, path="bench/map.py")["text"])
+    check("headers: one module reads back whole", "ENTRY POINTS" in headers.guide(ROOT, path="bench/guide.py")["text"])
     gaps = _entry_point_gaps(rows, _declared_names())
     check("headers: every entry point names a real symbol", not gaps, str(gaps[:5]))
     with contextlib.redirect_stdout(io.StringIO()):
-        quiet = map_cli.main(["--check", "--json"])
-    check("map: --check is clean", quiet == 0)
+        quiet = guide_cli.main(["--check", "--json"])
+    check("guide: --check is clean", quiet == 0)

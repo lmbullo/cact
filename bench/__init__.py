@@ -11,7 +11,7 @@ ENTRY POINTS
   python3 bench/smoke.py          offline contract check
   bench/tasks.py, bench/edge.py, bench/hard.py  task definitions and graders
   bench/snapshot.py, bench/task_journal.py  workspace manifests / journal summaries
-  bench/map.py                   the contract index: which module owns what
+  bench/guide.py                 the contract index: which module owns what
 
 INVARIANTS
   - `bench/` is a package only so `python3 -m bench.run` works; `bench/agent/` must stay

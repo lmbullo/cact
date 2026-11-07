@@ -42,7 +42,7 @@ INVARIANTS
     protocol <- driver <- prelude <- run_prelude, and process imports all four.
     A submodule always imports its siblings (`from .protocol import PROTOCOL`), never this
     package, so importing one piece for a test does not drag in the subprocess machinery.
-  - Every submodule carries the four header sections; `python3 bench/map.py --check` gates
+  - Every submodule carries the four header sections; `python3 bench/guide.py --check` gates
     them and `guide(prelude|driver|protocol|kernel)` reaches the contract without reading a
     1600-line source string.
   - The split is layout, not behaviour: PROTOCOL stays the single version number, and the
