@@ -28,6 +28,8 @@
  *  taskCounters(task)                   `3 steps`, `↑4.2k ↓310`, `62% cache`, `ctx 4.2k/1.0M`
  *  taskProgress(task)                   the board row's tail: the counters and the cache rate
  *  taskDuration(task, now)              live/final wall time label ("" until it starts)
+ *  isFinishedStatus(status)             true once a task can no longer emit turns
+ *  nextRunningTaskId(ordered, current)  the next running task after `current`, wrapping
  *
  * INVARIANTS
  *  - Deterministic and side-effect free: same input, same output, no clock. `taskDuration`
@@ -56,6 +58,7 @@
  *  What a turn adds to progress . foldTurn
  *  How a number is abbreviated .. formatTokens
  *  A row's duration label ....... taskDuration
+ *  Auto-advance targets ......... isFinishedStatus, nextRunningTaskId
  */
 import type { Task, TaskStatus } from "./types";
 import { elapsed } from "./theme";
@@ -294,6 +297,29 @@ export function buildRows(ordered: Task[], bands: TaskStatus[] = STATUS_ORDER): 
     for (const task of group) rows.push({ kind: "task", task });
   }
   return rows;
+}
+
+/**
+ * A task that has left the live half of the board: it will emit no more turns, so a log left
+ * open on it is a finished log. `queued` is not finished (it is about to start).
+ */
+export function isFinishedStatus(status: TaskStatus): boolean {
+  return status !== "running" && status !== "queued";
+}
+
+/**
+ * The next running task after `current` in `ordered`, wrapping past the end; null when the
+ * board has no other live task. `ordered` is the board's arrangement, so "next" means the
+ * next row the reader would have reached by stepping down the list.
+ */
+export function nextRunningTaskId(ordered: Task[], current: string | null): string | null {
+  const start = current ? ordered.findIndex((task) => task.id === current) : -1;
+  const count = ordered.length;
+  for (let step = 1; step <= count; step += 1) {
+    const task = ordered[(start + step) % count]!;
+    if (task.status === "running" && task.id !== current) return task.id;
+  }
+  return null;
 }
 
 /** Next task id when moving `delta` rows through the ordered list. */

@@ -251,6 +251,14 @@ There is only one prompt box, mounted once below whichever view is showing, so s
 keeps the same textarea, text, cursor, row count and focus. It has the same width, growth and
 keys on both screens, and a prompt can be typed and queued while a run streams.
 
+A finished log is not a dead end. When the open log belongs to a task that has finished (`done`,
+`partial`, `failed` or `cancelled`) and the screen sees no input for five seconds, it moves
+itself to the next running task's log — the next one down the board, wrapping — or back to the
+board when nothing else is running. Keys, typing, clicks, scrolling and drags all count as
+input and restart the five seconds; a prompt with text in it pauses the move because it is a
+draft the reader is still writing. The mover only changes the view: it never cancels, queues or
+edits a task. The idle window is `autoAdvanceMs` on `App` (default 5000) so tests can shorten it.
+
 ## 5. Keys
 
 | Key | Action |
@@ -266,6 +274,7 @@ keys on both screens, and a prompt can be typed and queued while a run streams.
 | Left-drag | Select text; release copies it and clears the highlight |
 | `Escape` | Clear the prompt, then the highlight |
 | `Enter` / `Escape` (log) | Leave the log when the prompt is empty; otherwise act on the prompt |
+| 5 s idle (log) | On a finished task's log, move to the next running task's log or back to the board |
 
 ## 6. Environment
 

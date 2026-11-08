@@ -22,6 +22,12 @@
  *  prompt) / adds a line, Ctrl-Enter submits, Esc clears the prompt then leaves the log. A
  *  left-drag selects text; releasing copies it and clears the highlight.
  *
+ *  AUTO VIEW CHANGER
+ *  A log left open on a finished task is a dead end: after 5 s with no input (keys, typing,
+ *  clicks, scrolling, a drag), the screen moves itself to the next running task's log. When
+ *  no other task is running it goes back to the board. Any interaction restarts the 5 s, and
+ *  a prompt with text in it is treated as a draft, so it never advances under the reader.
+ *
  * INVARIANTS
  *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and theme.ts
  *    (palette, clipping); the screen itself is covered by the character-frame tests in
@@ -37,6 +43,10 @@
  *  - The board arrangement (`order`) is local UI state, never sent to the server: the same
  *    tasks re-sorted, so a reconnect or a task update cannot undo the reader's choice. The
  *    hairline prints it while it is not the default.
+ *  - The auto view changer is local UI state too: it only moves between views, never cancels
+ *    or queues anything, and every interaction (`bumpActivity`) restarts its idle clock. The
+ *    idle clock is keyed to the open task's id/status, not to its streaming counters, so a
+ *    live task update cannot keep postponing (or trigger) the move.
  *
  * WHERE TO CHANGE
  *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
@@ -46,6 +56,8 @@
  *  Selection copy ........................... clipboard.ts, the useSelectionHandler call below
  *  Ordering, rows, scrolling ................ list-model.ts
  *  The arrangements Ctrl-O cycles ........... list-model.BOARD_ORDERS
+ *  The idle clock / targets ................. the auto-advance effect below,
+ *                                            list-model.nextRunningTaskId
  *  Data contract ............................ types.ts
  */
 import {
@@ -67,7 +79,9 @@ import {
   bandOrder,
   buildRows,
   followSelection,
+  isFinishedStatus,
   nextOrder,
+  nextRunningTaskId,
   orderLabel,
   orderTasks,
   selectedRowIndex,
@@ -85,11 +99,14 @@ export function App({
   httpUrl,
   workspace,
   copy = copyText,
+  autoAdvanceMs = 5000,
 }: {
   httpUrl: string;
   workspace: string;
   /** Clipboard writer; tests inject a spy so they never touch the host clipboard. */
   copy?: (renderer: CliRenderer, text: string) => Promise<boolean>;
+  /** Idle time before a finished log moves to the next running task (ms); tests shorten it. */
+  autoAdvanceMs?: number;
 }) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
@@ -111,6 +128,11 @@ export function App({
   const [view, setView] = useState<"list" | "log">("list");
   /** How the board arranges its bands; local UI state, cycled by Ctrl-O. Never sent to the server. */
   const [order, setOrder] = useState<BoardOrder>("status");
+  /**
+   * Counts interactions, not time: every key, edit, click, scroll or drag bumps it, which
+   * restarts the idle clock below. Its value is never displayed.
+   */
+  const [activity, setActivity] = useState(0);
 
   const inputRef = useRef<TextareaRenderable | null>(null);
   const viewRef = useRef<"list" | "log">("list");
@@ -121,7 +143,12 @@ export function App({
    * task update from re-pinning (or recentring) the list under the reader.
    */
   const scrollRef = useRef<ScrollState>({ start: 0, focus: -1, selected: null });
+  /** The current board arrangement, readable from a timer without making it an effect dep. */
+  const orderedRef = useRef<Task[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Record one interaction: the auto view changer's idle clock restarts on every bump. */
+  const bumpActivity = useCallback(() => setActivity((value) => value + 1), []);
 
   /**
    * The textarea wraps long text onto extra rows, but the box height around it is ours to
@@ -148,6 +175,7 @@ export function App({
   // A plain click is only a task selection (or a double-click word), so it never copies
   // unless the gesture actually moved or the terminal expanded it to a word/line.
   useSelectionHandler((selection) => {
+    bumpActivity();
     const text = selection.getSelectedText();
     const { anchor, focus } = selection;
     const dragged = anchor.x !== focus.x || anchor.y !== focus.y;
@@ -283,6 +311,7 @@ export function App({
   }, [httpUrl, selected, connected, view]);
 
   const ordered = useMemo(() => orderTasks(tasks, order), [tasks, order]);
+  orderedRef.current = ordered;
   // Hooks must run on every render, so the flat row list is built before the log view returns.
   const listRows = useMemo(() => buildRows(ordered, bandOrder(order)), [ordered, order]);
   const selectedTask = ordered.find((task) => task.id === selected) ?? null;
@@ -296,6 +325,26 @@ export function App({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [live]);
+
+  // The auto view changer. A log on a finished task is a dead end, so after `autoAdvanceMs`
+  // without an interaction it moves to the next running task's log, or back to the board when
+  // no other task is running. Dependencies are the open task's identity and status (not its
+  // streaming counters, so a live update cannot postpone the move) plus the activity counter
+  // (every key, edit, click, scroll or drag restarts the clock). `orderedRef` is read inside
+  // the timeout so the target is the board as it is when the timer fires, and a non-empty
+  // prompt is a draft the reader is still writing: it pauses the mover until it is cleared.
+  const hasDraft = input.trim().length > 0;
+  useEffect(() => {
+    if (view !== "log" || !selectedTask || !isFinishedStatus(selectedTask.status) || hasDraft) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      const next = nextRunningTaskId(orderedRef.current, selectedRef.current);
+      if (next) openLog(next);
+      else closeLog();
+    }, autoAdvanceMs);
+    return () => clearTimeout(timer);
+  }, [view, selectedTask?.id, selectedTask?.status, hasDraft, activity, autoAdvanceMs, openLog, closeLog]);
 
   const cycleSelection = useCallback(
     (delta: number) => {
@@ -373,6 +422,8 @@ export function App({
   }, [httpUrl, notify, tasks]);
 
   useKeyboard((key: KeyEvent) => {
+    // Every key is input: an arrow in a finished log restarts the auto view changer's clock.
+    bumpActivity();
     if (key.ctrl && (key.name === "c" || key.name === "q")) {
       key.preventDefault();
       key.stopPropagation();
@@ -578,6 +629,7 @@ export function App({
         focused={true}
         initialValue={input}
         onContentChange={() => {
+          bumpActivity();
           setInput(inputRef.current?.plainText ?? "");
           measurePrompt();
         }}
@@ -655,7 +707,11 @@ export function App({
   );
 
   return (
-    <box style={{ width: "100%", height: "100%", flexDirection: "column" }}>
+    <box
+      style={{ width: "100%", height: "100%", flexDirection: "column" }}
+      onMouseDown={bumpActivity}
+      onMouseScroll={bumpActivity}
+    >
       <TopBar
         workspace={workspace}
         model={server?.model}
