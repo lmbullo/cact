@@ -44,8 +44,8 @@ An LLM coding agent in two halves, one language each:
 The agent is a model in a loop with a **persistent Python kernel**. The action space is 20 typed
 tools generated from one registry (`bench/agent/verbs.py`): `guide`, `skill`, `map`, `read`,
 `session_diff`, `checks`, `revert_check`, `serve`, `status`, `search`, `recall`, `outline`, `edit`,
-`splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `python` is the escape hatch for
-computation, not a verb. `run()` is a python-only helper, present in `repl`/`bare` modes and absent
+`splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `code` is the orchestration cell
+(a python cell; `python` is its alias), not a verb. `run()` is a python-only helper, present in `repl`/`bare` modes and absent
 from typed modes.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install` in
@@ -65,12 +65,12 @@ These are architecture, not style. A change that breaks one is a regression even
 - **Self-verifying work.** `final_answer` is staged, then rejected until the goal `Verifier`
   plan passes. A failed check is a repair instruction, not a question. There are no interactive
   prompts in production (`tui/python/worker.py` is unattended).
-- **One fact, one place.** Adding a verb is exactly: registry entry in `verbs.py`, function in
-  the owning `kernel/prelude_*.py` fragment (the `kernel/prelude.py` header names the five) or
-  `kernel/run_prelude.py`, a `Kernel.call` case in `bench/smoke_checks/`, and one sentence in
-  the rules text. Schemas and `help()` are generated;
-  the rules prose is the only hand-written catalog. Never add a second catalog to a prompt or a
-  README.
+- **One fact, one place.** Adding a verb is exactly: registry entry in `verbs.py` (its
+  `summary` is the provider description), function in the owning `kernel/prelude_*.py` fragment
+  (the `kernel/prelude.py` header names the five) or `kernel/run_prelude.py`, and a
+  `Kernel.call` case in `bench/smoke_checks/`. Schemas and `help()` are generated from the
+  same registry. The system rules carry agent policy (how to work, verify and finish), not a
+  second tool catalog; never add a tool table to a prompt or a README.
 - **Machine-readable failure.** Unknown tools, bad arguments (`kind: "bad_args"`,
   `error.code: "bad_arguments"`, plus the signature hint), refused mutations (`wrong_call`) and
   check failures return structured dicts (`kind`, `error`, `use`, `_OBS[n]`). Do not replace a
@@ -100,7 +100,7 @@ These are architecture, not style. A change that breaks one is a regression even
 | `docs/architecture.md` | Runtime shape: tree kinds, one cell end to end, loops, paging, the check plan and compaction |
 | `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE), `prelude_setup.py` / `prelude_journal.py` / `prelude_index.py` / `prelude_read.py` / `prelude_verbs.py` (the five fragments), `run_prelude.py` (exec/git + gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
 | `bench/agent/verbs.py` | The typed verb registry: name, schema, summary, `mutates`, implementing function. `tools.py` builds provider specs from it; the child receives it as `KERNEL_VERBS` |
-| `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `python` stays the escape hatch in `tool_loop.py` |
+| `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `code` is the orchestration cell in `tool_loop.py`, `python` its alias |
 | `bench/agent/headers.py` | The header index (`index`, `guide`, `problems`). Shipped as source to every kernel child, so the CLI and the verb run the same code |
 | `bench/agent/state_loop.py` | The production loop: tool call → kernel cell → typed observation or state card, context compaction |
 | `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
@@ -240,7 +240,7 @@ the offline gates and say so in the report.
 
 | Change | Touch | Verify |
 |---|---|---|
-| A typed action | `verbs.py` (entry), the owning `kernel/prelude_*.py` fragment or `kernel/run_prelude.py` (function), `bench/smoke_checks/verbs.py` (a `Kernel.call` case), rules text | smoke |
+| A typed action | `verbs.py` (entry and provider `summary`), the owning `kernel/prelude_*.py` fragment or `kernel/run_prelude.py` (function), `bench/smoke_checks/verbs.py` (a `Kernel.call` case) | smoke |
 | A process/git gate | `kernel/run_prelude.py` (`_mutating_command`, `_HINT`, `RUN_NOTE`) | `smoke_checks/gates.py` |
 | Observation shape/paging | `envelope.py`, `state_loop._observe`, `repl.observation` | smoke envelopes + a run |
 | Finish protocol or stop reason | `tool_loop.ToolLoop.run` (a reply dialect overrides `_reply`, see `repl.py`) | `smoke_checks/turns.py` |
@@ -256,10 +256,9 @@ Adding a module means adding its four-section header before its first line of co
 contract docstring on every public function and class, then `python3 bench/guide.py --check` and
 `python3 -m ruff check .`. Name it so a `search` for the concept finds one family of files
 (`check_run.py` / `check_plan.py`), never a name one character away from an existing module.
-Adding a kernel helper means also adding the matching rule text
-to `tool_loop.TOOL_RULES` / `repl.REPL_RULES` / `state_loop.STATE_RULES`, or the model will not
-know it exists. If it replaces a mutating shell verb, add it to `_RUN_SHELL_MUTATORS` /
-`_RUN_GIT_MUTATORS` and `_HINT` too.
+Adding a kernel helper means also adding its `verbs.py` entry and `summary` (the provider
+description); `TOOL_RULES` / `STATE_RULES` stay policy, not a catalog. If it replaces a mutating
+shell verb, add it to `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` and `_HINT` too.
 
 ## 7. Working rules
 

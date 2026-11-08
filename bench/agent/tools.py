@@ -5,7 +5,7 @@ WHAT IT IS
   OpenAI-shaped function tool whose `parameters` is the registry schema and whose description
   is the registry summary. Python-only helpers (`typed=False`, currently `run`) stay in the
   registry for `help()` but never become provider tools. `ToolLoop` sends
-  `[PYTHON_TOOL, *TYPE_TOOLS]` by default. `TOOL_NAMES` is the closed set of typed names the
+  `[PYTHON_TOOL, *TYPE_TOOLS]` by default; `CODE_TOOL` is the opt-in orchestration surface. `TOOL_NAMES` is the closed set of typed names the
   loop accepts; anything else is rejected as an unknown tool.
 
 ENTRY POINTS
@@ -16,8 +16,8 @@ INVARIANTS
   - Generated, never hand-written: a verb added to `verbs.py` appears here with no further
     edit. That is what keeps the tool descriptions and the kernel implementations from
     drifting.
-  - `python` is not generated. It is the persistent-kernel escape hatch and is defined in
-    `tool_loop.PYTHON_TOOL` so the benchmark's `--mode bare` can send it alone.
+  - `code`/`python` are not generated. `PYTHON_TOOL` is the default persistent-kernel
+    cell; `CODE_TOOL` is the same schema under the `code` name, enabled by CODE_TUI_CODE_MODE.
   - Schemas are passed through verbatim. The provider validates shape; the kernel binds the
     arguments to the verb function's live signature before dispatch, so a wrong or missing
     keyword comes back as `kind: "bad_args"` / `error.code: "bad_arguments"` (never a
@@ -25,7 +25,7 @@ INVARIANTS
 
 WHERE TO CHANGE
   A typed tool ................ verbs.VERBS (this module follows)
-  The python tool ............. tool_loop.PYTHON_TOOL
+  The code cell ............... tool_loop.CODE_TOOL, tool_loop.PYTHON_TOOL
 """
 from __future__ import annotations
 

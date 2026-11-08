@@ -26,7 +26,9 @@ INVARIANTS
   - `undo()` restores session-start text and drops files created this session; it never
     touches git.
   - `status()` is read-only: one `git status --porcelain=v1 -b` plus `diff_tool`'s file
-    summary. It never journals and never mutates.
+    summary. It never journals and never mutates. A directory that is not a git repository
+    is a valid tree state (`git: false`), not a failed tool call: the journal summary is
+    still the answer.
 
 WHERE TO CHANGE
   The journal row or delta ................ _commit, _row, _delta
@@ -313,10 +315,18 @@ def diff_tool(path=None, max_chars=None):
     return result
 
 
+def _not_a_repo(stderr):
+    # git exits 128 for a directory outside a work tree. That is a readable state, not a tool
+    # failure: the journal half of status() is still valid and the caller should not spend a
+    # repair turn on it.
+    text = str(stderr or "").lower()
+    return "not a git repository" in text or "not a git repo" in text
+
+
 def status(cwd=None):
     # One call for tree state: branch, capped short status, ahead/behind, and the session
     # journal's paths with add/del counts (never the diff text). Read-only: no journal row and
-    # no mutation, so it is safe between edits.
+    # no mutation, so it is safe between edits. No repository is a state, not an error.
     base = cwd or _ROOT
     try:
         proc = _sp.run(["git", "status", "--porcelain=v1", "-b"], cwd=base,
@@ -324,6 +334,7 @@ def status(cwd=None):
         out, err, code = proc.stdout or "", proc.stderr or "", proc.returncode
     except (OSError, _sp.TimeoutExpired) as exc:
         out, err, code = "", "%s: %s" % (type(exc).__name__, exc), None
+    no_repo = code != 0 and _not_a_repo(err)
     branch, ahead, behind = "", None, None
     changed = []
     for line in out.splitlines():
@@ -348,10 +359,10 @@ def status(cwd=None):
              for item in journal.get("files") or []]
     adds = sum(item["adds"] for item in files)
     dels = sum(item["dels"] for item in files)
-    lines = ["branch: %s%s" % (branch or "(unknown)",
+    lines = ["branch: %s%s" % (branch or ("(no git repository)" if no_repo else "(unknown)"),
                                "" if ahead is None and behind is None
                                else " (ahead %s, behind %s)" % (ahead, behind)),
-             "git: %d changed" % len(changed)]
+             "git: %s" % ("not a repository" if no_repo else "%d changed" % len(changed))]
     for item in changed[:15]:
         lines.append("  %-2s %s" % (item["status"], item["path"]))
     if len(changed) > 15:
@@ -361,10 +372,11 @@ def status(cwd=None):
         lines.append("  %s +%d -%d" % (item["path"], item["adds"], item["dels"]))
     if len(files) > 10:
         lines.append("  +%d more" % (len(files) - 10))
-    if err.strip():
+    if err.strip() and not no_repo:
         lines.append("git error: " + err.strip().splitlines()[0][:200])
     text = "\n".join(lines)
-    return {"ok": code in (0, None), "kind": "status", "branch": branch,
+    return {"ok": code in (0, None) or no_repo, "kind": "status", "git": code == 0,
+            "no_repo": no_repo, "branch": branch,
             "ahead": ahead, "behind": behind, "changed": changed[:50],
             "changed_total": len(changed), "clean": not changed and not files,
             "files": files, "file_count": len(files), "adds": adds, "dels": dels,

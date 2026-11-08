@@ -1,0 +1,110 @@
+{
+  "mode": "live",
+  "wall_ms": 50421,
+  "passed": 3,
+  "failed": 0,
+  "tokens_per_pass": 56292.3,
+  "usage": {
+    "prompt_tokens": 165598,
+    "completion_tokens": 3279,
+    "total_tokens": 168877,
+    "reasoning_tokens": 516,
+    "prompt_cache_hit_tokens": 155392,
+    "prompt_cache_miss_tokens": 10206,
+    "local_hits": 0
+  },
+  "by_failure": {
+    "verification": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 69481
+    },
+    "mutation": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 41918
+    },
+    "tooling": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 57478
+    }
+  },
+  "rows": [
+    {
+      "id": "A01_spec",
+      "failure": "verification",
+      "title": "read the contract, not only the visible test",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE oracle=spec ok",
+      "stop": "DONE",
+      "steps": 10,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 67744,
+        "completion_tokens": 1737,
+        "total_tokens": 69481,
+        "reasoning_tokens": 281,
+        "prompt_cache_hit_tokens": 61184,
+        "prompt_cache_miss_tokens": 6560,
+        "local_hits": 0
+      },
+      "final": "Done.\n\n## Report\n\n**Contract gap found:** `SPEC.md` documents three functions, but `calc.py` only implemented `add` and `mul`. `clamp(x, lo, hi)` was missing entirely.\n\n**Changes**\n- `calc.py` \u2014 added `clamp(x, lo, hi)`: returns `lo` when `x < lo`, `hi` when `x > hi`, otherwise `x` (inclusive bounds, so `x == lo` / `x == hi` pass through unchanged). `add`/`mul` already matched the contract and were left as-is.\n- `tests/test_calc.py` \u2014 the visible test only covered `add(2,3)`. Extended it to the full contract:\n  - `add`: positives, negatives, zero-crossing\n  - `mul`: positives, zero, single and double negatives\n  - `clamp`: inside range, below low, above high, exact bounds, degenerate range (`lo == hi`)\n\n**Verification**\n- `pytest -q` \u2192 **9 passed**.\n- Checked the new tests are not vacuous: reverting `calc.py` to the pre-fix (clamp-less) version makes the suite fail at collection with `ImportError: cannot import name 'clamp'`; the file was restored afterwards and the suite re-run green. (The built-in `revert_check` tool refused because `calc.py` is untracked in git, so I performed the equivalent swap manually and confirmed restoration.)\n- No check plan is configured for this run (`checks()` returned empty), so pytest is the full verification surface here.\n\nOne judgement call worth flagging: the spec doesn't define behaviour for an inverted range (`lo > hi`). I chose the literal reading of \"limited to [lo, hi]\" with clamping order independent of the endpoints' validity, which yields `hi` for `x > hi` in that case, and I did not add a `ValueError` the contract never asked for.",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "A07_mutation",
+      "failure": "mutation",
+      "title": "repair through the journal, not the tests",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE oracle=add ok",
+      "stop": "DONE",
+      "steps": 7,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 41345,
+        "completion_tokens": 573,
+        "total_tokens": 41918,
+        "reasoning_tokens": 49,
+        "prompt_cache_hit_tokens": 39808,
+        "prompt_cache_miss_tokens": 1537,
+        "local_hits": 0
+      },
+      "final": "Fixed and verified.\n\n**Bug:** `calc.py` implemented subtraction, but `SPEC.md` says `add(a, b)` returns the sum.\n\n**Change** (`calc.py:2`):\n```python\ndef add(a, b):\n    return a + b\n```\n\n**Verification**\n- `python -m pytest -q` \u2192 `1 passed` (test file untouched).\n- Direct check: `add(2, 3) == 5`, `add(-4, 4) == 0`, `add(0, 0) == 0`.\n- `revert_check` couldn't run \u2014 `calc.py` is untracked, so there's no HEAD revision to swap in (not a regression, just a non-git-lite workspace).\n- No check plan is configured for this run, so `checks()` reported no rows.",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "A10_quality",
+      "failure": "tooling",
+      "title": "the project's own lint config is part of done",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE oracle=value ok",
+      "stop": "DONE",
+      "steps": 9,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 56509,
+        "completion_tokens": 969,
+        "total_tokens": 57478,
+        "reasoning_tokens": 186,
+        "prompt_cache_hit_tokens": 54400,
+        "prompt_cache_miss_tokens": 2109,
+        "local_hits": 0
+      },
+      "final": "Done.\n\n**What the config asks for:** `ruff.toml` targets `py310` and selects the `F` (Pyflakes) rule group.\n\n**The defect:** `bad.py` had `import os` on line 1 that was never used anywhere \u2014 a classic F401 (`import` imported but unused). Ruff reported exactly one error:\n\n```\nF401 [*] `os` imported but unused\n --> bad.py:1:8\n```\n\n**Fix:** Removed the unused `import os` line (and the now-leading blank line it left behind). Since `os` was never referenced, the module's behavior is unchanged \u2014 the function `value()` still returns `1`.\n\n**Verification:**\n| Check | Result |\n|---|---|\n| `ruff check --config ruff.toml .` | exit 0 \u2014 \"All checks passed!\" |\n| `ruff format --check` | exit 0 \u2014 \"1 file already formatted\" |\n| Runtime (`bad.value()`) | prints `1`, exit 0 \u2014 behavior preserved |\n\n`bad.py` now contains just the function:\n\n```python\ndef value():\n    return 1\n```",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    }
+  ]
+}

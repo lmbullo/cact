@@ -196,10 +196,11 @@ def _local(args, base: Path) -> int:
 
 
 def _sandbox_tree(base: Path) -> Path:
-    """A staging copy of `base` with node_modules materialised (the archived base symlinks it)."""
+    """A staging copy of `base`, with generated trees (target, caches) left out of the upload."""
     staging = Path(tempfile.mkdtemp(prefix="bench-ws-")) / "ws"
     shutil.copytree(base, staging, symlinks=False,
-                    ignore=shutil.ignore_patterns(".git", "__pycache__", ".cache", ".tmp"))
+                    ignore=shutil.ignore_patterns(".git", "__pycache__", ".cache", ".tmp",
+                                                  "target"))
     return staging
 
 

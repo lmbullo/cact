@@ -8,7 +8,8 @@ ENTRY POINTS
   LLMError
   Client(api_key, model="deepseek-flash", effort="low", base=..., timeout=180, temperature,
          seed, cache=True, cache_dir=CACHE_DIR)
-    .complete(messages, tools=None, max_tokens=8192) -> dict
+    .complete(messages, tools=None, max_tokens=8192, effort=_UNSET) -> dict
+      `effort` overrides the client default for one call; `None` omits the field entirely.
       {content, reasoning, tool_calls, usage, latency_ms, finish, local_cache}
 
 INVARIANTS
@@ -42,6 +43,7 @@ class LLMError(RuntimeError):
 
 
 CACHE_DIR = os.environ.get("BENCH_LLM_CACHE", str(Path(__file__).resolve().parent.parent / ".cache" / "llm"))
+_UNSET = object()
 
 
 class Client:
@@ -80,15 +82,17 @@ class Client:
         messages: list[dict],
         tools: list[dict] | None = None,
         max_tokens: int = 8192,
+        effort: str | None | object = _UNSET,
     ) -> dict:
         """One model reply, from the cache when the exact request was seen before; never streams."""
+        level = self.effort if effort is _UNSET else effort
         body: dict = {
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
         }
-        if self.effort:
-            body["reasoning_effort"] = self.effort
+        if level:
+            body["reasoning_effort"] = level
         if self.temperature is not None:
             body["temperature"] = self.temperature
         if self.seed is not None:

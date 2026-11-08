@@ -97,6 +97,29 @@ test("a build-only project gets build as the goal", () => {
   ]);
 });
 
+test("a Cargo.toml root gets format, clippy and test from cargo", () => {
+  const root = workspace();
+  writeFileSync(join(root, "Cargo.toml"), "[package]\nname = 'demo'\nversion = '0.1.0'\n");
+  expect(detectChecks(root, {})).toEqual([
+    { name: "format", cmd: "cargo fmt --check", cheap: true, scope: [] },
+    { name: "lint", cmd: "cargo clippy --workspace --all-targets -- -D warnings", cheap: true, scope: [] },
+    { name: "test", cmd: "cargo test --workspace", cheap: false, scope: [] },
+  ]);
+});
+
+test("a Rust workspace keeps its cargo plan alongside a package script plan", () => {
+  const root = workspace();
+  writeFileSync(join(root, "Cargo.toml"), "[workspace]\nmembers = ['crates/app']\n");
+  writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { typecheck: "tsc --noEmit" } }));
+  writeFileSync(join(root, "bun.lock"), "");
+  expect(detectChecks(root, {})).toEqual([
+    { name: "format", cmd: "cargo fmt --check", cheap: true, scope: [] },
+    { name: "lint", cmd: "cargo clippy --workspace --all-targets -- -D warnings", cheap: true, scope: [] },
+    { name: "test", cmd: "cargo test --workspace", cheap: false, scope: [] },
+    { name: "typecheck", cmd: "bun run typecheck", cheap: true, scope: [] },
+  ]);
+});
+
 test("bench/smoke.py is a cheap root check", () => {
   const root = workspace();
   mkdirSync(join(root, "bench"));

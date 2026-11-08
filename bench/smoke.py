@@ -10,6 +10,8 @@ WHAT IT IS
     evals     the eval registry is intact and a fast loop subset passes
     helpers   pure helpers: reply parsing, card digests, budgets, generated verb specs
     index     the header index and `bench/guide.py --check`
+    env       the environment card and task-path resolution
+    structure the agent symbol index and the file-size gate
     docs      every repository path a document names still exists
     plans     the check plan, the Verifier, read coverage, run_check's three states
     protocol  a stale child is restarted, the current PROTOCOL is accepted
@@ -19,6 +21,7 @@ WHAT IT IS
     revert    revert_check: a test that passes on HEAD, a dirty tree, a failed restore
     serve     the TUI-server verb: the state dir, a fake /health, logs, and both refusals
     handoff   a structured finish reaches the next task's history prefix
+    limits    the capability scope, per-turn ceilings and the output meter
     turns     the turn machine: staged finishes, stop vocabulary, tool-call pairing
     repl      the fenced-block dialect reuses that machine
     wiring    every journal kind is tested and every verb has a smoke case
@@ -57,8 +60,8 @@ if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the
     sys.path.insert(0, str(ROOT))
 
 from bench.smoke_checks import (  # noqa: E402
-    docs, evals, files, gates, handoff, helpers, index, plans, protocol, repl, revert, serve,
-    style, turns, verbs, wiring,
+    docs, env, evals, files, gates, handoff, helpers, index, limits, plans, protocol, repl,
+    revert, serve, structure, style, turns, verbs, wiring,
 )
 from bench.smoke_support import check, kernel_for, summary  # noqa: E402
 
@@ -68,6 +71,8 @@ def main() -> int:
     evals.run(check)
     helpers.run(check)
     index.run(check)
+    env.run(check)
+    structure.run(check)
     docs.run(check)
 
     # The workspace and the kernel child are shared by every later group: plans creates the
@@ -82,6 +87,7 @@ def main() -> int:
     revert.run(check)
     serve.run(check)
     handoff.run(check)
+    limits.run(check)
     turns.run(check)
     repl.run(check)
     wiring.run(check)

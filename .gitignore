@@ -16,3 +16,6 @@ bench/archive/legacy/hard_fixtures/H3_bigcsv/
 
 # archived scratch workspaces from the retired suites
 bench/archive/results/tmp/
+
+# generated agent symbol index (python3 bench/index.py --write)
+agents.index.json

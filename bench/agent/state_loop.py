@@ -24,7 +24,8 @@ WHAT IT IS
               (changed files, their diffs, coverage, check results), not a summary.
 
 ENTRY POINTS
-  STATE_RULES = TOOL_RULES + the state-card contract (what the model is told)
+  STATE_RULES = TOOL_RULES + the state-card contract (what the model is told); `[plan]` is
+                the durable RunState plan, set by the `plan` tool
   clip(text, limit)                  bounded text
   digest(text, budget, handle)       head + error lines + "[n lines, m chars; full text is
                                      _OBS[i]" + tail
@@ -92,18 +93,7 @@ from .tool_loop import TOOL_RULES, ToolLoop
 STATE_RULES = TOOL_RULES + """
 
 STATE CARDS
-Every tool result is a state card, not a terminal transcript:
-  [state]  the turn, its cost, and the files this cell changed
-  [observe] and [page] are the typed envelope: op/status, shown/total/next/unit/has_more/complete
-  [data] is the typed result's text, already paged by the verb; [note]/[error] are structured
-  [stderr] and [stdout] (python/exec only) are bounded: head, tail, error lines and an _OBS[n] handle
-  [result] the last python expression, clipped; a typed result never repeats its text here
-  [read]   the file ranges this cell delivered and the holes still unread
-  [hits]   a paged search's per-file hit ranges, so read() can finish the job
-  [check]  the project's cheap verification result after a change, when the workspace defines one
-
-Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and page(handle) reads a slice of it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature. The plan is `checks()`; do not run a gate by hand. Tree state is `status()`. Two routes replace a shell habit: guide(path=['a.py', 'b.py']) returns those module headers from the index in one call (a header is the contract, not the whole file), so no python3 -c + subprocess to read source. And a repo import (import bench.task_journal) only works through exec(['python3', '-c', '...']) because the kernel namespace has the verbs, not the `bench` package.
-"""
+Every result is a state card, not a transcript. `[phase]` is orient/plan/act/verify/report; `task()` returns the durable state. `[plan]` is the durable plan set by plan(items=[...]); mark progress with plan(done=[...]). Read [page] before [data]; `next` is replayable, `complete`/`has_more`/`truncated` are the paging contract. [data] carries the typed fields, [diff] the mutation, [check] the project's verdict, [read] the delivered ranges. [stderr]/[stdout]/[result] are bounded and name the _OBS[n] handle; page(handle) reads a slice. Every `ok:false` carries error.code/message/use. Coverage is guidance, not a finish gate."""
 
 DATA_LINES = 10
 DATA_CHARS = 1200
@@ -310,7 +300,8 @@ def delivered_ranges(reads, body: str = "", digested: bool = False) -> dict[str,
 def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                        output_budget: int = 12_000,
                        coverage: dict | None = None,
-                       check_handle: str | None = None) -> tuple[str, dict[str, list[list[int]]]]:
+                       check_handle: str | None = None,
+                       plan: list[str] | None = None) -> tuple[str, dict[str, list[list[int]]]]:
     """A cell -> `(the state card, the read ranges the card made visible)`.
 
     Pure: it reads no workspace file and does not mutate the loop's coverage ledger. The ranges
@@ -318,6 +309,7 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
     so `[read] path a-b/total (next N)` and the `reads:` fold line cannot drift from the card.
     """
     parts = [f"[state] step={steps} elapsed={cell.duration_ms}ms prompt_tokens={prompt_tokens}"]
+    parts.extend(plan or ())
     if getattr(cell, "tool", None) and not getattr(cell, "envelope", None):
         parts.append(f"[tool] {cell.tool}")
     if cell.changed:
@@ -489,7 +481,8 @@ class StateLoop(ToolLoop):
     def _observe(self, cell, steps: int) -> str:
         text, displayed = render_observation(
             cell, steps, self.last_prompt_tokens, self.last_check, self.output_budget,
-            self.coverage, getattr(self, "last_check_handle", None))
+            self.coverage, getattr(self, "last_check_handle", None),
+            [self.state.phase_line(), *self.state.plan_lines()])
         if steps != self._card_step:
             self._card_step = steps
             self._card_used = 0
@@ -537,6 +530,8 @@ class StateLoop(ToolLoop):
                 suffix = f" unread {missing[0][0]}-{missing[-1][1]}" if missing else ""
                 reads.append(f"{path} {covered(ranges)}/{total}{suffix}")
             lines.append("reads: " + "; ".join(reads))
+        lines.append(self.state.phase_line())
+        lines.extend(self.state.plan_lines())
         if self.last_check is not None:
             lines.append(f"check: {self.last_check.cmd}: {'passed' if self.last_check.ok else 'failed'}")
         summary = {"role": "user", "content": "\n".join(lines)}

@@ -756,6 +756,8 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=Non
                         "has_more": nxt is not None, "truncated": truncated,
                         "exit_code": code, "stderr": err})
     if action == "status":
+        no_repo = code != 0 and ("not a git repository" in err.lower()
+                                 or "not a git repo" in err.lower())
         changed = []
         branch_name = ""
         for line in out.splitlines():
@@ -764,9 +766,11 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=Non
                 continue
             if len(line) > 3:
                 changed.append({"status": line[:2].strip(), "path": line[3:].strip()})
-        result = _Result({"ok": ok, "kind": "git_status", "action": action,
+        result = _Result({"ok": ok or no_repo, "kind": "git_status", "action": action,
+                        "git": code == 0, "no_repo": no_repo,
                         "branch": branch_name, "changed": changed, "clean": not changed,
-                        "text": out, "exit_code": code, "stderr": err})
+                        "text": out or (err if no_repo else ""), "exit_code": code,
+                        "stderr": err})
         note = _status_note()
         if note:
             result["note"] = note

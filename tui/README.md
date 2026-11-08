@@ -338,6 +338,7 @@ the worker:
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API endpoint |
 | `CODE_TUI_MODEL` | `deepseek-flash` | Model name |
 | `CODE_TUI_EFFORT` | `low` | `reasoning_effort` (`none` disables it) |
+| `CODE_TUI_PROFILE` | `m3-plan` | Measured arm: `m3-plan` (python cell, fixed low, staged finish) or `current` (inline finish) |
 | `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–8) |
 | `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
@@ -374,10 +375,12 @@ available; a worker started without one fails immediately with a clear event.
 
 When a task starts the server detects a plan (an ordered list of named commands):
 `CODE_TUI_CHECKS` if set, else `CODE_TUI_CHECK` as a single entry, else
-`python3 bench/smoke.py` and `python3 -m ruff check .` (each when the workspace has the file)
-plus `lint`, `typecheck`, `format:check` and `test` (or `build` when neither exists) from the
-root and `tui/package.json`. `lint`, `typecheck` and `format:check` are cheap, so a mutating
-cell cannot leave the tree in a state the project itself would reject. The plan is re-detected
+`python3 bench/smoke.py`, `python3 -m ruff check .` (each when the workspace has the file), and
+for a `Cargo.toml` root `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
+warnings` and `cargo test --workspace`, plus `lint`, `typecheck`, `format:check` and `test` (or
+`build` when neither exists) from the root and `tui/package.json`. `lint`, `typecheck` and
+`format:check` are cheap, so a mutating cell cannot leave the tree in a state the project itself
+would reject. The plan is re-detected
 per task, so a script an earlier task added is picked up without restarting the server. The
 runner follows the lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). The plan
 is passed to the worker as `--checks <json>`, where one `check_plan.Verifier` owns it.

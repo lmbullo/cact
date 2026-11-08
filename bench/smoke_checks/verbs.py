@@ -32,6 +32,9 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import shutil
+import tempfile
+
 import bench.agent.state_loop as state_loop
 from bench.smoke_support import kernel_for
 
@@ -445,12 +448,30 @@ def run(check, root, kernel):
                   for note in (cell.envelope or {}).get("notes") or []),
           str(cell.envelope)[:320])
 
+    no_git = tempfile.mkdtemp(prefix="smoke-nogit-")
+    try:
+        cell = kernel.call("status", {"cwd": no_git})
+        data = (cell.envelope or {}).get("data") or {}
+        check("kernel: status on a non-git workspace is a state, not a failed call",
+              cell.envelope.get("ok") is True
+              and cell.envelope.get("kind") == "status"
+              and data.get("git") is False and "no git repository" in cell.stdout,
+              (cell.stdout + str(cell.envelope))[:300])
+        cell = kernel.call("git", {"action": "status", "cwd": no_git})
+        check("kernel: git(action='status') on a non-git workspace is a state too",
+              cell.envelope.get("ok") is True
+              and (cell.envelope.get("data") or {}).get("no_repo") is True,
+              str(cell.envelope)[:300])
+    finally:
+        shutil.rmtree(no_git, ignore_errors=True)
+
     kernel.call("exec", {"argv": ["git", "init", "-q"]})
     cell = kernel.call("status", {})
     data = (cell.envelope or {}).get("data") or {}
     check("kernel: status is one read-only call with branch and journal summary",
            cell.tool == "status" and "journal:" in cell.stdout
            and "changed_total" in data and "adds" in data
+           and data.get("git") is True
            and not cell.changed and not cell.mutated,
            (cell.stdout + str(cell.envelope))[:300])
     cell = kernel.call("git", {"action": "status"})

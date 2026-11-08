@@ -47,9 +47,9 @@ INVARIANTS
     both work; the canonical keys are the contract.
 
 WHERE TO CHANGE
-  A read/search/map/outline verb .......... prelude_read.py / prelude_index.py, then the rule
-                                            text in tool_loop.TOOL_RULES / repl.REPL_RULES /
-                                            state_loop.STATE_RULES
+  A read/search/map/outline verb .......... prelude_read.py / prelude_index.py, then its
+                                            `verbs.py` summary (the provider description);
+                                            TOOL_RULES/STATE_RULES stay policy, not a catalog
   The journal or a mutation verb ........... prelude_journal.py / prelude_verbs.py
   The namespace, ledgers or path matching .. prelude_setup.py
   The assembled string ..................... this module (order and count of fragments)

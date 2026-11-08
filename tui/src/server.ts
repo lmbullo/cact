@@ -127,6 +127,10 @@ process.chdir(workspace);
 
 const model = process.env.CODE_TUI_MODEL ?? "deepseek-flash";
 const effort = process.env.CODE_TUI_EFFORT ?? "low";
+// The measured arm. `m3-plan` is python cell + fixed low effort + staged finish; the worker's
+// config.py owns the same default when it is launched directly.
+const profile = process.env.CODE_TUI_PROFILE ?? "m3-plan";
+process.env.CODE_TUI_PROFILE = profile;
 const concurrency = Math.max(1, Math.min(8, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1));
 const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 300) || 300);
 const maxOutput = Math.max(1024, Number(process.env.CODE_TUI_MAX_OUTPUT ?? 393216) || 393216);
@@ -155,6 +159,7 @@ let info: ServerInfo = {
   startedAt: Date.now(),
   model,
   effort,
+  profile,
   concurrency,
   allowRun,
   hasKey: initialKey,
@@ -370,7 +375,7 @@ function startTask(task: Task): void {
   task.effort = effort;
   const checks = refreshChecks();
   saveTask(task);
-  appendEvent(task, { kind: "started", text: `agent started (${model}, effort=${effort})` });
+  appendEvent(task, { kind: "started", text: `agent started (${model}, effort=${effort}, profile=${profile})` });
   broadcast({ type: "task", task });
 
   let proc: ReturnType<typeof Bun.spawn>;

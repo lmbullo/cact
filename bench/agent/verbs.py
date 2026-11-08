@@ -135,7 +135,7 @@ VERBS: dict[str, dict] = {
     },
     "checks": {
         "function": "checks",
-        "summary": "Run the check plan this task was started with. One row per spec: {name, ok, exit, first_line}; name= runs that one spec. A cached green spec for this tree is not re-run, and a failing plan still blocks final_answer. The plan is checks(); do not run a gate by hand.",
+        "summary": "Run the check plan this task was started with. One row per spec: {name, ok, exit, first_line}; name= runs that one spec. The default plan includes the project's lint/format/test commands (including cargo fmt/clippy/test), so a green test suite does not excuse a failing lint. A cached green spec for this tree is not re-run, and a failing plan still blocks final_answer. The plan is checks(); do not run a gate by hand.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -185,7 +185,7 @@ VERBS: dict[str, dict] = {
     },
     "status": {
         "function": "status",
-        "summary": "One call for tree state: branch, capped `git status --short`, ahead/behind when cheap, and the session journal's paths with add/del counts (never diff text). Read-only: it never journals and never mutates. Tree state is status().",
+        "summary": "One call for tree state: branch, capped `git status --short`, ahead/behind when cheap, and the session journal's paths with add/del counts (never diff text). A directory outside a git work tree is a valid state (`git: false`, `no_repo: true`), not a failed call; the journal summary is still returned. Read-only: it never journals and never mutates.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -379,7 +379,7 @@ VERBS: dict[str, dict] = {
     },
     "exec": {
         "function": "exec_argv",
-        "summary": "The typed process tool: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd/env/stdin are explicit; run() is python-only. For files use search/read, not the shell.",
+        "summary": "The typed process tool: run argv directly, commands=[[...]] for several programs, or shell=<string> for explicit shell syntax. cwd/env/stdin are explicit; run() is python-only. For files use search/read, not the shell. Programs that mutate tracked files are refused because they bypass the journal; scratch paths (/tmp, /var/tmp, /dev/shm, $TMPDIR) are allowed. A scratch redirect whose target contains a shell variable may still be refused because the gate cannot prove the expansion.",
         "mutates": False,
         "requires_run": True,
         "schema": {

@@ -106,10 +106,13 @@ class FakeClient:
     def __init__(self, replies: list[dict]) -> None:
         self.replies = list(replies)
         self.requests: list[list[dict]] = []
+        self.limits: list[dict] = []
 
-    def complete(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 0) -> dict:
+    def complete(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int = 0,
+                 effort=None) -> dict:
         """The next scripted reply; raises when the script is exhausted, so an extra turn is visible."""
         self.requests.append(json.loads(json.dumps(messages)))
+        self.limits.append({"max_tokens": max_tokens, "effort": effort})
         if not self.replies:
             raise AssertionError("the loop asked for a reply after the script ran out")
         item = self.replies.pop(0)
@@ -155,11 +158,11 @@ class FakeKernel:
 
 
 def _run_loop(replies: list[dict], cells: dict, goal=None, raises: set[str] | None = None,
-              typed: dict | None = None):
+              typed: dict | None = None, scope=None):
     from bench.agent import loop, tool_loop
     client = FakeClient(replies)
     kernel = FakeKernel(cells, raises, typed)
-    loop_ = tool_loop.ToolLoop(client, kernel, loop.Budget(), goal=goal)
+    loop_ = tool_loop.ToolLoop(client, kernel, loop.Budget(), goal=goal, scope=scope)
     return loop_.run("smoke", "do the task"), client, kernel
 
 

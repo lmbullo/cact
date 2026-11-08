@@ -121,7 +121,7 @@ through `bench/evals/loops.py::run_loop`.
 | mode | Loop | Action space | Rules constant |
 |---|---|---|---|
 | `repl` | `ReplLoop` | one fenced python block per reply | `repl.REPL_RULES` |
-| `tool` | `ToolLoop` | typed verbs + `python` | `tool_loop.TOOL_RULES` |
+| `tool` | `ToolLoop` | typed verbs + the `code` orchestration cell | `tool_loop.TOOL_RULES` |
 | `state` | `StateLoop` | same, observations rendered as state cards | `state_loop.STATE_RULES` |
 | `bare` | `ToolLoop` with `goal=None` and no file helpers (the archived control) | one function: `python` | `bench/archive/legacy/run.py` (`BARE_TOOL_RULES`) |
 
@@ -168,7 +168,7 @@ and the last check, so no tool result is orphaned and the workspace stays author
 budget; production leaves it 0 (unlimited).
 
 The TUI detects the plan per task: `CODE_TUI_CHECKS` (JSON) wins, else `CODE_TUI_CHECK`, else
-`python3 bench/smoke.py`/`ruff` plus the project's `lint`/`typecheck`/`format:check`/`test`
-scripts (or `build` when neither exists); `../tui/README.md` §7 owns the order. The runner follows
-the lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). An empty
-`CODE_TUI_CHECK` opts out.
+`python3 bench/smoke.py`/`ruff`, a `Cargo.toml` root's `cargo fmt`/`clippy`/`test`, plus the
+project's `lint`/`typecheck`/`format:check`/`test` scripts (or `build` when neither exists);
+`../tui/README.md` §7 owns the order. The runner follows the lockfile (`bun.lock`/`bun.lockb` →
+bun, `package-lock.json` → npm). An empty `CODE_TUI_CHECK` opts out.

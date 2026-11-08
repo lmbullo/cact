@@ -195,9 +195,9 @@ export function EventView({
   if (isSilent(event)) return null;
 
   if (kind === "cell.start") {
-    // A typed call shows its tool and its JSON arguments; a python cell shows its first call's
+    // A typed call shows its tool and its JSON arguments; a code cell shows its first call's
     // arguments only. Either way: no cell index, no counters, no colour.
-    const typed = event.tool && event.tool !== "python";
+    const typed = event.tool && event.tool !== "code" && event.tool !== "python";
     const verb = typed ? event.tool! : "";
     const args = typed
       ? `(${oneLine(JSON.stringify(event.args ?? {}))})`

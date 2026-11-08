@@ -25,6 +25,10 @@ INVARIANTS
   - `RunResult.steps` is the number of turns, i.e. primary `client.complete` calls. `calls`
     is the number of tool calls / kernel cells, a different axis. `llm_calls` is every model
     request the loop made, including the budget-forced `_push`, so `llm_calls >= steps`.
+  - `RunResult.economy` is the `limits.TokenMeter` totals (completion, reasoning, emitted
+    content/argument chars); it describes what the model wrote, never an estimate.
+  - `RunResult.attestation` is the durable state at stop: plan, changed paths, checks,
+    evidence and open items. It is evidence, not a claim.
 
 WHERE TO CHANGE
   New stop/usage field ....... RunResult
@@ -65,6 +69,8 @@ class RunResult:
     llm_calls: int = 0
     error: str = ""
     handoff: dict = field(default_factory=dict)
+    economy: dict = field(default_factory=dict)
+    attestation: dict = field(default_factory=dict)
 
 
 def _usage_add(acc: dict, usage: dict) -> None:

@@ -68,10 +68,10 @@ class ScriptedClient:
         self.index = 0
 
     def complete(self, messages: list[dict], tools: list[dict] | None = None,
-                 max_tokens: int = 8192) -> dict:
+                 max_tokens: int = 8192, effort=None) -> dict:
         """Return the next scripted reply (or the responder's), in the provider's shape."""
         self.requests.append({"messages": [dict(m) for m in messages],
-                              "tools": tools, "max_tokens": max_tokens})
+                              "tools": tools, "max_tokens": max_tokens, "effort": effort})
         if self.responder is not None:
             reply = self.responder(messages, tools)
         elif self.replies:

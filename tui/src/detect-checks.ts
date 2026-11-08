@@ -11,10 +11,12 @@
  * INVARIANTS
  *  - Explicit configuration wins: `CODE_TUI_CHECKS` (JSON list) then `CODE_TUI_CHECK` (one
  *    command). An empty `CODE_TUI_CHECK` disables verification.
- *  - Otherwise: `bench/smoke.py` and `ruff.toml` at the root, plus `lint`, `typecheck`,
- *    `format:check` and `test` (or `build` when neither exists) from the root and
+ *  - Otherwise: `bench/smoke.py`, `ruff.toml`, or `Cargo.toml` at the root, plus `lint`,
+ *    `typecheck`, `format:check` and `test` (or `build` when neither exists) from the root and
  *    `tui/package.json`. Lint, typecheck and format are cheap: a mutating cell cannot leave
- *    the tree in a state the project itself would reject.
+ *    the tree in a state the project itself would reject. A Rust crate gets `cargo fmt
+ *    --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test
+ *    --workspace`; a correct but warning-laden crate is not done.
  *  - The package manager follows the lockfile: bun.lock/bun.lockb -> bun, package-lock.json
  *    -> npm, default bun. A `tests/` directory is a bun test target only for a bun project;
  *    npm projects need a `test` script.
@@ -66,6 +68,11 @@ export function detectChecks(root: string, env: CheckEnv = process.env as CheckE
   };
   if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true, ["bench"]);
   if (existsSync(join(root, "ruff.toml"))) add("lint", "python3 -m ruff check .", true, []);
+  if (existsSync(join(root, "Cargo.toml"))) {
+    add("format", "cargo fmt --check", true, []);
+    add("lint", "cargo clippy --workspace --all-targets -- -D warnings", true, []);
+    add("test", "cargo test --workspace", false, []);
+  }
   const prefix = (dir: string, command: string) =>
     dir === root ? command : `cd ${relative(root, dir)} && ${command}`;
   for (const dir of [root, join(root, "tui")]) {

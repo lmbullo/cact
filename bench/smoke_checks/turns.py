@@ -33,6 +33,7 @@ from pathlib import Path
 
 import bench.agent.check_plan as check_plan
 import bench.agent.llm as llm
+import bench.agent.limits as limits
 import bench.agent.loop as loop
 import bench.agent.state_loop as state_loop
 import bench.agent.tool_loop as tool_loop
@@ -62,6 +63,52 @@ def run(check):
     check("turn: the staging notice reaches the model as the tool result",
           "answer staged" in (result.turns[0]["calls"][0]["notice"] or "")
           and "answer staged" in client.requests[1][-1]["content"], str(result.turns[0])[:200])
+
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("c1", "print(1)", name="code")]),
+         _reply(content="done", finish="stop")],
+        {"print(1)": _cell(stdout="1\n")})
+    check("turn: code is available as an opt-in cell and python is the default",
+          tool_loop.CODE_TOOL["function"]["name"] == "code"
+          and tool_loop.PYTHON_TOOL["function"]["name"] == "python")
+    check("turn: a code call dispatches to Kernel.run",
+          kernel.codes == ["print(1)"] and result.turns[0]["calls"][0]["name"] == "code",
+          str(kernel.codes))
+
+    inline = limits.Scope(inline_finish=True)
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("f1", "final_answer('done')")])],
+        {"final_answer('done')": _cell(final="done")}, scope=inline)
+    check("turn: inline finish accepts a silent final_answer in the same turn",
+          result.steps == 1 and result.final == "done" and result.stop == tool_loop.DONE,
+          f"steps={result.steps} final={result.final!r} stop={result.stop}")
+    check("turn: inline finish writes an attestation",
+          result.attestation.get("stop") == tool_loop.DONE
+          and result.attestation.get("steps") == 1, str(result.attestation)[:200])
+
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("t1", None, name="task", arguments="{}")]),
+         _reply(content="done", finish="stop")], {})
+    task_message = client.requests[1][-1]["content"]
+    check("turn: task returns the durable phase view",
+          "[task] phase=orient" in task_message, task_message[:200])
+
+    plan_text = '{"items": ["read the contract", "change the symbol"]}'
+    result, client, kernel = _run_loop(
+        [_reply(calls=[_call("p1", None, name="plan", arguments=plan_text)]),
+         _reply(content="done", finish="stop")], {})
+    row = result.turns[0]["calls"][0]["observation"] or {}
+    plan_message = client.requests[1][-1]["content"]
+    check("turn: plan stores the durable plan and returns its card",
+          "[plan]" in plan_message and "read the contract" in plan_message
+          and row.get("plan", [{}])[0].get("text") == "read the contract"
+          and row.get("phase") == "plan",
+          plan_message[:240])
+
+    state_card, _ = state_loop.render_observation(
+        _cell(), 1, plan=["[phase] act", "[plan]", "1. [ ] read the contract"])
+    check("state: the card renders the durable phase and plan lines",
+          "[phase] act" in state_card and "[plan]" in state_card, state_card[:200])
 
     typed_read = Cell(stdout="     1| alpha\n", stderr="",
                       result='{"ok": true, "kind": "file"}', final=None, duration_ms=1,

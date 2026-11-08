@@ -67,8 +67,9 @@ def run(check):
     under = Cell(stdout="small", stderr="", result=None, final=None, duration_ms=1,
                  obs_index=0)
     probe = state_loop.StateLoop(object(), object(), loop.Budget(), card_budget=1200)
-    check("state: a card under the turn budget is byte-identical to today",
-          probe._observe(under, 1) == state_loop.render_observation(under, 1)[0],
+    expected = state_loop.render_observation(under, 1, plan=[probe.state.phase_line()])[0]
+    check("state: a card under the turn budget is byte-identical to the pure renderer",
+          probe._observe(under, 1) == expected,
           probe._observe(under, 1)[:160])
     probe = state_loop.StateLoop(object(), object(), loop.Budget(), card_budget=6000)
     cells = [Cell(stdout="x" * 2700, stderr="", result=None, final=None, duration_ms=1,
@@ -85,6 +86,11 @@ def run(check):
 
     check("loop: budget defaults", loop.Budget().max_steps == 200)
     check("config: mode is a loop name", config.MODE in ("state", "tool", "repl"))
+    check("config: the measured m3-plan profile is the default arm",
+          config.PROFILES["m3-plan"] == {"code_mode": False, "effort": "low",
+                                         "effort_policy": "fixed", "inline_finish": False,
+                                         "task_tool": False}
+          and config.PROFILE in config.PROFILES, config.PROFILE)
     check("llm: error type", issubclass(llm.LLMError, RuntimeError))
     check("trace: render is callable", callable(trace.render))
     check("task_journal: verbs", "final_answer" in task_journal.VERBS)
@@ -103,7 +109,8 @@ def run(check):
           all(t["function"]["parameters"].get("type") == "object"
               and isinstance(t["function"].get("description"), str)
               for t in tools.TYPE_TOOLS))
-    check("verbs: python is not generated as a typed tool", "python" not in tools.TOOL_NAMES)
+    check("verbs: code and python are not generated as typed tools",
+          "code" not in tools.TOOL_NAMES and "python" not in tools.TOOL_NAMES)
     check("verbs: run is a python helper; exec is the typed process tool",
           "run" not in tools.TOOL_NAMES and "run" in verbs.VERBS and "exec" in tools.TOOL_NAMES,
           str(tools.TOOL_NAMES))

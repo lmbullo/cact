@@ -19,7 +19,7 @@ ENTRY POINTS
 MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
   cell.start {cell, tool, code|args} | cell.end {cell, tool, ok, verb_kind, code, page,
   chars, duration_ms, notes} | turn {turn, data} | check {ok, name, line} | log {text}
-  | error {text} | final {status, final, stop, steps, calls, llmCalls, errors, usage, wallMs}
+  | error {text} | final {status, final, stop, steps, calls, llmCalls, errors, usage, economy, wallMs}
   `check` is emitted right after the turn whose record carried a verdict; it is the one place
   the failing line lives, so the log header can name a failed check without re-running it.
 
@@ -173,12 +173,10 @@ AUTONOMOUS = """
 
 AUTONOMOUS TASK MODE
 You are running unattended. No human will answer questions or approve actions.
-- Inspect the workspace, make the changes, and verify them with real commands.
-- Keep working until the task is complete or you are genuinely blocked.
-- Finish with final_answer(<short summary>) in a cell that prints nothing. When you leave
-  work open, pass the structured dict instead, so the next task inherits it:
-  final_answer({summary, changed, gates, deferred, untested}).
-- The summary should say what changed, what you verified, and any blockers.
+- Inspect, change, and verify with real commands. Keep working until the task is complete or genuinely blocked.
+- Verify with checks(); a check is clean only when its latest execution passed. Never claim a gate without the run that passed it.
+- Finish with final_answer(<short summary>) in a silent cell. A silent finish that passes the plan ends the turn.
+- When you leave work open, pass final_answer({summary, changed, gates, deferred, untested}); the next task inherits it.
 """
 
 
@@ -242,9 +240,12 @@ def check_payload(check: dict, verifier: Any) -> dict[str, Any]:
 class StreamingKernel(Kernel):
     """A Kernel that emits `cell.start` before each cell and one compact `cell.end` after it."""
 
-    def __init__(self, *args: Any, emit_event, **kwargs: Any) -> None:
+    _cell_label = "python"
+
+    def __init__(self, *args: Any, emit_event, cell_label: str = "python", **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._emit_event = emit_event
+        self._cell_label = cell_label
         self._cell_no = 0
 
     def run(self, code: str, check_cache: dict | None = None,
@@ -252,9 +253,9 @@ class StreamingKernel(Kernel):
         """One python cell: `cell.start` before it runs, `cell.end` after it answers."""
         self._cell_no += 1
         number = self._cell_no
-        self._emit_event({"kind": "cell.start", "cell": number, "tool": "python", "code": code})
+        self._emit_event({"kind": "cell.start", "cell": number, "tool": self._cell_label, "code": code})
         cell = super().run(code, check_cache=check_cache, extra_obs=extra_obs)
-        self._emit_event(cell_end_payload(cell, number, "python"))
+        self._emit_event(cell_end_payload(cell, number, self._cell_label))
         return cell
 
     def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None,
@@ -416,6 +417,7 @@ def main() -> int:
             extra_prelude=custom.prelude(extra),
             check_commands=[{"name": spec.name, "cmd": spec.cmd} for spec in specs],
             emit_event=emit,
+            cell_label="code" if config.CODE_MODE else "python",
         )
         loop = config.build(
             client,
@@ -480,6 +482,8 @@ def main() -> int:
             "llmCalls": result.llm_calls,
             "errors": result.errors,
             "usage": result.usage,
+            "economy": result.economy,
+            "attestation": result.attestation,
             "wallMs": round(result.wall_ms),
             "error": result.error,
         }

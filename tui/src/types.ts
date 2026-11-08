@@ -143,6 +143,8 @@ export type ServerInfo = {
   startedAt: number;
   model: string;
   effort: string;
+  /** The measured worker arm; `m3-plan` is the default. */
+  profile: string;
   concurrency: number;
   allowRun: boolean;
   hasKey: boolean;
