@@ -17,7 +17,8 @@ ENTRY POINTS
   history_brief / record_history   history.jsonl read (prompt prefix) and appended
 
 MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
-  cell.start {cell, tool, code|args} | turn {turn, data} | log {text} | error {text}
+  cell.start {cell, tool, code|args} | cell.end {cell, tool, ok, verb_kind, code, page,
+  chars, duration_ms, notes} | turn {turn, data} | log {text} | error {text}
   final {status, final, stop, steps, calls, llmCalls, errors, usage, wallMs}
 
 INVARIANTS
@@ -150,8 +151,34 @@ You are running unattended. No human will answer questions or approve actions.
 """
 
 
+def cell_end_payload(cell, number: int, tool: str) -> dict[str, Any]:
+    """One compact `cell.end` record: counts and codes only, never a payload body."""
+    env = getattr(cell, "envelope", None)
+    envelope = env if isinstance(env, dict) else {}
+    error = envelope.get("error") if isinstance(envelope.get("error"), dict) else {}
+    page = envelope.get("page")
+    page_bits = None
+    if isinstance(page, dict):
+        page_bits = {key: page.get(key) for key in
+                     ("shown", "total", "unit", "has_more", "truncated", "complete")}
+    ok = bool(envelope.get("ok")) if env is not None else not (cell.failed or cell.rejected)
+    notes = [" ".join(str(note).split())[:300] for note in (envelope.get("notes") or [])]
+    return {
+        "kind": "cell.end",
+        "cell": number,
+        "tool": tool,
+        "ok": ok,
+        "verb_kind": envelope.get("kind"),
+        "code": error.get("code"),
+        "page": page_bits,
+        "chars": len(cell.stdout or "") + len(cell.result or ""),
+        "duration_ms": int(cell.duration_ms or 0),
+        "notes": notes,
+    }
+
+
 class StreamingKernel(Kernel):
-    """A Kernel that emits a `cell.start` event before each cell, so the TUI can show it live."""
+    """A Kernel that emits `cell.start` before each cell and one compact `cell.end` after it."""
 
     def __init__(self, *args: Any, emit_event, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -159,16 +186,22 @@ class StreamingKernel(Kernel):
         self._cell_no = 0
 
     def run(self, code: str, check_cache: dict | None = None):
-        """One python cell, announced as `cell.start` before it runs."""
+        """One python cell: `cell.start` before it runs, `cell.end` after it answers."""
         self._cell_no += 1
-        self._emit_event({"kind": "cell.start", "cell": self._cell_no, "tool": "python", "code": code})
-        return super().run(code, check_cache=check_cache)
+        number = self._cell_no
+        self._emit_event({"kind": "cell.start", "cell": number, "tool": "python", "code": code})
+        cell = super().run(code, check_cache=check_cache)
+        self._emit_event(cell_end_payload(cell, number, "python"))
+        return cell
 
     def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None):
-        """One typed verb call, announced as `cell.start` with its tool and args."""
+        """One typed verb call: `cell.start` with its tool/args, then `cell.end` with its counts."""
         self._cell_no += 1
-        self._emit_event({"kind": "cell.start", "cell": self._cell_no, "tool": tool, "args": args or {}})
-        return super().call(tool, args, check_cache=check_cache)
+        number = self._cell_no
+        self._emit_event({"kind": "cell.start", "cell": number, "tool": tool, "args": args or {}})
+        cell = super().call(tool, args, check_cache=check_cache)
+        self._emit_event(cell_end_payload(cell, number, tool))
+        return cell
 
 
 class EventTrace:

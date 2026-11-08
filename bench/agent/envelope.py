@@ -36,6 +36,8 @@ INVARIANTS
   - Bulk payloads (`text`, `stdout`, `stderr`, `matches`, `files`, `entries`, `items`,
     `modules`, `hunk`) stay out of the envelope. Their delivery is stdout; their address is
     the handle. That keeps the structured half small and makes duplication impossible.
+  - An empty payload (`{}`) from a named tool is `ok:false`/`internal_error`, never a
+    success: a missing result means the verb crashed or never answered.
   - `complete == not truncated`, everywhere. `has_more` is separate and always means the
     underlying file/result continues; it never implies a failed request. A helper reports
     `truncated` only when a built-in default (page size, max_chars) cut the output; an
@@ -62,7 +64,7 @@ UNITS = {
     "git_log": "commit",
 }
 BULK = frozenset({"text", "raw", "stdout", "stderr", "matches", "files", "entries",
-                  "items", "modules", "hunk", "results", "outlines", "maps"})
+                  "items", "modules", "hunk", "outlines", "maps"})
 
 
 def _shown_count(shown):
@@ -173,6 +175,14 @@ def normalize(tool, value, handle=None):
     if not isinstance(value, dict):
         return {"ok": True, "op": str(tool), "kind": str(tool), "data": {},
                 "page": None, "handle": handle, "notes": [], "error": None}
+    if not value:
+        # An empty payload for a named tool is a missing result, never a success: the driver
+        # may have crashed before it could answer, and `{}` used to normalize to ok:true.
+        return {"ok": False, "op": str(tool), "kind": str(tool) + "_failed",
+                "error": {"code": "internal_error",
+                          "message": "no result from %s" % tool,
+                          "use": "the verb raised - this is a tool bug, not your arguments"},
+                "handle": handle, "notes": [], "data": {}, "page": None}
     out = {"ok": bool(value.get("ok", True)), "op": str(tool),
            "kind": value.get("kind") or str(tool),
            "error": value.get("error") if isinstance(value.get("error"), dict) else None,

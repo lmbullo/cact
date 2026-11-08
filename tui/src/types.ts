@@ -92,6 +92,13 @@ export type TaskEvent = {
   tool?: string;
   args?: Record<string, unknown>;
   data?: Record<string, unknown>;
+  /** cell.end: the compact per-call result record (journal history, not log output). */
+  ok?: boolean;
+  verb_kind?: string;
+  page?: Record<string, unknown> | null;
+  chars?: number;
+  duration_ms?: number;
+  notes?: string[];
 };
 
 /**
@@ -160,6 +167,7 @@ export type WsMessage =
 /** One `@@TUI@@` line from python/worker.py; server.ts is the only reader. */
 export type WorkerMessage =
   | { kind: "cell.start"; cell: number; code?: string; tool?: string; args?: Record<string, unknown> }
+  | { kind: "cell.end"; cell: number; tool?: string; ok?: boolean; verb_kind?: string; code?: string; page?: Record<string, unknown> | null; chars?: number; duration_ms?: number; notes?: string[] }
   | { kind: "turn"; turn: number; data: Record<string, unknown> }
   | { kind: "final"; status: "done" | "partial" | "failed"; final?: string; stop?: string; usage?: Record<string, number>; steps?: number; calls?: number; llmCalls?: number; errors?: number; wallMs?: number }
   // A `turn`'s `data` carries {usage, cache, window, ...}; see python/worker.py EventTrace.

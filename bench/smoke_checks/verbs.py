@@ -10,6 +10,9 @@ WHAT IT IS
   plus help() and guide(headers=N). It also pins the paging contract: one error shape with a
   `use` hint, `ok:false` for a miss or an unknown name, `offset` = start of the delivery,
   `next` = resume cursor, `truncated` = a default limit cut it and `complete` = not truncated.
+  The boundary checks cover registry scalar coercion (`map(max_files='x')`), a verb that
+  raises (`internal_error`, rejected, no false `ok`), and the state card's clipped `[data]`
+  (map `dirs_matched`, an edit's `closest`/`context`) and kind/signature refusal line.
 
 ENTRY POINTS
   run(check, root, kernel)   called by bench/smoke.py::main after files
@@ -30,6 +33,7 @@ WHERE TO CHANGE
 from __future__ import annotations
 
 import bench.agent.state_loop as state_loop
+from bench.smoke_support import kernel_for
 
 
 def run(check, root, kernel):
@@ -208,6 +212,10 @@ def run(check, root, kernel):
           not cell.rejected
           and not any("search(" in note for note in (cell.envelope or {}).get("notes") or []),
           str((cell.envelope or {}).get("notes"))[:240])
+    cell = kernel.call("exec", {"argv": ["cat", "/tmp/cact-smoke-outside.txt"]})
+    notes = " ".join((cell.envelope or {}).get("notes") or [])
+    check("kernel: a scratch-path cat gets no read() note (read would refuse it)",
+          "read(" not in notes, notes[:240])
     cell = kernel.run("a = exec_argv(['grep', '-n', 'TWO', 'call_a.txt']); "
                       "b = exec_argv(['grep', '-n', 'one', 'call_a.txt']); "
                       "print('note' in a, 'note' in b)")
@@ -424,5 +432,51 @@ def run(check, root, kernel):
           '"kind": "guides"' in (cell.result or "")
           and "outline.py" in cell.stdout and "ctx.py" in cell.stdout,
           (cell.stdout + (cell.result or ""))[:240])
+
+    # --- the boundary: registry coercion, a crashed verb, and data that must survive -----
+    cell = kernel.call("map", {"max_files": "x"})
+    result = str(cell.result)
+    check("kernel: map(max_files='x') is bad_arguments with a signature, no traceback",
+          cell.rejected and not cell.failed and "bad_arguments" in result
+          and "signature" in result and "max_files" in result
+          and "Traceback" not in cell.stderr, (result + cell.stderr)[:320])
+    cell = kernel.call("session_diff", {"max_chars": "x"})
+    result = str(cell.result)
+    check("kernel: session_diff(max_chars='x') is bad_arguments, not a traceback",
+          cell.rejected and not cell.failed and "bad_arguments" in result
+          and "signature" in result and "max_chars" in result
+          and "Traceback" not in cell.stderr, (result + cell.stderr)[:320])
+    card, _ = state_loop.render_observation(cell, 1)
+    check("state: a refusal line carries the kind, signature and valid keywords",
+          "[error] bad_args: bad_arguments" in card and "signature=" in card
+          and "valid=" in card, card[:420])
+    with kernel_for(
+        root,
+        extra_verbs={"boom": {"function": "boom", "typed": True, "mutates": False,
+                              "summary": "raise on purpose",
+                              "schema": {"type": "object", "properties": {},
+                                         "additionalProperties": False}}},
+        extra_prelude="def boom():\n    raise RuntimeError('kaboom')\n",
+    ) as crash_kernel:
+        cell = crash_kernel.call("boom", {})
+    env = cell.envelope or {}
+    check("kernel: a verb that raises is internal_error and rejected, not ok:true",
+          cell.rejected and not cell.failed and env.get("ok") is False
+          and env.get("kind") == "tool_crashed"
+          and (env.get("error") or {}).get("code") == "internal_error"
+          and "kaboom" in str((env.get("error") or {}).get("message")),
+          str(cell.result)[:320])
+
+    kernel.run("for n in range(30): mkdir('dm%02d' % n); write('dm%02d/f.txt' % n, 'x')")
+    cell = kernel.call("map", {"path": "."})
+    card, _ = state_loop.render_observation(cell, 1)
+    check("state: map dirs_matched survives the data gate and says what was clipped",
+          "dirs_matched" in card and "[data] clipped:" in card, card[:400])
+    kernel.run("write('bigctx.py', 'def big():\\n' + ''.join('    v%d = %r\\n' % (n, 'x' * 80) for n in range(60)))")
+    cell = kernel.call("edit", {"edits": [{"path": "bigctx.py", "old": "v99 = 99",
+                                                 "new": "x"}]})
+    card, _ = state_loop.render_observation(cell, 1)
+    check("state: a failing edit keeps closest/context and names the clipped keys",
+          "closest" in card and "context" in card and "[data] clipped:" in card, card[:500])
 
     kernel.run("undo('call_a.txt'); undo('call_b.txt')")

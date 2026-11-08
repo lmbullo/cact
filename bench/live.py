@@ -147,7 +147,8 @@ def main() -> int:
         "steps": len(turns),
         "usage": (final or {}).get("usage") or {},
         "wall_s": round(wall, 1),
-        "restarts": obs.count("empty namespace"),
+        "restarts": sum(1 for turn in turns
+                        if (turn.get("observation") or {}).get("restarted")),
         "timeouts": obs.count("timeout: the cell"),
         "verbs": verbs,
         "changed": snapshot.changed(run),

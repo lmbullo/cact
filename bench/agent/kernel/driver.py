@@ -19,10 +19,15 @@ INVARIANTS
     JSON line. The cell's own stdout/stderr are redirected into buffers first, so a stray
     print cannot corrupt the channel.
   - Before dispatch the args are bound to the verb function's live signature
-    (`inspect.signature().bind(**args)`); a bad keyword or a missing argument becomes
-    `kind: "bad_args"` with `error.code: "bad_arguments"`, the live signature and the valid
-    keyword list, never a traceback. A verb returning `{"ok": false}` is `rejected`, not
-    `failed`.
+    (`inspect.signature().bind(**args)`) and the declared scalar types (integer, number,
+    boolean, string, array-of-string) are coerced from the registry schema, recursively through
+    `properties` and `oneOf`/`anyOf`. A bad keyword, missing argument or bad scalar becomes
+    `kind: "bad_args"` with `error.code: "bad_arguments"`, the live signature, the offending
+    keyword and the valid keyword list, never a traceback. A verb returning `{"ok": false}`
+    is `rejected`, not `failed`.
+  - A verb that raises is caught per typed call and answered as
+    `{ok:false, kind:"tool_crashed", error:{code:"internal_error", ...}}`, so a tool bug
+    can never read as `ok:true` with a traceback beside it.
   - stdin is read with one readline per request; the parent's request carries `timeout` and
     `check_cache`. `final_answer()` raises `Final`, which is reported as `Cell.final`
     unconditionally — the loop, not the child, decides what that means.
@@ -175,7 +180,7 @@ def _error_shape(value, tool, signature=None):
     message = str(error.get("message") or value.get("reason") or value.get("message") or code)
     use = str(error.get("use") or value.get("use") or _USE_BY_CODE.get(code) or _USE_FALLBACK)
     shaped = {"code": code, "message": message, "use": use}
-    for key in ("signature", "valid", "available"):
+    for key in ("signature", "valid", "available", "argument"):
         if error.get(key) is not None:
             shaped[key] = error[key]
         elif value.get(key) is not None:
@@ -190,6 +195,109 @@ def _error_shape(value, tool, signature=None):
     if out.get("path") is None and error.get("path") is not None:
         out["path"] = error["path"]
     return out
+
+
+class _BadArg(Exception):
+    def __init__(self, name, value, expected):
+        self.name = name
+        self.value = value
+        self.expected = expected
+
+
+def _scalar(value, kind, name):
+    # Coerce/validate the scalar types a schema declares. This is the boundary, not a verb:
+    # every typed call gets the same answer for a bad integer/number/boolean/string.
+    if value is None:
+        return value
+    if kind == "integer":
+        if isinstance(value, bool):
+            raise _BadArg(name, value, "an integer")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value.strip(), 10)
+            except (TypeError, ValueError):
+                pass
+        raise _BadArg(name, value, "an integer")
+    if kind == "number":
+        if isinstance(value, bool):
+            raise _BadArg(name, value, "a number")
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            try:
+                number = float(value.strip())
+            except (TypeError, ValueError):
+                raise _BadArg(name, value, "a number") from None
+            return int(number) if number.is_integer() else number
+        raise _BadArg(name, value, "a number")
+    if kind == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ("true", "1", "yes", "on"):
+                return True
+            if text in ("false", "0", "no", "off"):
+                return False
+        raise _BadArg(name, value, "a boolean")
+    if kind == "string":
+        if isinstance(value, str):
+            return value
+        raise _BadArg(name, value, "a string")
+    return value
+
+
+def _coerce(value, schema, name):
+    # Recursively coerce properties, array items and oneOf/anyOf branches. An array keeps a
+    # string when its items are strings: exec(argv="...") is the verb's own shell-string path.
+    if not isinstance(schema, dict):
+        return value
+    branches = schema.get("oneOf") or schema.get("anyOf")
+    if branches:
+        last = None
+        for branch in branches:
+            try:
+                return _coerce(value, branch, name)
+            except _BadArg as exc:
+                last = exc
+        if last is not None:
+            raise last
+        return value
+    kind = schema.get("type")
+    if kind == "object" and isinstance(value, dict):
+        props = schema.get("properties") or {}
+        for key in list(value):
+            if key in props:
+                value[key] = _coerce(value[key], props[key], key)
+        return value
+    if kind == "array":
+        items = schema.get("items") if isinstance(schema.get("items"), dict) else None
+        if isinstance(value, (list, tuple)):
+            if items is None:
+                return list(value)
+            return [_coerce(item, items, name) for item in value]
+        if isinstance(value, str):
+            if isinstance(items, dict) and items.get("type") == "string":
+                return value
+            raise _BadArg(name, value, "a list")
+        raise _BadArg(name, value, "a list")
+    return _scalar(value, kind, name)
+
+
+def _coerce_args(tool, args, meta, signature):
+    schema = (meta.get(tool) or {}).get("schema") or {}
+    props = schema.get("properties") or {}
+    coerced = dict(args)
+    for key, item in list(coerced.items()):
+        if key in props:
+            coerced[key] = _coerce(item, props[key], key)
+    return coerced
 
 for line in sys.stdin:
     line = line.strip()
@@ -260,7 +368,35 @@ for line in sys.stdin:
                                            "use": "call %s%s; valid keywords: %s"
                                                   % (tool, signature, ", ".join(names))}}
                     else:
-                        value = fn(**call_args)
+                        try:
+                            call_args = _coerce_args(tool, call_args, meta, signature)
+                            value = fn(**call_args)
+                        except _BadArg as exc:
+                            names = [name for name, param in signature.parameters.items()
+                                     if param.kind not in (_inspect.Parameter.VAR_POSITIONAL,
+                                                           _inspect.Parameter.VAR_KEYWORD)]
+                            value = {"ok": False, "kind": "bad_args", "argument": exc.name,
+                                     "error": {"code": "bad_arguments",
+                                               "message": "%s must be %s, got %r"
+                                                          % (exc.name, exc.expected, exc.value),
+                                               "signature": "%s%s" % (tool, signature),
+                                               "valid": names,
+                                               "argument": exc.name,
+                                               "use": "call %s%s; %s must be %s"
+                                                      % (tool, signature, exc.name, exc.expected)}}
+                        except _CellTimeout:
+                            raise
+                        except Final:
+                            raise
+                        except BaseException as exc:
+                            # A verb that raised is a tool bug, never a successful observation:
+                            # the outer cell handler would otherwise leave result=None -> ok.
+                            message = (str(exc).strip().splitlines()
+                                       or [type(exc).__name__])[0]
+                            value = {"ok": False, "kind": "tool_crashed",
+                                     "error": {"code": "internal_error",
+                                               "message": message,
+                                               "use": "the verb raised - this is a tool bug, not your arguments"}}
                 if isinstance(value, dict) and value.get("ok") is False:
                     # One refusal shape for every verb, applied where every typed call lands.
                     value = _error_shape(value, tool,
@@ -279,7 +415,8 @@ for line in sys.stdin:
                     if value.get("kind") in ("command", "commands"):
                         summary = {k: v for k, v in value.items()
                                    if k in ("ok", "kind", "count", "exit_code", "results", "note",
-                                            "shown", "total", "offset", "unit", "truncated")}
+                                            "argv", "command", "shown", "total", "offset", "unit",
+                                            "truncated")}
                         summary["stdout_chars"] = len(str(value.get("stdout") or ""))
                         summary["stderr_chars"] = len(str(value.get("stderr") or ""))
                     else:

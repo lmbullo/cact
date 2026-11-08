@@ -23,7 +23,8 @@
  *    CODE_TUI_CONCURRENCY (1-8); pump() starts queued tasks while slots are free.
  *  - The worker speaks `@@TUI@@`-prefixed JSON lines on stdout. handleWorkerLine() is the
  *    only parser; any other line becomes a `log` event. Message shape lives in
- *    tui/python/worker.py.
+ *    tui/python/worker.py. `cell.start`/`cell.end` are journal history only (`cell.end` is
+ *    the compact per-call result task_journal reads); `turn` and `final` drive live state.
  *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
  *  - A `turn` message folds the provider's usage into `Task.progress` (turn number, in/out
@@ -329,6 +330,21 @@ function handleWorkerLine(task: Task, raw: string): void {
         tool: message.tool,
         args: capValue(message.args ?? {}) as Record<string, unknown>,
         code: message.code ? (capString(message.code, 12000) as string) : undefined,
+      });
+      break;
+    case "cell.end":
+      // Journal history only: one compact record per call for task_journal. No payload body.
+      appendEvent(task, {
+        kind: "cell.end",
+        cell: message.cell,
+        tool: message.tool,
+        ok: message.ok,
+        verb_kind: message.verb_kind,
+        code: message.code,
+        page: message.page ?? null,
+        chars: message.chars,
+        duration_ms: message.duration_ms,
+        notes: (message.notes ?? []).map((note) => capString(note, 500) as string),
       });
       break;
     case "turn": {

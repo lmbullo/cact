@@ -27,6 +27,10 @@ INVARIANTS
   - A TUI run's counts come from its `cell.start` records (one per call: `tool` + `args`), not
     from the python `turn.code` the TUI never emits. `sum(tools.values()) == cells`, by
     construction and asserted; that one line would have caught the regex counters reading zero.
+  - A new TUI run also writes one compact `cell.end` per call (`ok`, `code`, `page`, `chars`,
+    `notes`, no bodies). When present, `obs_chars`, `rejected` and `dupe_note_turn` read those
+    records; the archived `turn.observation` shape remains the fallback. `restarts` reads the
+    observation's boolean `restarted`, never the phrase "empty namespace" in delivered text.
   - The `turn.code` regex path survives only for the archived journal shape (turns with
     `calls`/`code` and no `cell.start`); on a TUI run `VERBS` is just the tool mix.
   - Malformed journal lines are skipped, not fatal: a killed worker leaves a partial file.
@@ -131,8 +135,10 @@ def _escape(cells: list[dict]) -> dict:
     return {"exec_verb_dupes": dupes, "python3_c": python3_c, "shell": shell}
 
 
-def _rejected(turns: list[dict]) -> int:
-    """Calls a typed verb refused, or a cell whose process exited non-zero."""
+def _rejected(turns: list[dict], cells: list[dict] | None = None) -> int:
+    """Calls a typed verb refused (or a verb crashed); the archived fallback reads turns."""
+    if cells is not None:
+        return sum(1 for cell in cells if not cell.get("ok", True))
     archived = sum(1 for turn in turns
                    for call in turn.get("calls") or []
                    if (call.get("observation") or {}).get("rejected")
@@ -153,8 +159,23 @@ def _first_mutation_turn(turns: list[dict], cells: list[dict]) -> int | None:
     return None
 
 
-def _dupe_note(events: list[dict]) -> tuple[int | None, int | None]:
-    """The first turn whose exec result carried the typed-dupe note, and its event index."""
+def _dupe_note(events: list[dict], cell_ends: bool = False) -> tuple[int | None, int | None]:
+    """The first turn whose exec result carried the typed-dupe note, and its event index.
+
+    New journals carry the note on `cell.end`; the owning `turn` record follows its cells, so
+    the first later `turn` names the turn. The archived shape reads `turn.observation`.
+    """
+    if cell_ends:
+        for index, event in enumerate(events):
+            if event.get("kind") != "cell.end":
+                continue
+            notes = event.get("notes") or []
+            if not any(DUPE_NOTE in str(item) for item in notes):
+                continue
+            turn = next((int((later.get("data") or {}).get("turn") or 0)
+                         for later in events[index + 1:] if later.get("kind") == "turn"), None)
+            return turn, index
+        return None, None
     for index, event in enumerate(events):
         if event.get("kind") != "turn":
             continue
@@ -229,8 +250,15 @@ def summarize(state_dir: Path, task_id: str) -> dict:
     task, turns = load(state_dir, task_id)
     events = _events(state_dir, task_id)
     records = [event for event in events if event.get("kind") == "cell.start"]
+    cell_ends = [event for event in events if event.get("kind") == "cell.end"]
     obs = "\n".join((turn.get("observation") or {}).get("stdout", "")
                     + (turn.get("observation") or {}).get("stderr", "") for turn in turns)
+    if cell_ends:
+        # One record per call: chars are len(stdout)+len(json result) as delivered, so a
+        # 3-call turn sums all three without re-reading any payload body.
+        obs_chars = sum(int(event.get("chars") or 0) for event in cell_ends)
+    else:
+        obs_chars = len(obs)
     if records:
         # The TUI shape: one `cell.start` per call carries the tool and its args, so the counts
         # are the truth. The regexes below are the archived shape's only record.
@@ -253,7 +281,7 @@ def summarize(state_dir: Path, task_id: str) -> dict:
     cells = len(records) or sum(tools.values())
     # One fact one place: every call is exactly one cell, so the tool mix covers the count.
     assert sum(tools.values()) == cells, (task_id, tools, cells)
-    note_turn, note_index = _dupe_note(events)
+    note_turn, note_index = _dupe_note(events, cell_ends=bool(cell_ends))
     after_note = _escape([event for index, event in enumerate(events)
                           if note_index is not None and index > note_index
                           and event.get("kind") == "cell.start"])
@@ -267,15 +295,16 @@ def summarize(state_dir: Path, task_id: str) -> dict:
         "edits": edits,
         "verbs": verbs,
         "tools": tools,
-        "rejected": _rejected(turns),
-        "restarts": obs.count("empty namespace"),
+        "rejected": _rejected(turns, cell_ends if cell_ends else None),
+        "restarts": sum(1 for turn in turns
+                        if (turn.get("observation") or {}).get("restarted")),
         "goal_unmet": obs.count("final_answer rejected") + obs.count("without a passing check"),
         "refused": obs.count("refused_truncation"),
         "check_runs": checks,
         "test_runs": tests,
         **_escape(records),
-        "obs_chars": len(obs),
-        "obs_chars_per_turn": round(len(obs) / len(turns)) if turns else 0,
+        "obs_chars": obs_chars,
+        "obs_chars_per_turn": round(obs_chars / len(turns)) if turns else 0,
         "first_mutation_turn": _first_mutation_turn(turns, records),
         "dupe_note_turn": note_turn,
         "dupes_after_note": after_note["exec_verb_dupes"] if note_index is not None else None,

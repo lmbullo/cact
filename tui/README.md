@@ -392,13 +392,17 @@ there is no reload path, and a running server never re-imports itself.
 ## 9. Events and statuses
 
 Each task's journal is append-only JSONL with `seq`, `ts`, `kind`, and kind-specific fields.
-Kinds: `queued`, `started`, `pid`, `cell.start`, `turn`, `log`, `stderr`, `error`, `final`,
-`finished`. The first four are journal history only: their live state is `Task.status` (and
-`Task.pid`), which the board and the log status line render, so the TUI draws them nowhere.
-`cell.start`, `turn` (with a `notice`), `log`, `stderr`, `error` and `final` are what the log
-body shows. Payloads are capped before storage: strings at 16000 chars, arrays at 40 items,
-nesting at depth 12 (`[depth]` marks the cut), so nested call arguments survive and one huge
-observation cannot bloat a journal.
+Kinds: `queued`, `started`, `pid`, `cell.start`, `cell.end`, `turn`, `log`, `stderr`,
+`error`, `final`, `finished`. The lifecycle kinds, `cell.start` and `cell.end` are journal
+history only: their live state is `Task.status` (and `Task.pid`), which the board and the log
+status line render, so the TUI draws them nowhere. `turn` (with a `notice`), `log`, `stderr`,
+`error` and `final` are what the log body shows. `cell.start` is the call about to run;
+`cell.end` is its compact result for analysis — `{cell, tool, ok, verb_kind, code, page,
+chars, duration_ms, notes}` with no payload body — and `bench/task_journal.py` prefers it for
+`obs_chars`, `rejected` and `dupe_note_turn`. `turn` keeps its existing shape, so a client that
+predates `cell.end` still reads every run. Payloads are capped before storage: strings at
+16000 chars, arrays at 40 items, nesting at depth 12 (`[depth]` marks the cut), so nested call
+arguments survive and one huge observation cannot bloat a journal.
 
 The worker reports `done` for `DONE`/`VERIFIED`, `partial` for `STEP_LIMIT`/`WALL_LIMIT` with a
 non-empty summary, and `failed` otherwise. The server keeps the same mapping and also treats a

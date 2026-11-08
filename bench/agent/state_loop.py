@@ -7,7 +7,8 @@ WHAT IT IS
 
     [state]  turn, elapsed, prompt tokens, and the files this cell changed
     [observe]/[page]  a typed verb's envelope: op/status, shown/total/next/unit/has_more/truncated/complete
-    [data]   the typed result's text, verbatim (typed verbs page; the card does not clip them)
+    [data]   the typed result's structured fields (bulk text stays on stdout); a value that
+              is too large is clipped per key, with one `[data] clipped: <keys>` note
     [note] / [error]  explicit notes and the structured rejection
     [stderr] / [stdout]  for python/exec only: head, error lines, tail, plus an _OBS[n] handle
     [result] the last expression, clipped (python only; a typed observation is already data)
@@ -45,6 +46,10 @@ INVARIANTS
     (`bench/agent/envelope.py`); the card renders `page`/`data` and never applies the output
     digest to it, because the verb already paged. Only python/exec output is digested, and
     that digest always names the `_OBS[n]` handle it left.
+  - Structured `data` is never dropped by a size gate. Every field is rendered; a large value
+    is clipped to about `DATA_LINES` lines and named in one `[data] clipped:` note, so
+    `closest`/`context`, `dirs_matched`, `argv`/`results` and a refusal's `signature`/`valid`
+    reach the model.
   - Coverage is data, never a guess. The loop opens no file and inverse-parses nothing: a
     verbatim typed card delivered exactly `Cell.reads`; a digested python/exec card delivered
     only the numbered lines `render_observation` kept. A raw read is never guessed,
@@ -98,6 +103,9 @@ Every tool result is a state card, not a terminal transcript:
 
 Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature. Two routes replace a shell habit: guide(path=['a.py', 'b.py']) returns those module headers from the index in one call (a header is the contract, not the whole file), so no python3 -c + subprocess to read source. And a repo import (import bench.task_journal) only works through exec(['python3', '-c', '...']) because the kernel namespace has the verbs, not the `bench` package.
 """
+
+DATA_LINES = 10
+DATA_CHARS = 1200
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
 _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
@@ -174,6 +182,46 @@ def digest_card(text: str, budget: int, handle: str, errors: bool = False) -> tu
 def digest(text: str, budget: int, handle: str) -> str:
     """digest_card's text only: head + elision notice naming `handle` + tail."""
     return digest_card(text, budget, handle)[0]
+
+
+def _data_value(value, limit: int = DATA_CHARS, lines: int = DATA_LINES) -> tuple[str, bool]:
+    """One `[data]` value as text, clipped to about `lines` lines / `limit` chars.
+
+    A dict/list that serializes long is pretty-printed first, so a `dirs_matched` map or an
+    `edit.context` region is clipped by lines instead of hiding in one enormous JSON line.
+    """
+    try:
+        text = json.dumps(value, sort_keys=True, default=repr)
+        if isinstance(value, (dict, list)) and len(text) > 240:
+            text = json.dumps(value, sort_keys=True, indent=1, default=repr)
+    except (TypeError, ValueError):
+        text = repr(value)
+    chunks = text.splitlines()
+    if len(chunks) <= lines and len(text) <= limit:
+        return text, False
+    head = "\n".join(chunks[:lines])
+    if len(head) > limit:
+        head = head[:limit]
+    return head + f" ...[+{max(0, len(text) - len(head))} chars]", True
+
+
+def data_block(data: dict) -> tuple[dict, list[str]]:
+    """The `[data]` object: every non-duplicated field, each value clipped per key.
+
+    `normalize` already keeps bulk payloads out; what is left is structured facts the model
+    needs. There is no 600-char gate: a value is clipped (and its key named in the one
+    `[data] clipped:` note) instead of disappearing with the whole block.
+    """
+    shown: dict = {}
+    clipped: list[str] = []
+    for key, value in data.items():
+        if key in ("by_file", "sections"):
+            continue
+        text, cut = _data_value(value)
+        shown[key] = text if cut else value
+        if cut:
+            clipped.append(key)
+    return shown, clipped
 
 
 def numbered_lines(text: str) -> set[int]:
@@ -291,18 +339,19 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
         for note in env.get("notes") or []:
             parts.append("[note] " + str(note))
         data = env.get("data") or {}
-        # Structured-only facts (did_you_mean, include_unmatched, edit paths, a git sha)
-        # have no stdout delivery. Render the small ones explicitly; by_file/sections are
-        # already in [hits]/[data] text and would only duplicate it.
-        small = {key: value for key, value in data.items()
-                 if key not in ("by_file", "sections")}
-        if small:
-            try:
-                payload = json.dumps(small, sort_keys=True, default=repr)
-            except (TypeError, ValueError):
-                payload = repr(small)
-            if len(payload) <= 600:
+        # Structured-only facts (did_you_mean, include_unmatched, edit closest/context, a
+        # map's dirs_matched, an exec argv/results, a git sha) have no stdout delivery.
+        # Render every non-duplicated field; clip each value per key and name what was cut.
+        if data:
+            shown, clipped = data_block(data)
+            if shown:
+                try:
+                    payload = json.dumps(shown, sort_keys=True, default=repr)
+                except (TypeError, ValueError):
+                    payload = repr(shown)
                 parts.append("[data] " + payload)
+                if clipped:
+                    parts.append("[data] clipped: " + ", ".join(clipped))
         by_file = data.get("by_file")
         if cell.tool == "search" and by_file and page and not page.get("complete"):
             for path, info in list(by_file.items())[:6]:
@@ -330,8 +379,19 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
             hint = err.get("use")
             if not hint and code == "outside_root":
                 hint = "typed editors are workspace-only; use exec(shell=...) for a scratch path"
-            parts.append("[error] %s: %s%s" % (
-                code, message, ("; use " + str(hint)) if hint else ""))
+            line = "[error] %s: %s: %s" % (env.get("kind") or "error", code, message)
+            if hint:
+                line += "; use " + str(hint)
+            if err.get("signature"):
+                line += "; signature=" + clip(str(err["signature"]), 300)
+            if err.get("valid"):
+                valid = err["valid"]
+                if isinstance(valid, (list, tuple)):
+                    valid = ", ".join(str(item) for item in valid)
+                line += "; valid=" + clip(str(valid), 300)
+            if err.get("argument"):
+                line += "; argument=" + str(err["argument"])
+            parts.append(line)
     if cell.stderr:
         if verbatim:
             body.append("[error]\n" + cell.stderr)

@@ -65,7 +65,9 @@ edits, restarts, rejections, the tool and verb mix — then the escape metrics `
 `python3_c`, `shell`, `obs_chars` and `first_mutation_turn` (the turn of the first mutating cell),
 then the causal keys `dupe_note_turn`, `dupes_after_note`, `paged_followups` and
 `obs_chars_per_turn`. The counts come from the `cell.start` records a TUI run writes, so
-`sum(tools.values()) == cells`. `--compare <state-dir> A B` prints the same row for two tasks side
+`sum(tools.values()) == cells`; `obs_chars`, `rejected` and `dupe_note_turn` read its one-
+record-per-call `cell.end` (falling back to `turn.observation` on archived journals), and
+`restarts` reads the observation's boolean `restarted`. `--compare <state-dir> A B` prints the same row for two tasks side
 by side with deltas; `--recent N` scans every workspace's tasks, newest first, with no server or
 key. The key list is the contract in `bench/task_journal.py`.
 

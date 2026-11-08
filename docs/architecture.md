@@ -76,6 +76,14 @@ What the diagram does not show:
   does not match `PROTOCOL` is never read through the current shape: the child restarts and the
   cell returns an error. A dead or hung kernel is killed and restarted **with an empty
   namespace**; the loop says so instead of hiding it.
+- **TUI event shapes.** `tui/python/worker.py::StreamingKernel` emits `cell.start` before every
+  request and a compact `cell.end` after it: `{cell, tool, ok, verb_kind, code, page:{shown,
+  total, unit, has_more, truncated, complete}, chars, duration_ms, notes:[one-line]}`. `chars`
+  is `len(stdout)+len(json result)` as delivered and no payload body is copied, so the journal
+  stays about the same size. `turn` events (and `turn.observation`) are unchanged, so a client
+  that predates `cell.end` still reads the run; the journal reader (`bench/task_journal.py`)
+  prefers `cell.end` for `obs_chars`, `rejected` and `dupe_note_turn`, and counts `restarts`
+  from the observation's boolean `restarted` rather than searching delivered text.
 - **Results are dicts that also answer attributes.** `exec(...)` and `run()` return
   `result['stdout']` (or `result.stdout`); `read(raw=True)[:n]` and `read(...)['content']` work,
   so a natural model mistake does not cost a cell. The canonical keys are the contract.

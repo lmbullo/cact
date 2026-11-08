@@ -40,6 +40,8 @@ WHERE TO CHANGE
                                                  `_mutating_command`, `_HINT`, then RUN_NOTE
                                                  in repl.py and AGENTS.md §4 invariant 2
   The duplicate-verb note ..................... `_VERB_DUPE`, `_DUPE_OPAQUE`, `_typed_dupe`
+                                              (a path outside the workspace gets no note:
+                                              the typed verb would refuse it)
   The spawn gate ............................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
   exec's argv/commands/shell shape ............. `exec_argv`
   The typed git actions ........................ `git_tool`
@@ -124,8 +126,10 @@ _DUPE_OPAQUE = {"grep": "olvABCPLxqmFzZ", "rg": "olvABCPLxqmFzZ",
 _DUPE_NOTED = set()
 
 
-def _typed_dupe(argv):
+def _typed_dupe(argv, cwd=None):
     # (program, typed call) when this argv repeats a typed verb that can express it, else None.
+    # A typed verb is workspace-only, so a path outside _RUN_ROOT gets no note: telling the
+    # model `cat /tmp/x` is `read(path)` when read('/tmp/x') answers outside_root is a lie.
     if not argv:
         return None
     program = _ros.path.basename(str(argv[0])).lower()
@@ -140,6 +144,17 @@ def _typed_dupe(argv):
     if program == "sed" and not any(item.startswith("-i") or item.startswith("--in-place")
                                     for item in args):
         return None
+    base = cwd or _RUN_ROOT
+    for item in args:
+        token = str(item).strip().strip("'\"")
+        if not token or token.startswith("-"):
+            continue
+        if token.startswith("~"):
+            token = _ros.path.expanduser(token)
+        target = token if token.startswith("/") else _ros.path.join(base, token)
+        target = _ros.path.normpath(target)
+        if not (target == _RUN_ROOT or target.startswith(_RUN_ROOT + _ros.sep)):
+            return None
     return (program, use)
 
 
@@ -559,7 +574,7 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
     result = _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
             "cwd": cwd or _RUN_ROOT, "exit_code": proc.returncode,
             "stdout": out or "", "stderr": err or ""})
-    dupe = _typed_dupe(argv)
+    dupe = _typed_dupe(argv, cwd)
     if dupe and dupe[0] not in _DUPE_NOTED:
         _DUPE_NOTED.add(dupe[0])
         result["note"] = ("`%s` repeats a typed verb; %s answers it in one call."

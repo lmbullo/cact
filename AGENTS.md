@@ -124,9 +124,13 @@ These are architecture, not style. A change that breaks one is a regression even
    `cwd`, `env`, `stdin` and `commands=[[...]]`; `exec(shell=<string>)` is the explicit shell
    escape hatch. `bash -lc` inside argv is refused (`shell_via_exec`) and points at `shell`.
    `run()` exists only in python-only modes. The typed call is bound to the verb's real
-   signature before dispatch, so a wrong or missing keyword is `bad_args`/`bad_arguments`
-   (`help(tool)` prints the signature), never a traceback. A typed verb returning `ok: false`
-   is `Cell.rejected` and counts as an error, so a bad argument shape is visible in run metrics.
+   signature before dispatch and its declared scalar types (integer, number, boolean,
+   array-of-string) are coerced from the registry schema, so a wrong/missing keyword or a bad
+   scalar is `bad_args`/`bad_arguments` with the signature and the offending keyword
+   (`help(tool)` prints it), never a traceback. A verb that raises is caught per typed call and
+   answered `ok:false`/`internal_error` (`kind: tool_crashed`). A typed verb returning
+   `ok: false` is `Cell.rejected` and counts as an error, so a bad argument shape is visible in
+   run metrics.
    Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
    `git apply/checkout/...`, `>` redirection; a quoted `>` is an argument) are refused as
    `kind: "wrong_call"` with a `use` hint, because they bypass the journal. A program that
@@ -156,7 +160,11 @@ These are architecture, not style. A change that breaks one is a regression even
    file digest; a contained range again returns `already_read` with the `_OBS[n]` handle.
    `read(..., repeat=True)` re-delivers. `_commit` invalidates the entry; an external write is
    caught by the digest. This is context hygiene, not a read cap. A typed result is normalized
-   into `Cell.envelope` and rendered verbatim; only python/exec output is digested. One paging
+   into `Cell.envelope` and rendered verbatim; only python/exec output is digested. Structured
+   `[data]` is never dropped by a size gate: every field is rendered, a large value is clipped
+   to about ten lines, and one `[data] clipped: <keys>` note names what was cut, so
+   `closest`/`context`, `dirs_matched`, `argv`/`results` and error `signature`/`valid` reach the
+   model. One paging
    contract: `offset` is the start of what this response delivered, `next` is the resume
    cursor, `has_more` means the file/result continues, `truncated` means a built-in default
    limit cut output the caller did not ask to have cut, and `complete` is exactly

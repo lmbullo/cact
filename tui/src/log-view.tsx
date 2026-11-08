@@ -6,8 +6,9 @@
  *  a single terminal line; `LogView` stacks them in a sticky-bottom scrollbox. Kinds covered:
  *  cell.start (the typed call or the python cell's arguments), turn (only a rejected/staged-finish
  *  notice), final (the closing summary block), error, stderr and log. The lifecycle kinds
- *  (started/finished/queued/pid) render nothing: they are the task's state, which the log header
- *  shows live from `Task` (see INVARIANTS). When the task has a start time, every row carries a
+ *  (started/finished/queued/pid), cell.start and cell.end render nothing from the journal body:
+ *  they are history or the task's state, which the log header shows live from `Task` (see
+ *  INVARIANTS). When the task has a start time, every row carries a
  *  dim `+12s` gutter so the run reads as a timeline.
  *
  * ENTRY POINTS
@@ -84,7 +85,7 @@ function noticeOf(event: TaskEvent): string {
  * A turn is silent unless it carries a notice (see noticeOf).
  */
 function isSilent(event: TaskEvent): boolean {
-  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished") {
+  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.end") {
     return true;
   }
   if (event.kind === "turn") return noticeOf(event) === "";

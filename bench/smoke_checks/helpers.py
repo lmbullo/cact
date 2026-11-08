@@ -3,7 +3,9 @@
 WHAT IT IS
   Reply parsing (```python fences, ANSWER:, prose), the state card digest, budget defaults,
   the mode enum, the LLM error type, the trace renderer, the runs summary verbs, the
-  workspace helpers, and the generated tool/verb specs. No kernel child, no model, no fixture.
+  workspace helpers, and the generated tool/verb specs. It also pins the journal reader's
+  `cell.end` path (chars sum, rejected, dupe note turn, boolean restarts) and the worker's
+  compact record. No kernel child, no model, no fixture.
 
 ENTRY POINTS
   run(check)   called by bench/smoke.py::main after suites
@@ -21,6 +23,7 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import tempfile
 from pathlib import Path
@@ -35,7 +38,9 @@ import bench.agent.trace as trace
 import bench.agent.verbs as verbs
 import bench.snapshot as snapshot
 import bench.task_journal as task_journal
-from bench.agent.kernel import Cell
+from bench.agent.kernel import Cell, CellReply, Kernel
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def run(check):
@@ -64,6 +69,8 @@ def run(check):
     check("trace: render is callable", callable(trace.render))
     check("task_journal: verbs", "final_answer" in task_journal.VERBS)
     _journal_metrics(check)
+    _cell_end_metrics(check)
+    _worker_cell_end(check)
     check("snapshot: workspace helpers",
           callable(snapshot.manifest) and callable(snapshot.clone) and callable(snapshot.changed))
     typed_names = tuple(name for name, meta in verbs.VERBS.items() if meta.get("typed", True))
@@ -155,3 +162,82 @@ def _journal_metrics(check) -> None:
           tui_row["dupe_note_turn"] == 3 and tui_row["dupes_after_note"] == 0
           and tui_row["paged_followups"] == 1 and tui_row["obs_chars_per_turn"] > 0,
           str(tui_row)[:300])
+
+
+def _cell_end_metrics(check) -> None:
+    """A journal with one `cell.end` per call: chars sum, rejection and the note turn."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp)
+        (state / "tasks").mkdir()
+        (state / "events").mkdir()
+        (state / "tasks" / "t3.json").write_text(
+            json.dumps({"status": "done", "stop": "DONE"}), encoding="utf-8")
+        events = [
+            {"kind": "cell.start", "cell": 1, "tool": "read", "args": {"path": "a.py"}},
+            {"kind": "cell.end", "cell": 1, "tool": "read", "ok": True,
+             "chars": 3, "duration_ms": 1, "notes": []},
+            {"kind": "cell.start", "cell": 2, "tool": "exec", "args": {"argv": ["grep"]}},
+            {"kind": "cell.end", "cell": 2, "tool": "exec", "ok": True,
+             "chars": 5, "duration_ms": 2,
+             "notes": ["`grep` repeats a typed verb; search(...) answers it."]},
+            {"kind": "cell.start", "cell": 3, "tool": "edit", "args": {}},
+            {"kind": "cell.end", "cell": 3, "tool": "edit", "ok": False,
+             "code": "internal_error", "chars": 7, "duration_ms": 3, "notes": []},
+            {"kind": "turn", "data": {"turn": 1, "calls": [{}, {}, {}],
+                                      "observation": {"stdout": "a doc line: empty namespace",
+                                                      "stderr": "", "restarted": False}}},
+            {"kind": "turn", "data": {"turn": 2, "calls": [],
+                                      "observation": {"stdout": "", "stderr": "",
+                                                      "restarted": True}}},
+        ]
+        (state / "events" / "t3.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+        row = task_journal.summarize(state, "t3")
+    check("task_journal: cell.end sums chars and counts a crashed call as rejected",
+          row["obs_chars"] == 15 and row["rejected"] == 1 and row["cells"] == 3
+          and row["dupe_note_turn"] == 1, str(row)[:360])
+    check("task_journal: restarts reads the observation boolean, not the phrase",
+          row["restarts"] == 1, str(row)[:360])
+
+
+def _worker_cell_end(check) -> None:
+    """StreamingKernel's compact record: counts and codes, never the payload."""
+    spec = importlib.util.spec_from_file_location(
+        "tui_worker", ROOT / "tui" / "python" / "worker.py")
+    worker = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(worker)
+    result = ('{"ok": true, "kind": "file", "shown": 1, "total": 2, "unit": "line", '
+              '"has_more": true, "truncated": false, "complete": true}')
+    reply = CellReply(stdout="abc", result=result, tool="read", obs_index=0)
+    cell = Cell.from_reply(reply, duration_ms=7)
+    record = worker.cell_end_payload(cell, 3, "read")
+    check("worker: cell.end is compact, with counts and no payload body",
+          record["kind"] == "cell.end" and record["cell"] == 3
+          and record["tool"] == "read" and record["ok"] is True
+          and record["chars"] == len("abc") + len(result)
+          and record["page"]["shown"] == 1 and record["duration_ms"] == 7
+          and "stdout" not in record and "result" not in record,
+          str(record)[:320])
+    # The emitter (not just the payload builder): one compact record per call, in order.
+    outer_run, outer_call = Kernel.run, Kernel.call
+    try:
+        Kernel.run = lambda self, code, check_cache=None: Cell(
+            stdout="a", stderr="", result=None, final=None, duration_ms=1)
+        Kernel.call = lambda self, tool, args=None, check_cache=None: Cell(
+            stdout="b", stderr="", result='{"ok": true, "kind": "file"}',
+            final=None, duration_ms=1)
+        stream = worker.StreamingKernel.__new__(worker.StreamingKernel)
+        events: list[dict] = []
+        stream._emit_event = events.append
+        stream._cell_no = 0
+        stream.run("print(1)")
+        stream.call("read", {"path": "a"})
+        stream.call("map", {"path": "."})
+    finally:
+        Kernel.run, Kernel.call = outer_run, outer_call
+    ends = [event for event in events if event["kind"] == "cell.end"]
+    check("worker: a three-call turn emits three cell.end records",
+          len(ends) == 3 and [event["cell"] for event in ends] == [1, 2, 3]
+          and [event["tool"] for event in ends] == ["python", "read", "map"],
+          str(ends)[:320])
