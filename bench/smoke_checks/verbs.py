@@ -73,6 +73,18 @@ def run(check, root, kernel):
     check("kernel: recall is a typed session search",
           cell.result is not None and "call_a" in cell.stdout,
           (cell.stdout + (cell.result or ""))[:240])
+    paged = kernel.run("print('page-me ' * 400)")
+    handle = "_OBS[%d]" % paged.obs_index
+    cell = kernel.call("page", {"handle": handle, "offset": 100, "limit": 40})
+    check("kernel: page(handle) returns an _OBS slice verbatim",
+          cell.stdout == ("page-me " * 400)[100:140]
+          and cell.envelope.get("page", {}).get("unit") == "char",
+          (cell.stdout + str(cell.envelope))[:240])
+    cell = kernel.call("page", {"handle": "_OBS[99999]"})
+    check("kernel: page refuses an unknown handle with the error shape",
+          cell.rejected and "unknown_handle" in (cell.result or "")
+          and (cell.envelope or {}).get("error", {}).get("use"),
+          (cell.stdout + (cell.result or ""))[:240])
     cell = kernel.call("read", {"ranges": [
         {"path": "call_a.txt", "start": 1, "end": 1},
         {"path": "call_b.txt", "start": 2, "end": 2},

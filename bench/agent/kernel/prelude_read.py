@@ -14,6 +14,7 @@ ENTRY POINTS
   grep(pattern, path=".", max_results=None, regex=True, include=None, context=0, ...)
   search(...)          the typed verb (same engine as grep)
   recall(pattern, limit=10, context=100, offset=0) / recall_tool(...)   the typed session search
+  page(handle, offset=0, limit=8000, field="stdout")   a slice of one _OBS entry
   skill(name=None, root=".")   list .agent/skills/, or load one procedure
   Inside: _int_arg, _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
 
@@ -647,6 +648,45 @@ def recall_tool(pattern, limit=10, context=100, offset=0):
             "shown": len(page), "total": total, "offset": start,
             "next": {"offset": end, "unit": "snippet"} if end < total else None,
             "scanned": scanned, "count": total, "note": note, "text": text}
+
+
+def page(handle, offset=0, limit=8000, field="stdout"):
+    # Read a slice of one _OBS entry by the exact handle a card named. This is the recovery
+    # path behind every card clip and every digest: no workspace I/O, no shell, and an
+    # unknown handle is the same structured refusal as any other verb.
+    shown = str(handle or "").strip()
+    match = _re.fullmatch(r"_OBS\[(-?\d+)\](?:\[['\"](stdout|stderr|result)['\"]\])?", shown)
+    if not match:
+        return _fail("page", "bad_handle", "%r is not an _OBS[n] handle" % (handle,),
+                     "pass the exact handle a card named, like _OBS[12]")
+    index = int(match.group(1))
+    if match.group(2):
+        field = match.group(2)
+    if field not in ("stdout", "stderr", "result"):
+        return _fail("page", "bad_field", "field must be stdout, stderr or result",
+                     "page(handle, field='result') reads the structured envelope")
+    obs = globals().get("_OBS") or []
+    if index < 0:
+        index += len(obs)
+    if index < 0 or index >= len(obs):
+        return _fail("page", "unknown_handle",
+                     "no %s in this session (%d entries)" % (shown, len(obs)),
+                     "page() reads only the handles this session's cards named")
+    value = (obs[index] or {}).get(field)
+    text = "" if value is None else value if isinstance(value, str) else repr(value)
+    total = len(text)
+    start = max(0, int(offset or 0))
+    size = 8000 if limit is None else max(0, int(limit))
+    chunk = text[start:start + size]
+    end = start + len(chunk)
+    has_more = end < total
+    result = {"ok": True, "kind": "obs", "handle": shown, "field": field,
+              "offset": start, "shown": len(chunk), "total": total, "unit": "char",
+              "next": {"offset": end, "unit": "char"} if has_more else None,
+              "truncated": False, "has_more": has_more, "text": chunk}
+    if total and start >= total:
+        result["note"] = "offset %d is past the end (%d chars)" % (start, total)
+    return result
 
 
 def skill(name=None, root="."):

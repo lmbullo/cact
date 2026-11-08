@@ -59,9 +59,9 @@ INVARIANTS
     line in the card, on top of the kernel's stderr message, so a lost namespace cannot look
     like a normal cell.
   - Output is never silently dropped: the card always names the `_OBS[n]` entry holding the
-    full text, and the kernel keeps `_OBS` in the namespace so `print(_OBS[n]['stdout'])`
-    works. That is why the handle, not the text, is the contract. The kernel persists `_OBS`
-    across a restart, so `recall()` keeps working when a cell kills the kernel.
+    full text, and `page(handle)` reads a slice of it from the kernel. That is why the handle,
+    not the text, is the contract. The kernel persists `_OBS` across a restart, so `page()`
+    keeps working when a cell kills the kernel.
   - `_compact` cuts only on an assistant tool-call boundary, so no tool result is orphaned
     from its call.
   - The `[state] changed:` line and `[diff]` both come from the kernel's journal
@@ -102,17 +102,18 @@ Every tool result is a state card, not a terminal transcript:
   [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature. The plan is `checks()`; do not run a gate by hand. Tree state is `status()`. Two routes replace a shell habit: guide(path=['a.py', 'b.py']) returns those module headers from the index in one call (a header is the contract, not the whole file), so no python3 -c + subprocess to read source. And a repo import (import bench.task_journal) only works through exec(['python3', '-c', '...']) because the kernel namespace has the verbs, not the `bench` package.
+Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and page(handle) reads a slice of it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature. The plan is `checks()`; do not run a gate by hand. Tree state is `status()`. Two routes replace a shell habit: guide(path=['a.py', 'b.py']) returns those module headers from the index in one call (a header is the contract, not the whole file), so no python3 -c + subprocess to read source. And a repo import (import bench.task_journal) only works through exec(['python3', '-c', '...']) because the kernel namespace has the verbs, not the `bench` package.
 """
 
 DATA_LINES = 10
 DATA_CHARS = 1200
+CARD_BUDGET = 6_000
 
 _ERROR_LINE = re.compile(r"error|fail|✗|×|exception|panic|assert", re.IGNORECASE)
 _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
 # Typed verbs already page and name their own loss. The card renders their observation
 # verbatim; only process/python output is digested, because only it has no paging contract.
-_VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall",
+_VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall", "page",
                             "session_diff", "git", "checks", "status"})
 
 
@@ -151,6 +152,27 @@ def clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n...[+{len(text) - limit} chars]"
+
+
+def clip_card(text: str, budget: int, handle: str) -> tuple[str, bool]:
+    """`(text, was clipped)`: a whole card while it fits, else its head + an _OBS pointer.
+
+    An `[error]` or `[check]` line is never hidden by the head cut: every such line not
+    already in the head is appended after the marker, because a budget is a delivery policy,
+    not permission to lose a refusal or a verdict.
+    """
+    if len(text) <= budget:
+        return text, False
+    marker = "[card clipped: %d chars, full text: %s]" % (len(text), handle)
+    keep = max(0, int(budget) - len(marker) - 1)
+    head = text[:keep]
+    kept = set(head.splitlines())
+    pinned = [line for line in text.splitlines()
+              if line.startswith(("[error]", "[check]")) and line not in kept]
+    out = head + ("\n" if head and not head.endswith("\n") else "") + marker
+    if pinned:
+        out += "\n" + "\n".join(pinned)
+    return out, True
 
 
 def digest_card(text: str, budget: int, handle: str, errors: bool = False) -> tuple[str, bool]:
@@ -446,12 +468,16 @@ class StateLoop(ToolLoop):
         output_budget: int = 12_000,
         context_budget: int = 891_289,
         keep_messages: int = 20,
+        card_budget: int = CARD_BUDGET,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.output_budget = output_budget
         self.context_budget = context_budget
         self.keep_messages = keep_messages
+        self.card_budget = card_budget
+        self._card_step = 0
+        self._card_used = 0
         self.last_prompt_tokens = 0
         self.coverage: dict[str, dict] = {}
         self.deltas: dict[str, str] = {}
@@ -464,6 +490,16 @@ class StateLoop(ToolLoop):
         text, displayed = render_observation(
             cell, steps, self.last_prompt_tokens, self.last_check, self.output_budget,
             self.coverage, getattr(self, "last_check_handle", None))
+        if steps != self._card_step:
+            self._card_step = steps
+            self._card_used = 0
+        handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
+        if self.card_budget > 0:
+            room = max(0, self.card_budget - self._card_used)
+            text, clipped = clip_card(text, room, handle)
+            self._card_used += len(text)
+            if clipped:
+                displayed = delivered_ranges(cell.reads, text, digested=True)
         for path, ranges in displayed.items():
             total = int((cell.reads.get(path) or {}).get("total") or 0)
             entry = self.coverage.setdefault(path, {"ranges": [], "total": 0})

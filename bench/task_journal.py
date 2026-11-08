@@ -6,8 +6,9 @@ WHAT IT IS
   (`tools`), the kernel verbs the model used, which files it wrote, steps, tokens, stop reason
   — and the escape hatch: how often `exec` stood in for a typed verb (`exec_verb_dupes`), ran
   `python3 -c` or a shell string, how many observation characters reached the model
-  (`obs_chars`, `obs_chars_per_turn`), and the turn of the first mutating cell
-  (`first_mutation_turn`). The bookkeeping keys measure the tax: `out_tokens` and
+  (`obs_chars`, `obs_chars_per_turn`) and how many card characters were delivered against
+  the turn budget (`card_chars`, `card_chars_per_turn`, `card_budget`), and the turn of the
+  first mutating cell (`first_mutation_turn`). The bookkeeping keys measure the tax: `out_tokens` and
   `reasoning_tokens`, `gate_cells` (an exec cell whose commands are all exact plan specs),
   `narrow_cells` (the same program with extra args, e.g. one test file), `git_read_cells`
   (status/log/diff/show) and `git_write_cells` (add/commit/push), with `git_cells` the total,
@@ -449,6 +450,12 @@ def summarize(state_dir: Path, task_id: str) -> dict:
         **_escape(records),
         "obs_chars": obs_chars,
         "obs_chars_per_turn": round(obs_chars / len(turns)) if turns else 0,
+        "card_chars": sum(int(turn.get("card_chars") or 0) for turn in turns),
+        "card_chars_per_turn": (round(sum(int(turn.get("card_chars") or 0)
+                                        for turn in turns) / len(turns))
+                               if turns else 0),
+        "card_budget": next((int(turn.get("card_budget") or 0) for turn in turns
+                            if turn.get("card_budget")), 0),
         "out_tokens": _token_sum(turns, "completion_tokens"),
         "reasoning_tokens": _token_sum(turns, "reasoning_tokens"),
         "gate_cells": _plan_cells(records, plan_specs),

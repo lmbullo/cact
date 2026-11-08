@@ -265,6 +265,8 @@ class EventTrace:
             "observation": record.get("observation"),
             "calls": record.get("calls") or [],
             "obs": record.get("obs"),
+            "card_chars": int(record.get("card_chars") or 0),
+            "card_budget": int(record.get("card_budget") or 0),
             "reads": record.get("reads") or {},
             "runs": record.get("runs") or [],
             "cache": record.get("cache") or {},

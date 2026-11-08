@@ -230,6 +230,25 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    "page": {
+        "function": "page",
+        "summary": "Read a slice of an _OBS[n] entry by the exact handle a card named. Kernel-side, no I/O: offset is a character index, limit the slice size, field stdout (default), stderr or result. An unknown handle is a structured refusal.",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "handle": {"type": "string", "description": "Exactly the handle a card named, like _OBS[12]."},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "Character offset into the field (default 0)."},
+                "limit": {"type": "integer", "minimum": 0,
+                          "description": "Characters to return (default 8000)."},
+                "field": {"type": "string", "enum": ["stdout", "stderr", "result"],
+                          "description": "Which part of the _OBS entry to read (default stdout)."},
+            },
+            "required": ["handle"],
+            "additionalProperties": False,
+        },
+    },
     "outline": {
         "function": "outline",
         "summary": "Return a file's structure with line ranges (Markdown headings, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS templates, CSS section comments). A Markdown heading ends at the next same-or-shallower heading, so its range covers its subtree; keys=true expands multiline dict keys. path may be a list.",

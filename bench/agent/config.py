@@ -47,6 +47,7 @@ MAX_OUTPUT = 393_216
 COMPACT_AT = 0.85
 COMPACT_AT_TOKENS = int(CONTEXT_WINDOW * COMPACT_AT)
 OBS_CHARS = 0
+CARD_BUDGET = 6_000
 HISTORY = "action"
 
 MODE = os.environ.get("CODE_TUI_MODE", "state")
@@ -95,6 +96,7 @@ def build(
             health=health,
             verifier=verifier,
             context_budget=COMPACT_AT_TOKENS,
+            card_budget=CARD_BUDGET,
             autonomy=autonomy,
             subagent=subagent,
             skeptic=skeptic,

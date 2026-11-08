@@ -60,7 +60,7 @@ UNITS = {
     "read": "line", "file": "line", "files": "file", "search": "hit", "grep": "hit", "matches": "hit",
     "map": "file", "maps": "file", "outline": "entry", "outlines": "entry",
     "search_sections": "section",
-    "guide": "module", "guides": "module", "recall": "snippet", "git_diff": "char", "git_show": "char",
+    "guide": "module", "guides": "module", "recall": "snippet", "obs": "char", "git_diff": "char", "git_show": "char",
     "git_log": "commit",
 }
 BULK = frozenset({"text", "raw", "stdout", "stderr", "matches", "files", "entries",

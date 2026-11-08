@@ -63,6 +63,24 @@ def run(check):
     check("state: digest names the handle", "_OBS[0]" in card and len(card) < 4000)
     check("state: an undigested stream is reported whole",
           state_loop.digest_card("short", 800, "_OBS[0]") == ("short", False))
+    under = Cell(stdout="small", stderr="", result=None, final=None, duration_ms=1,
+                 obs_index=0)
+    probe = state_loop.StateLoop(object(), object(), loop.Budget(), card_budget=1200)
+    check("state: a card under the turn budget is byte-identical to today",
+          probe._observe(under, 1) == state_loop.render_observation(under, 1)[0],
+          probe._observe(under, 1)[:160])
+    probe = state_loop.StateLoop(object(), object(), loop.Budget(), card_budget=6000)
+    cells = [Cell(stdout="x" * 2700, stderr="", result=None, final=None, duration_ms=1,
+                  obs_index=index) for index in range(3)]
+    cards = [probe._observe(cell, 7) for cell in cells]
+    check("state: a three-card turn renders within budget and names each clipped handle",
+          sum(len(card) for card in cards) <= 6000
+          and "[card clipped:" in cards[-1] and "_OBS[2]" in cards[-1]
+          and "[card clipped:" not in cards[0], str([len(card) for card in cards]))
+    text, _ = state_loop.clip_card("head\n" + "x" * 500 + "\n[error] keep me\n[check] pass",
+                                   100, "_OBS[3]")
+    check("state: a clipped card never hides an error or check line",
+          "[error] keep me" in text and "[check] pass" in text, text[:200])
 
     check("loop: budget defaults", loop.Budget().max_steps == 200)
     check("config: mode is a loop name", config.MODE in ("state", "tool", "repl"))
@@ -227,6 +245,7 @@ def _cell_end_metrics(check) -> None:
             {"kind": "cell.end", "cell": 3, "tool": "edit", "ok": False,
              "code": "internal_error", "chars": 7, "duration_ms": 3, "notes": []},
             {"kind": "turn", "data": {"turn": 1, "calls": [{}, {}, {}],
+                                      "card_chars": 11, "card_budget": 6000,
                                       "observation": {"stdout": "a doc line: empty namespace",
                                                       "stderr": "", "restarted": False}}},
             {"kind": "turn", "data": {"turn": 2, "calls": [],
@@ -241,6 +260,9 @@ def _cell_end_metrics(check) -> None:
           and row["dupe_note_turn"] == 1, str(row)[:360])
     check("task_journal: restarts reads the observation boolean, not the phrase",
           row["restarts"] == 1, str(row)[:360])
+    check("task_journal: card_chars reports delivery against the turn budget",
+          row["card_chars"] == 11 and row["card_chars_per_turn"] == 6
+          and row["card_budget"] == 6000, str(row)[:360])
 
 
 def _worker_cell_end(check) -> None:
