@@ -41,12 +41,15 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the failure-mode evals (`bench/evals/`), archived legacy suites and results (`bench/archive/`) |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The action space is 20 typed
+The agent is a model in a loop with a **persistent Python kernel**. The action space is 21 typed
 tools generated from one registry (`bench/agent/verbs.py`): `guide`, `skill`, `map`, `read`,
-`session_diff`, `checks`, `revert_check`, `serve`, `status`, `search`, `recall`, `outline`, `edit`,
-`splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `code` is the orchestration cell
-(a python cell; `python` is its alias), not a verb. `run()` is a python-only helper, present in `repl`/`bare` modes and absent
-from typed modes.
+`session_diff`, `checks`, `revert_check`, `serve`, `status`, `search`, `recall`, `page`, `outline`,
+`edit`, `splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `run` stays in the registry as
+a python-only helper (never a provider tool); `limits.DEFAULT_TOOLS` is the production scope — every
+typed verb except the operational `serve`, plus `code`/`delegate`/`docs`/`plan`/`task` — and
+`CODE_TUI_ALLOWED_TOOLS` replaces that set (the only way to grant `serve`). `code` is the
+orchestration cell (a python cell; `python` is its alias), not a verb. `run()` is present in
+`repl`/`bare` modes and absent from typed modes.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install` in
 `tui/`.
@@ -98,10 +101,11 @@ These are architecture, not style. A change that breaks one is a regression even
 | `docs/README.md` | The trigger→file map for every document, and the one-owner/path rules the docs gate enforces |
 | `docs/run.md` | Invocation: gate ladder, expected exit codes, eval/workspace/TUI commands, knobs, gotchas |
 | `docs/architecture.md` | Runtime shape: tree kinds, one cell end to end, loops, paging, the check plan and compaction |
-| `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE), `prelude_setup.py` / `prelude_journal.py` / `prelude_index.py` / `prelude_read.py` / `prelude_verbs.py` (the five fragments), `run_prelude.py` (exec/git + gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
+| `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE), `prelude_setup.py` / `prelude_journal.py` / `prelude_index.py` / `prelude_read.py` / `prelude_verbs.py` (the five fragments), `run_prelude.py` (exec/git/serve + gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
 | `bench/agent/verbs.py` | The typed verb registry: name, schema, summary, `mutates`, implementing function. `tools.py` builds provider specs from it; the child receives it as `KERNEL_VERBS` |
 | `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `code` is the orchestration cell in `tool_loop.py`, `python` its alias |
 | `bench/agent/headers.py` | The header index (`index`, `guide`, `problems`). Shipped as source to every kernel child, so the CLI and the verb run the same code |
+| `bench/index.py` | The generated symbol index: `build(root)` plus the `--write`/`--check`/`--json` CLI for `agents.index.json` |
 | `bench/agent/state_loop.py` | The production loop: tool call → kernel cell → typed observation or state card, context compaction |
 | `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
 | `bench/agent/tool_loop.py` | The turn machine: `final_answer`, goal checks, stop reasons, call pairing, the unattended-ask gate |

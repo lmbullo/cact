@@ -338,14 +338,22 @@ the worker:
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API endpoint |
 | `CODE_TUI_MODEL` | `deepseek-flash` | Model name |
 | `CODE_TUI_EFFORT` | `low` | `reasoning_effort` (`none` disables it) |
-| `CODE_TUI_PROFILE` | `m3-plan` | Measured arm: `m3-plan` (python cell, fixed low, staged finish) or `current` (inline finish) |
+| `CODE_TUI_EFFORT_POLICY` | `fixed` | `adaptive` sends the effort only after a surprising turn; `fixed` always sends `CODE_TUI_EFFORT` |
+| `CODE_TUI_PROFILE` | `m3-plan` | Measured arm: `m3-plan` (python cell, fixed low, staged finish) or `current` (inline finish, task tool) |
 | `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–8) |
 | `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per reply (clamped to 393216) |
+| `CODE_TUI_MAX_CALLS_PER_TURN` | `8` | Tool calls one turn may carry |
+| `CODE_TUI_MAX_TURN_TOKENS` | `8192` | Completion-token ceiling for one turn; `0` uses the run's output cap |
+| `CODE_TUI_MAX_REPORT_CHARS` | `4000` | Final-report ceiling; the clip names the cut and points at the structured handoff |
+| `CODE_TUI_CODE_MODE` | `0` | `1` exposes the orchestration cell as `code` instead of `python` |
+| `CODE_TUI_INLINE_FINISH` | `0` | `1` accepts a passing silent `final_answer` in the same turn (`current` sets it) |
 | `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
 | `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `exec`, `git`, `run()` and runs the kernel under bwrap |
+| `CODE_TUI_ALLOW_EXEC` | `1` | `0` removes the `exec` verb from the scope (the `ALLOW_RUN` kernel gate is separate) |
+| `CODE_TUI_ALLOWED_TOOLS` | unset | Comma-separated tool names that replaces the default scope; the only way to grant `serve` |
 | `CODE_TUI_AUTONOMY` | `1` | `0` disables the unattended-ask gate (`NEEDS_INPUT`) |
 | `CODE_TUI_DOCS` | `1` | `0` removes the `docs(url)` documentation tool |
 | `CODE_TUI_SUBAGENTS` | unset | `1` exposes `delegate` with a read-only child loop |

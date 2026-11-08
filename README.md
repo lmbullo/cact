@@ -12,6 +12,7 @@ python3 bench/guide.py                  # module -> what it is (one line each)
 python3 bench/guide.py --query <topic>  # which module owns it
 python3 bench/guide.py --module <path>  # one header, whole
 python3 bench/guide.py --check          # gate: a module header is incomplete -> exit 1
+python3 bench/index.py --write          # regenerate the symbol index (gitignored)
 ```
 
 Inside a kernel cell the same data is `guide(query)` / `guide(path=[...])`; the list form returns

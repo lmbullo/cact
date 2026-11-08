@@ -16,7 +16,7 @@ not run this ladder by hand.
 |---|---|---|
 | `python3 bench/guide.py --check` | every module header has its four sections | exit 0 |
 | `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, the exec duplicate-verb note, apply/commit, recall across restart, envelopes, search/map paging, reply/check parsing, header index, entry-point accuracy, the journal metrics, document paths and one-owner prose, the fast eval subset, `guide()`, ruff | exit 0 |
+| `python3 bench/smoke.py` | the offline contract check: one group per area (the list is the module's own header), from the header/docs gates and the check plan through the kernel's files/verbs/gates, `revert_check`, `serve`, the finish handoff, the capability scope, the turn machine, the journal kinds and style | exit 0 |
 | `python3 bench/eval.py` | the 16 scripted loop contracts | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
@@ -33,6 +33,7 @@ python3 bench/guide.py --query checks
 python3 bench/guide.py --module bench/agent/check_plan.py
 python3 bench/guide.py --json --query checks
 python3 bench/guide.py --check
+python3 bench/index.py --write            # regenerate agents.index.json (gitignored)
 
 python3 bench/eval.py                      # 16 scripted loop contracts, no key, no network
 python3 bench/eval.py --list               # ids, kinds, failure tags

@@ -21,6 +21,7 @@ module under `bench/` and `tui/` with that line. What a header cannot say is whi
 | `bench/archive/results/traces/` | archived output | the recorded legacy traces and sweep summaries |
 | `bench/archive/results/ws/` | archived output | the old frozen TUI workspaces + `runs/` journals |
 | `bench/.tmp/`, `bench/.cache/` | output, gitignored | eval copies, LLM reply cache |
+| `agents.index.json` | output, gitignored | the symbol index `python3 bench/index.py --write` regenerates from the source headers |
 | `bench/archive/results/tmp/` | output, gitignored | scratch workspaces from the retired suites; the archived H3 CSV is likewise regenerated and ignored |
 | `tui/node_modules/`, TUI state root | output, gitignored | install tree, `~/.local/state/code-tui/` |
 
@@ -43,10 +44,11 @@ bench/eval.py                       tui/bin/code
                   ▼
         Kernel (subprocess, one per task)
           stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: guide/skill/map/read/session_diff/search/recall/outline/
-          │           edit/splice/write/delete/mkdir/apply + python helpers
-          │           guide/grep/recall/verbs/diff/changes/undo/commit/help, final_answer/emit
-          └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
+          ├─ PRELUDE: guide/skill/map/read/session_diff/checks/revert_check/
+          │           status/search/recall/page/outline, edit/splice/write/
+          │           delete/mkdir/apply + python helpers
+          │           guide/grep/recall/page/verbs/diff/changes/undo/commit/help, final_answer/emit
+          └─ RUN_PRELUDE: exec (argv/commands/shell) + git + serve; run() only in repl/bare
                   │
                   ▼
               the workspace
