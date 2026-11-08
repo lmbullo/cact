@@ -25,10 +25,12 @@
  *    marker on the right (keeps the palette calm and the row quiet).
  *  - The handle is the short `#suffix` of the task id; the full id stays in the state root
  *    and the HTTP API, where diagnosis needs it.
- *  - Telemetry (steps, tokens in/out, cache rate, wall time) is right-aligned and the prompt
- *    gives up room, so the eye can scan one column of numbers without the prompt jittering
- *    the layout. Every number comes from list-model.taskCounters/taskUsage, which is also
- *    what the log header formats: a row and a log cannot disagree about a task.
+ *  - Telemetry (steps, tokens in/out, the run's price, cache rate, wall time) is right-aligned
+ *    and the prompt gives up room, so the eye can scan one column of numbers without the prompt
+ *    jittering the layout. Every number comes from list-model.taskCounters/taskUsage/taskCost,
+ *    which is also what the log header formats: a row and a log cannot disagree about a task.
+ *  - A row is one line at any width: once the prompt is gone, the tail sheds its wall time (the
+ *    least load-bearing part) and then clips, so a 60-column frame never wraps a row.
  *  - The log header is the single source of the run's state: dot, word and handle come from
  *    `Task.status`, once. The log body never repeats them (log-view.isSilent) and the header
  *    does not repeat the prompt either — that block is the first thing in the log, in full.
@@ -158,12 +160,25 @@ export function TaskRow(props: {
   const progress = taskProgress(task);
   const age = taskDuration(task, now);
   const errors = task.errors && task.errors > 0 ? `${task.errors} err` : "";
-  const telemetry = [progress, age].filter(Boolean).join("  ");
-  const right = `${telemetry}${errors ? `  ${errors}` : ""}`;
   // The box pads one column each side, so the row shares `width - 2`:
   // `marker handle  prompt …    telemetry  errors`.
   const content = Math.max(0, width - 2);
   const lead = 1 + 1 + handle.length + 2; // marker, space, handle, two-space gap
+  const limit = Math.max(0, content - lead); // the most the tail may take, prompt or not
+  const errorPart = errors ? `  ${errors}` : "";
+  const telemetry = (withAge: boolean) =>
+    [progress, withAge ? age : ""].filter(Boolean).join("  ");
+  // The prompt gives up room first; on a frame too narrow even for that, the tail sheds the
+  // wall time before anything is clipped — one line at 60 columns, never a wrapped row.
+  // The error count rides only when the frame can hold it: at that width the counters are all
+  // that is left, and gluing a clipped `3 err` onto them would read as one number.
+  const errText = errorPart.length > limit ? "" : errorPart;
+  let shown = telemetry(Boolean(age));
+  if (shown.length + errText.length > limit && age) shown = telemetry(false);
+  if (shown.length + errText.length > limit) {
+    shown = clip(shown, Math.max(0, limit - errText.length));
+  }
+  const right = `${shown}${errText}`;
   const room = content - lead - right.length - 1; // one column of air before the numbers
   const prompt = room >= 6 ? clip(task.prompt, room) : "";
   const fill = Math.max(0, content - lead - prompt.length - right.length);
@@ -177,8 +192,8 @@ export function TaskRow(props: {
         <span fg={selected ? C.faint : C.quiet}>{` ${handle}  `}</span>
         <span fg={selected ? C.text : C.dim}>{prompt}</span>
         <span>{" ".repeat(fill)}</span>
-        <span fg={C.quiet}>{telemetry}</span>
-        {errors ? <span fg={C.red}>{`  ${errors}`}</span> : null}
+        <span fg={C.quiet}>{shown}</span>
+        {errText ? <span fg={C.red}>{errText}</span> : null}
       </text>
     </box>
   );
@@ -192,13 +207,13 @@ export function TaskRow(props: {
  * journal failed — the check's name and the first failing line of its output, clipped. A live
  * task has no stop reason yet, so its line keeps exactly the shape it had before this existed.
  *
- * The live counters (steps, tokens in/out, duration, cache hit rate, context window) sit on the
- * right and are the only place those numbers are printed — the log body never repeats them and
- * the board row formats the same `taskCounters` parts. The prompt is not repeated (the log
- * opens with it in full), and `esc/enter: back` is never dropped — a log you cannot leave is a
- * trap. The extras are dropped from the tail as the terminal narrows, so the order is by
- * priority: the reason is fixed, the failing check keeps a third of the line, then the hint,
- * then the counters from the tail.
+ * The live counters (steps, tokens in/out, the run's price, duration, cache hit rate, context
+ * window) sit on the right and are the only place those numbers are printed — the log body
+ * never repeats them and the board row formats the same `taskCounters` parts. The prompt is not
+ * repeated (the log opens with it in full), and `esc/enter: back` is never dropped — a log you
+ * cannot leave is a trap. The extras are dropped from the tail as the terminal narrows, so the
+ * order is by priority: the reason is fixed, the failing check keeps a third of the line, then
+ * the hint, then the counters from the tail.
  */
 export function LogHeader(props: {
   task: Task;
@@ -213,8 +228,8 @@ export function LogHeader(props: {
   const handlePart = `  #${taskHandle(task.id)}`;
   const essential = "esc/enter: back";
   const counters = taskCounters(task);
-  // Steps and tokens, then the clock, then cache and context: what a narrow frame drops is
-  // always the tail of that list, never the counters that move.
+  // Steps and tokens, then the clock, then price, cache and context: what a narrow frame drops
+  // is always the tail of that list, never the counters that move.
   const extras = [
     ...counters.slice(0, 2),
     taskDuration(task, now),

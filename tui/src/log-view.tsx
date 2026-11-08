@@ -23,7 +23,7 @@
  *    `Task.status` live. The body never repeats it — no lifecycle row, no second status word on
  *    the final block — so the screen cannot show `queue` and `queued` at once, or keep a stale
  *    `queued` above a run that has moved on.
- *  - The header also owns the live counters (steps, tokens in/out, cache rate, context
+ *  - The header also owns the live counters (steps, tokens in/out, price, cache rate, context
  *    window, duration) and, once the run has settled, how it ended: the stop reason, the error
  *    count and the last failed check. The closing block therefore carries only the cell count —
  *    one fact, one place.

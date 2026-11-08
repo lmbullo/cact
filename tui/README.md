@@ -31,6 +31,8 @@ interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).
   `@@TUI@@`-prefixed JSON lines. It also prepends a short history of previous tasks in the same
   workspace (files they changed, one line each) as `[workspace history]`.
 - `list-model.ts` is the pure ordering/row/scroll model.
+- `pricing.ts` is the one USD table and the one cost calculation (`cost`/`formatCost`) the board
+  row and the log header both print.
 - `worker-events.ts` turns one `@@TUI@@` worker line into one journal event (the stateless kinds;
   `turn`/`error`/`final` mutate the task and stay in `server.ts`).
 - `clipboard.ts` owns the one write to the user's clipboard: host clipboard first, OSC 52
@@ -73,16 +75,20 @@ light, translucent — and only the ink is fixed. The screen is a masthead, the 
 hairline and the prompt; nothing is boxed, nothing is filled.
 
 One row per task: a `›` selection marker, the task's short handle (`#4f7c1`), the prompt, then
-right-aligned telemetry — `steps`, tokens in and out, the prompt-cache hit rate — and the wall
-time. Tokens read `↑in ↓out` (prompt, then completion) and the cache part is the fraction of
-prompt tokens the provider served from its own cache. A row whose task recorded errors appends
-`N err` in clay after the time. Every number comes from one place, `list-model.taskUsage`:
-counters come from turn events (`Task.progress`) while the task runs, and a finished row falls
-back to the final `steps`/`usage` totals and its recorded span. The context window (`ctx`) is
-the log header's alone — a row has no room for it and would repeat the same fill twice. Row id
-is `t-<base36 timestamp>-<5 hex>`; the row shows only its last segment (`#4f7c1`) because the
-timestamp half is already implied by the order. The full id stays in `tasks/<id>.json` and
-`GET /api/tasks`.
+right-aligned telemetry — `steps`, tokens in and out, the run's price — and the wall time.
+Tokens read `↑in ↓out` (prompt, then completion) and the cache part is the fraction of prompt
+tokens the provider served from its own cache. The price is what the run cost in USD: `$0.07`
+with two decimals, `<$0.01` under a cent, computed by `pricing.ts` from the same usage split
+(cache-hit, cache-miss and output tokens are priced separately, and a run with no cache counters
+has all its input priced as a miss). That table is the only place a price exists: a model it
+does not list keeps its token count alone, with no guessed figure. A row whose task recorded
+errors appends `N err` in clay after the time. Every number comes from one place,
+`list-model.taskUsage`: counters come from turn events (`Task.progress`) while the task runs,
+and a finished row falls back to the final `steps`/`usage` totals and its recorded span. The
+context window (`ctx`) is the log header's alone — a row has no room for it and would repeat
+the same fill twice. Row id is `t-<base36 timestamp>-<5 hex>`; the row shows only its last
+segment (`#4f7c1`) because the timestamp half is already implied by the order. The full id
+stays in `tasks/<id>.json` and `GET /api/tasks`.
 
 The masthead is the same on both screens: a `▌ code` brand, the workspace with `$HOME`
 shortened to `~`, then the model, effort and the running count on the right. It reads `offline`
@@ -96,7 +102,7 @@ One blank row follows it, so the list starts with air rather than against a bar.
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
  ● running  1
- › #4f7c1  add a retry to fetch          3 steps · ↑12.4k ↓1.2k · 62% cache  11s
+ › #4f7c1  add a retry to fetch     3 steps · ↑421k ↓8.0k · $0.07 · 62% cache  11s
 
  ○ queue  1
    #1a9de  write tests for the parser
@@ -122,10 +128,12 @@ tasks sorted again, never a write to the server, so a snapshot or a task update 
 reader's choice. While it is not the default the hairline prints `order: <word>`. A band is a
 dot, its word and its count — no rule and no column of dashes: the blank row between bands is
 what separates them, and a row never repeats the status word its section already said. Telemetry
-is right-aligned and the prompt gives up room first, so steps, tokens and wall time form one
-readable column. Two numbers on a row never describe the same thing: `↑` is prompt tokens, `↓`
-completion tokens, `% cache` the hit rate, and none of them is a copy of another. A running
-row's wall time ticks once a second; an idle board does not re-render.
+is right-aligned and the prompt gives up room first, so steps, tokens, price and wall time form
+one readable column. Two numbers on a row never describe the same thing: `↑` is prompt tokens,
+`↓` completion tokens, `% cache` the hit rate, `$` the run's USD, and none of them is a copy of
+another. When the frame is too narrow even for an empty prompt, the row sheds its wall time and
+then clips: it never wraps. A running row's wall time ticks once a second; an idle board does
+not re-render.
 
 | State | Section label | Dot | Colour |
 |---|---|---|---|
@@ -177,7 +185,7 @@ as journal history; they are not rendered.
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
- ● running  #4f7c1        esc/enter: back · 3 steps · ↑12.4k ↓1.2k · 11s · 62% cache · ctx 421k/1.0M
+ ● running  #4f7c1        esc/enter: back · 3 steps · ↑421k ↓8.0k · 11s · $0.07 · 62% cache · ctx 421k/1.0M
 
     0ms ▸ prompt  deepseek-flash · low
 
@@ -217,7 +225,7 @@ output, clipped to whatever the line has left. A check that passed adds nothing.
 running task has no stop reason yet, so it prints none of this and its counters do not move.
 
 ```
-  ✓ done  #4f7c1  DONE   esc/enter: back · 7 steps · ↑12.4k ↓1.2k · 11s · 62% cache
+  ✓ done  #4f7c1  DONE   esc/enter: back · 7 steps · ↑12.4k ↓1.2k · 11s · <$0.01 · 62% cache
   ✖ failed  #9a2b0  GOAL_UNMET  typecheck: src/client.test.tsx(12,17): error TS2304: …  esc/enter: back
 ```
 
@@ -226,14 +234,16 @@ give way (from the tail) rather than the verdict. At 60 columns the same line is
 `✖ failed  #9a2b0  GOAL_UNMET  typecheck: src… esc/enter: back`: still one row, still clipped.
 
 Those counters are the log's data row, and the only one. Left to right: turns taken, tokens in
-and out (`↑` prompt, `↓` completion, both summed over turns), the wall time, the prompt-cache
-hit rate and the context window as `ctx <latest prompt>/<window>` — that last one is the size of
-the conversation the model had to carry, not a sum, so it is read from the newest turn. They
-are derived once, by `list-model.taskUsage`, from `Task.progress` while the run streams and from
-the final `steps`/`usage` after it; `list-model.foldTurn` is what server.ts folds each turn's
-provider usage into, and the closing context is kept on the task when `progress` is cleared.
-Nothing else on the log prints a counter — not a tool row, not the summary block — so a number
-can never appear twice or mean two things.
+and out (`↑` prompt, `↓` completion, both summed over turns), the wall time, the run's price
+(the same `pricing.ts` figure the board row prints — cache hit, miss and output priced
+separately), the prompt-cache hit rate and the context window as `ctx <latest prompt>/<window>`
+— that last one is the size of the conversation the model had to carry, not a sum, so it is read
+from the newest turn. They are derived once, by `list-model.taskUsage`, from `Task.progress`
+while the run streams and from the final `steps`/`usage` after it; `list-model.foldTurn` is what
+server.ts folds each turn's provider usage into, and the closing context is kept on the task when
+`progress` is cleared. Nothing else on the log prints a counter — not a tool row, not the summary
+block — so a number can never appear twice or mean two things. As the line narrows the tail gives
+way in that order, so a price survives longer than the cache rate beside it.
 
 A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
 A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
@@ -251,8 +261,9 @@ one blank row and the agent's whole summary — paragraph breaks and bullets inc
 word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
 `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped. The head
 carries only what the status line cannot: the cell count. The stop reason, the error count, the
-failed check, the status word, the steps, the tokens, the cache rate, the context window and the
-wall time all live up there; the closing marker only borrows the run's status colour.
+failed check, the status word, the steps, the tokens, the price, the cache rate, the context
+window and the wall time all live up there; the closing marker only borrows the run's status
+colour.
 
 The log opens with the same block shape, upside: a head row (`0ms ▸ prompt`, the model in the
 quiet tail) and the prompt wrapped into the same four-column indent, so the start and the finish
@@ -457,8 +468,9 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 ```bash
 bun run typecheck   # tsc --noEmit
 bun test            # 0 fail over tests/: list, log, progress, prompt, views, selection,
-                    # order, auto-view, detect-checks, scroll, theme helpers, stale sources,
-                    # worker events, board and log frames; React act(...) warnings are expected noise
+                    # order, auto-view, detect-checks, scroll, theme helpers, pricing, stale
+                    # sources, worker events, board and log frames; React act(...) warnings are
+                    # expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

@@ -225,7 +225,10 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(header).toContain("DONE");
   expect(header).toContain("7 steps");
   expect(header).toContain("↑3.6k ↓610");
-  expect(header).toContain("83% cache");
+  // The price claims the room the cache rate used to have at 80 columns: the tail still gives
+  // way, and the number that moves (steps, tokens, price) is kept before the rate.
+  expect(header).toContain("<$0.01");
+  expect(header).not.toContain("83% cache");
   // One status word on the whole log: the header's.
   expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
   const finalLine = finalRows.find((line) => line.includes("▸ summary"))!;

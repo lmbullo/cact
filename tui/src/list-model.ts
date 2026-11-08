@@ -25,7 +25,8 @@
  *  taskUsage(task)                      the task's numbers: live `progress`, else `usage`
  *  foldTurn(previous, turn, data)       one turn event folded into the live `progress`
  *  formatTokens(count)                  `950`, `4.2k`, `12k`, `1.0M`
- *  taskCounters(task)                   `3 steps`, `↑4.2k ↓310`, `62% cache`, `ctx 4.2k/1.0M`
+ *  taskCounters(task)                   `3 steps`, `↑4.2k ↓310`, `$0.07`, `62% cache`, `ctx 4.2k/1.0M`
+ *  taskCost(task)                       the task's price as a row part (`$0.07`), "" when unpriced
  *  taskProgress(task)                   the board row's tail: the counters and the cache rate
  *  taskDuration(task, now)              live/final wall time label ("" until it starts)
  *  isFinishedStatus(status)             true once a task can no longer emit turns
@@ -40,7 +41,9 @@
  *  - `order === "status"` is the default board: live work first, oldest task first in a band.
  *  - `taskUsage` is the only place a counter is read: the board row, the log header and the
  *    closing block all format what it returns, so two views cannot print different steps,
- *    tokens, cache rate or context for the same task.
+ *    tokens, price, cache rate or context for the same task.
+ *  - The price is not a counter: `taskCost` asks pricing.ts for it, and both views get it from
+ *    `taskCounters`, so the USD table and its one format stay in that module.
  *  - Live `progress` wins only while it exists; the server clears it with the `final` event,
  *    so a stale estimate can never outrank the final `steps`/`usage`.
  *  - `scrollWindow` never returns a negative start and never exceeds rowCount.
@@ -61,6 +64,7 @@
  *  Auto-advance targets ......... isFinishedStatus, nextRunningTaskId
  */
 import type { Task, TaskStatus } from "./types";
+import { cost, formatCost } from "./pricing";
 import { elapsed } from "./theme";
 
 /** Section order: live work first, then finished work; oldest first inside a section. */
@@ -195,6 +199,26 @@ export function taskUsage(task: Task): TaskUsage {
   };
 }
 
+/**
+ * The task's price as a row part (`$0.07`, `<$0.01` under a cent), or "" when its model has no
+ * published price — pricing.ts owns the table and the format, this only feeds it the usage the
+ * row already derived. A missing cache split is priced as a miss there.
+ */
+export function taskCost(task: Task): string {
+  const usage = taskUsage(task);
+  return formatCost(
+    cost(
+      {
+        prompt_cache_hit_tokens: usage.cacheHit,
+        prompt_cache_miss_tokens: usage.cacheMiss,
+        prompt_tokens: usage.tokensIn,
+        completion_tokens: usage.tokensOut,
+      },
+      task.model,
+    ),
+  );
+}
+
 /** A count in the width a terminal row can spare: `950`, `4.2k`, `12k`, `1.0M`. */
 export function formatTokens(value: number): string {
   if (value < 1000) return String(Math.round(value));
@@ -205,8 +229,9 @@ export function formatTokens(value: number): string {
 
 /**
  * The counters one task reports, as separate parts so a narrow frame can drop the tail
- * instead of losing the whole label: steps, tokens in/out, cache hit rate, context window.
- * A part is omitted when its number is unknown, never printed as a zero place-holder.
+ * instead of losing the whole label: steps, tokens in/out, price, cache hit rate, context
+ * window. A part is omitted when its number is unknown, never printed as a zero place-holder;
+ * the price follows the tokens it is computed from.
  */
 export function taskCounters(task: Task): string[] {
   const usage = taskUsage(task);
@@ -219,6 +244,8 @@ export function taskCounters(task: Task): string[] {
     .filter(Boolean)
     .join(" ");
   if (tokens) parts.push(tokens);
+  const price = taskCost(task);
+  if (price) parts.push(price);
   const cached = (usage.cacheHit ?? 0) + (usage.cacheMiss ?? 0);
   if (cached > 0) parts.push(`${Math.round(((usage.cacheHit ?? 0) / cached) * 100)}% cache`);
   if (usage.context !== undefined) {

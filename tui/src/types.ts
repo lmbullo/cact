@@ -80,6 +80,7 @@ export type Task = {
   errors?: number;
   wallMs?: number;
   usage?: Record<string, number>;
+  /** The model the server ran this task on, as `ServerInfo.model` had it; pricing.ts prices it. */
   model?: string;
   effort?: string;
   cancelRequested?: boolean;

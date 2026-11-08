@@ -76,7 +76,7 @@ test("taskCounters derives in/out tokens, cache rate and context from one place"
       window: 1_048_576,
     },
   };
-  expect(taskCounters(live)).toEqual(["3 steps", "↑4.2k ↓310", "81% cache", "ctx 4.2k/1.0M"]);
+  expect(taskCounters(live)).toEqual(["3 steps", "↑4.2k ↓310", "<$0.01", "81% cache", "ctx 4.2k/1.0M"]);
 
   // A finished task falls back to the final counters, which are the same numbers: totals over
   // turns for tokens and the cache split, the kept last-turn context for the window.
@@ -102,12 +102,13 @@ test("taskCounters derives in/out tokens, cache rate and context from one place"
     context: 4210,
     window: 1_048_576,
   });
-  expect(taskCounters(done)).toEqual(["7 steps", "↑9.0k ↓450", "67% cache", "ctx 4.2k/1.0M"]);
+  // The price follows the tokens it is computed from, before the cache rate and the context.
+  expect(taskCounters(done)).toEqual(["7 steps", "↑9.0k ↓450", "<$0.01", "67% cache", "ctx 4.2k/1.0M"]);
 
   // Nothing known prints nothing: no `0 steps`, no `0% cache`.
   expect(taskCounters(base)).toEqual([]);
   // A cache split where nothing was cached is still a rate.
-  expect(taskCounters({ ...base, progress: { cacheHit: 0, cacheMiss: 100 } })).toEqual(["0% cache"]);
+  expect(taskCounters({ ...base, progress: { cacheHit: 0, cacheMiss: 100 } })).toEqual(["<$0.01", "0% cache"]);
   // A context with no window reports the fill alone.
   expect(taskCounters({ ...base, progress: { context: 900 } })).toEqual(["ctx 900"]);
 });
