@@ -47,7 +47,7 @@
  *    or queues anything, and every interaction (`bumpActivity`) restarts its idle clock. The
  *    idle clock is keyed to the open task's id/status, not to its streaming counters, so a
  *    live task update cannot keep postponing (or trigger) the move.
- *  - `server.stale` is read-only truth from the snapshot: the server re-hashes its own two files
+ *  - `server.stale` is read-only truth from the snapshot: the server re-hashes its own files
  *    and this screen only repeats it. The masthead says `stale` (one word, beside `offline`);
  *    the hairline names the fix, `bin/code-stop`, because nothing in the client can reload a
  *    detached process. There is no polling here: the snapshot on connect is enough.

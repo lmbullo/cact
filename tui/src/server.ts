@@ -22,9 +22,11 @@
  *  - One `python/worker.py` process per task, never a shared one. Concurrency is
  *    CODE_TUI_CONCURRENCY (1-8); pump() starts queued tasks while slots are free.
  *  - The worker speaks `@@TUI@@`-prefixed JSON lines on stdout. handleWorkerLine() is the
- *    only parser; any other line becomes a `log` event. Message shape lives in
- *    tui/python/worker.py. `cell.start`/`cell.end` are journal history only (`cell.end` is
- *    the compact per-call result task_journal reads); `turn` and `final` drive live state, and
+ *    only reader; it parses through worker-events.ts, whose journalWorkerEvent() maps the
+ *    stateless kinds (`cell.start`, `cell.end`, `check`, `log`, unknown) to one journal line and
+ *    any other line becomes a `log` event. Message shape lives in tui/python/worker.py.
+ *    `cell.start`/`cell.end` are journal history only (`cell.end` is the compact per-call result
+ *    task_journal reads); `turn` and `final` drive live state, and
  *    `check` is journaled as its own event so the log header can name a failed verification
  *    without re-running it.
  *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
@@ -47,15 +49,16 @@
  *    <json>` and is published in ServerInfo.checks; `cheap` entries become the agent's
  *    post-mutation health check and `scope` keeps a health run to specs whose paths changed.
  *    The goal runs the whole plan without a paths filter.
- *  - Only this file and detect-checks.ts can go stale under a live pid: they are what the
- *    detached process imported once. source-hash.ts fingerprints them at boot into
- *    ServerInfo.source, and every /health and snapshot read re-hashes the same two files (at
+ *  - Only this file, worker-events.ts and detect-checks.ts can go stale under a live pid: they
+ *    are what the detached process imported once. source-hash.ts fingerprints them at boot into
+ *    ServerInfo.source, and every /health and snapshot read re-hashes the same files (at
  *    most once every SOURCE_RECHECK_MS) for `stale` and `changed`. A missing file counts as
  *    changed. Fixing it means a restart, so nothing here tries to reload.
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask
- *  Worker message handling ............... handleWorkerLine (live progress in the `turn` case)
+ *  Worker message handling ............... handleWorkerLine; the stateless kinds journal
+ *                                          through worker-events.ts::journalWorkerEvent
  *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
  *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
  *  Verification plan detection .......... detect-checks.ts, and ServerInfo.checks
@@ -75,15 +78,15 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CheckSpec, ServerInfo, Snapshot, Task, TaskEvent, WorkerMessage } from "./types";
+import type { CheckSpec, ServerInfo, Snapshot, Task, TaskEvent } from "./types";
 import { foldTurn } from "./list-model";
 import { detectChecks } from "./detect-checks";
 import { bootSource, compareSource } from "./source-hash";
+import { capString, capValue, journalWorkerEvent, parseWorkerLine } from "./worker-events";
 
 const VERSION = "0.1.0";
 const ROOT = resolve(import.meta.dir, "..");
 const WORKER = join(ROOT, "python", "worker.py");
-const EVENT_PREFIX = "@@TUI@@";
 
 function arg(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -219,23 +222,6 @@ function saveTask(task: Task): void {
   renameSync(tmp, file);
 }
 
-function capString(value: unknown, limit: number): unknown {
-  return typeof value === "string" && value.length > limit ? `${value.slice(0, limit)}\n… truncated` : value;
-}
-
-function capValue(value: any, depth = 0): any {
-  if (depth > 12) return "[depth]";
-  if (typeof value === "string") return capString(value, 16000);
-  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
-  if (Array.isArray(value)) return value.slice(0, 40).map((item) => capValue(item, depth + 1));
-  if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value)) out[key] = capValue(item, depth + 1);
-    return out;
-  }
-  return String(value);
-}
-
 function appendEvent(task: Task, partial: Omit<TaskEvent, "seq" | "ts">): TaskEvent {
   const event: TaskEvent = { seq: nextSeq(), ts: Date.now(), ...partial };
   try {
@@ -312,43 +298,13 @@ async function readWorkerStream(stream: ReadableStream<Uint8Array>, onLine: (lin
 
 function handleWorkerLine(task: Task, raw: string): void {
   const line = raw.trimEnd();
-  if (!line.startsWith(EVENT_PREFIX)) {
-    appendEvent(task, { kind: "log", text: capString(line, 3000) as string });
-    return;
-  }
-  let message: WorkerMessage;
-  try {
-    message = JSON.parse(line.slice(EVENT_PREFIX.length)) as WorkerMessage;
-  } catch {
+  const message = parseWorkerLine(line);
+  if (!message) {
     appendEvent(task, { kind: "log", text: capString(line, 3000) as string });
     return;
   }
 
   switch (message.kind) {
-    case "cell.start":
-      appendEvent(task, {
-        kind: "cell.start",
-        cell: message.cell,
-        tool: message.tool,
-        args: capValue(message.args ?? {}) as Record<string, unknown>,
-        code: message.code ? (capString(message.code, 12000) as string) : undefined,
-      });
-      break;
-    case "cell.end":
-      // Journal history only: one compact record per call for task_journal. No payload body.
-      appendEvent(task, {
-        kind: "cell.end",
-        cell: message.cell,
-        tool: message.tool,
-        ok: message.ok,
-        verb_kind: message.verb_kind,
-        code: message.code,
-        page: message.page ?? null,
-        chars: message.chars,
-        duration_ms: message.duration_ms,
-        notes: (message.notes ?? []).map((note) => capString(note, 500) as string),
-      });
-      break;
     case "turn": {
       const data = capValue(message.data) as Record<string, unknown>;
       // Live progress: the final event carries the authoritative counters, but a running
@@ -365,21 +321,6 @@ function handleWorkerLine(task: Task, raw: string): void {
       });
       break;
     }
-    case "check":
-      // The verdict rides its own event so the log header can name a failed check from the
-      // journal alone: the turn that caused it says only pass/fail. Capped like any payload.
-      appendEvent(task, {
-        kind: "check",
-        check: {
-          ok: Boolean(message.ok),
-          name: String(capString(message.name ?? "", 200)),
-          line: String(capString(message.line ?? "", 600)),
-        },
-      });
-      break;
-    case "log":
-      appendEvent(task, { kind: "log", text: capString(message.text, 4000) as string });
-      break;
     case "error":
       task.error = String(capString(message.text, 8000));
       appendEvent(task, { kind: "error", text: task.error });
@@ -415,7 +356,9 @@ function handleWorkerLine(task: Task, raw: string): void {
       });
       break;
     default:
-      appendEvent(task, { kind: "log", text: line.slice(0, 3000) });
+      // cell.start / cell.end / check / log / a kind this server does not know: one journal
+      // record and no task state, so the mapping lives in worker-events.ts with its own test.
+      journalWorkerEvent(message, line, (partial) => appendEvent(task, partial));
   }
 }
 
@@ -489,14 +432,10 @@ function startTask(task: Task): void {
   running.set(task.id, runtime);
   let finalStatus: "done" | "partial" | "failed" | undefined;
   const handle = (line: string) => {
-    if (line.startsWith(EVENT_PREFIX)) {
-      try {
-        const msg = JSON.parse(line.slice(EVENT_PREFIX.length)) as WorkerMessage;
-        if (msg.kind === "final") finalStatus = msg.status;
-      } catch {
-        // handleWorkerLine will report it as a log line
-      }
-    }
+    // A `final` verdict decides the task's status once the process exits; handleWorkerLine owns
+    // the journal, and reports a line it cannot parse as a log line.
+    const message = parseWorkerLine(line);
+    if (message?.kind === "final") finalStatus = message.status;
     handleWorkerLine(task, line);
   };
   const handleStderr = (line: string) => {

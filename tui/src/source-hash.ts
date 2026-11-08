@@ -2,20 +2,22 @@
  * source-hash.ts: is the running server the code the tree holds?
  *
  * WHAT IT IS
- *  The fingerprint of the two files the detached server imports once at boot
- *  (`src/server.ts`, `src/detect-checks.ts`) and the comparison a later read makes against it.
- *  `client.tsx` and the rest are re-imported by every `code` launch, and `bench/**` plus
- *  `python/worker.py` by every task's worker, so only these two can go stale under a live pid.
+ *  The fingerprint of the files the detached server imports once at boot
+ *  (`src/server.ts`, `src/worker-events.ts`, `src/detect-checks.ts`) and the comparison a later
+ *  read makes against it. `client.tsx` and the rest are re-imported by every `code` launch, and
+ *  `bench/**` plus `python/worker.py` by every task's worker, so only these can go stale under a
+ *  live pid.
  *
  * ENTRY POINTS
- *  SOURCE_FILES                  the files a running server cannot re-read: server.ts, detect-checks.ts
+ *  SOURCE_FILES                  the files a running server cannot re-read: server.ts,
+ *                                worker-events.ts, detect-checks.ts
  *  bootSource(root, files, now)  boot: {source: {hash, files, hashedAt}, hashes}
  *  compareSource(root, boot)     read time: {stale, changed}; a missing file counts as changed
  *  fileHash(root, file)          one file's sha256, or "missing"
  *  combineHash(files, hashes)    the one digest that stands for the whole set
  *
  * INVARIANTS
- *  - Two files, ~10KB: the read-time comparison is cheap enough to run on a `/health`, but the
+ *  - Three files, ~15KB: the read-time comparison is cheap enough to run on a `/health`, but the
  *    caller still throttles it (server.ts: at most once every 2s).
  *  - Paths are relative to `root` (the `tui/` directory) and are exactly what `changed` reports,
  *    so the board can name the file without a second lookup.
@@ -37,7 +39,7 @@ import { join } from "node:path";
 import type { SourceFingerprint } from "./types";
 
 /** The files the detached server imported at boot and will never re-import by itself. */
-export const SOURCE_FILES: string[] = ["src/server.ts", "src/detect-checks.ts"];
+export const SOURCE_FILES: string[] = ["src/server.ts", "src/worker-events.ts", "src/detect-checks.ts"];
 
 /** The literal both sides use for a file that could not be read, so equality stays meaningful. */
 const MISSING = "missing";

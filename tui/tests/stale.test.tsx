@@ -3,10 +3,10 @@
  *
  * WHAT IT IS
  *  Two halves of the same signal. `bootSource`/`compareSource` are exercised against a temporary
- *  copy of the two files a detached server imports (`src/server.ts`, `src/detect-checks.ts`), so
- *  the fingerprint can be flipped without touching the real tree; `TopBar` is rendered at 60 and
- *  80 columns to prove the `stale` word joins the masthead's right-hand bits without dropping
- *  `offline` and without turning one row into two.
+ *  copy of the files a detached server imports (`src/server.ts`, `src/worker-events.ts`,
+ *  `src/detect-checks.ts`), so the fingerprint can be flipped without touching the real tree;
+ *  `TopBar` is rendered at 60 and 80 columns to prove the `stale` word joins the masthead's
+ *  right-hand bits without dropping `offline` and without turning one row into two.
  *
  * ENTRY POINTS
  *  bootSource / compareSource / SOURCE_FILES from ../src/source-hash; TopBar from ../src/board-view

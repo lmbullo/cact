@@ -31,6 +31,8 @@ interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).
   `@@TUI@@`-prefixed JSON lines. It also prepends a short history of previous tasks in the same
   workspace (files they changed, one line each) as `[workspace history]`.
 - `list-model.ts` is the pure ordering/row/scroll model.
+- `worker-events.ts` turns one `@@TUI@@` worker line into one journal event (the stateless kinds;
+  `turn`/`error`/`final` mutate the task and stay in `server.ts`).
 - `clipboard.ts` owns the one write to the user's clipboard: host clipboard first, OSC 52
   fallback; a remote terminal uses OSC 52 only.
 - The server broadcasts task updates and events over WebSocket; the TUI keeps only in-memory
@@ -86,7 +88,8 @@ The masthead is the same on both screens: a `▌ code` brand, the workspace with
 shortened to `~`, then the model, effort and the running count on the right. It reads `offline`
 in red while the socket is down, `idle` when the board is empty, and `stale` last in the same
 red when the last snapshot said this server is running older code than the tree (`source-hash.ts`:
-the two files the detached process imported at boot, `src/server.ts` and `src/detect-checks.ts`).
+the files the detached process imported at boot, `src/server.ts`, `src/worker-events.ts` and
+`src/detect-checks.ts`).
 One blank row follows it, so the list starts with air rather than against a bar.
 
 ```
@@ -391,19 +394,21 @@ Cancelling a queued task marks it `cancelled` immediately. Cancelling a running 
 Every `ServerInfo` also carries the code the process booted with:
 
 ```json
-"source": { "hash": "a7a8dba4d38442c9", "files": ["src/server.ts", "src/detect-checks.ts"],
+"source": { "hash": "a7a8dba4d38442c9",
+            "files": ["src/server.ts", "src/worker-events.ts", "src/detect-checks.ts"],
             "hashedAt": 1794104821079 },
 "stale": true,
 "changed": ["src/server.ts"]
 ```
 
 `source` is written once at boot, beside `pid` and `startedAt`. `stale` and `changed` are measured
-on every `/health`, `/api/snapshot` and WebSocket-snapshot read by re-hashing those two files, at
+on every `/health`, `/api/snapshot` and WebSocket-snapshot read by re-hashing those files, at
 most once every 2 seconds, so they describe the running process and not the tree in general. Only
-`src/server.ts` and `src/detect-checks.ts` are covered: `client.tsx` is re-imported by every `code`
-launch and `bench/**` plus `python/worker.py` by every task's worker, so nothing else can be stale
-under a live pid. A missing file counts as changed. The cure is `bin/code-stop`, then `code`:
-there is no reload path, and a running server never re-imports itself.
+the server's own modules — `src/server.ts`, `src/worker-events.ts`, `src/detect-checks.ts` — are
+covered: `client.tsx` is re-imported by every `code` launch and `bench/**` plus `python/worker.py`
+by every task's worker, so nothing else can be stale under a live pid. A missing file counts as
+changed. The cure is `bin/code-stop`, then `code`: there is no reload path, and a running server
+never re-imports itself.
 
 ## 9. Events and statuses
 
@@ -415,11 +420,13 @@ the log status line render, so the TUI draws them nowhere. `turn` (with a `notic
 `stderr`, `error` and `final` are what the log body shows. `cell.start` is the call about to
 run; `cell.end` is its compact result for analysis — `{cell, tool, ok, verb_kind, code, page,
 chars, duration_ms, notes}` with no payload body — and `bench/task_journal.py` prefers it for
-`obs_chars`, `rejected` and `dupe_note_turn`. `check` is one verification run —
-`{ok, name, line}`, where `name` is the plan entry (`typecheck`, `test`, ...) and `line` is the
-first failing line of its output (empty on a pass); `python/worker.py` emits it right after the
-`turn` whose record carried a verdict, so the log status line names a failed check from the
-newest `check` event without re-running anything. `turn` keeps its existing shape (its
+`obs_chars`, `rejected` and `dupe_note_turn`. The mapping from a worker message to its line is
+`src/worker-events.ts` (`journalWorkerEvent`), so one `cell.end` message is one event by
+construction, and a kind it does not know falls back to a `log` of the raw line. `check` is one
+verification run — `{ok, name, line}`, where `name` is the plan entry (`typecheck`, `test`, ...)
+and `line` is the first failing line of its output (empty on a pass); `python/worker.py` emits it
+right after the `turn` whose record carried a verdict, so the log status line names a failed check
+from the newest `check` event without re-running anything. `turn` keeps its existing shape (its
 `data.check` is still the bare `{ok, cmd}`), so a client that predates `cell.end` or `check`
 still reads every run. Payloads are capped before storage: strings at 16000 chars, arrays at 40
 items, nesting at depth 12 (`[depth]` marks the cut), so nested call arguments survive and one
@@ -451,7 +458,7 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 bun run typecheck   # tsc --noEmit
 bun test            # 0 fail over tests/: list, log, progress, prompt, views, selection,
                     # order, auto-view, detect-checks, scroll, theme helpers, stale sources,
-                    # board and log frames; React act(...) warnings are expected noise
+                    # worker events, board and log frames; React act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

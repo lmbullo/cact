@@ -26,7 +26,7 @@
  *    the three of them and nothing else about how a run ended.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
- *  - `ServerInfo.source` is the boot fingerprint of the two files the detached server imported
+ *  - `ServerInfo.source` is the boot fingerprint of the files the detached server imported
  *    (source-hash.ts); `stale`/`changed` are measured on each read, never stored, so a reader can
  *    tell a running process from the tree on disk.
  *  - `CheckSpec` mirrors `bench.agent.check_plan.CheckSpec`: {name, cmd, cheap, scope?}, where
@@ -38,7 +38,7 @@
  *  The journal line shape ......... TaskEvent
  *  A verification verdict ......... CheckState
  *  The detection plan ............ CheckSpec; detectChecks in detect-checks.ts
- *  A worker message .............. WorkerMessage + handleWorkerLine in server.ts
+ *  A worker message .............. WorkerMessage + journalWorkerEvent in worker-events.ts
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 
@@ -119,8 +119,9 @@ export type TaskEvent = {
 
 /**
  * The server's own source at boot: the files the detached process imported once and the digest of
- * their contents. Only `src/server.ts` and `src/detect-checks.ts` are in it — everything else is
- * re-imported by a `code` launch or by a task's worker, so it cannot be stale under a live pid.
+ * their contents. Only the server's own modules — `src/server.ts`, `src/worker-events.ts`,
+ * `src/detect-checks.ts` — are in it; everything else is re-imported by a `code` launch or by a
+ * task's worker, so it cannot be stale under a live pid.
  */
 export type SourceFingerprint = {
   /** One digest over `files`, in order; the identity of the code this process is running. */
