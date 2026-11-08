@@ -129,7 +129,10 @@ These are architecture, not style. A change that breaks one is a regression even
    is `Cell.rejected` and counts as an error, so a bad argument shape is visible in run metrics.
    Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
    `git apply/checkout/...`, `>` redirection; a quoted `>` is an argument) are refused as
-   `kind: "wrong_call"` with a `use` hint, because they bypass the journal. `git
+   `kind: "wrong_call"` with a `use` hint, because they bypass the journal. A program that
+   merely *repeats* a typed verb (`grep`, `cat`, `ls`, `find`, `sed -i`) is never refused: it
+   runs and the result carries one `note` naming the typed call (`_VERB_DUPE`), silent under a
+   flag the verb cannot express (`grep -o`, `find -exec`), one note per program per cell. `git
    add/commit/push/fetch/init/clone` are allowed, as is mutation of a scratch path (`/tmp`,
    `/var/tmp`, `/dev/shm`, `$TMPDIR`) **by a program**: the scratch exemption belongs to the
    process gate, because that output is not journalled. The typed editors (`write`, `edit`,
@@ -138,7 +141,7 @@ These are architecture, not style. A change that breaks one is a regression even
    spawning (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs
    through the same classifier (`_audit_spawn`).
    A program can still write files: the journal is a typed-helper contract, not a sandbox. Keep
-   `_mutating_command`, `_HINT` and `RUN_NOTE` honest.
+   `_mutating_command`, `_HINT`, `_VERB_DUPE` and `RUN_NOTE` honest.
 3. **`write()` replaces** and refuses ANY shorter body without `force=True` (a body that is
    a prefix of the old file is only the clearest case); a body whose only line breaks are a
    literal backslash-n comes back with a note. **`edit(edits=[{path, old, new}, ...])`** is

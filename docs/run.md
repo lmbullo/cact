@@ -14,7 +14,7 @@ document in the same change.
 |---|---|---|
 | `python3 bench/guide.py --check` | every module header has its four sections | exit 0 |
 | `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, apply/commit, recall across restart, envelopes, reply/check parsing, header index, entry-point accuracy, document paths and one-owner prose, the fast eval subset, `guide()`, ruff | exit 0 |
+| `python3 bench/smoke.py` | imports, kernel prelude, `run()` allow/refuse, spawn gate, the exec duplicate-verb note, apply/commit, recall across restart, envelopes, search/map paging, reply/check parsing, header index, entry-point accuracy, the journal metrics, document paths and one-owner prose, the fast eval subset, `guide()`, ruff | exit 0 |
 | `python3 bench/eval.py` | the 16 scripted loop contracts | exit 0 |
 | `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
 | `cd tui && bun run typecheck` | TS types | exit 0 |
@@ -58,6 +58,12 @@ python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt
 python3 bench/task_journal.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
 python3 bench/task_journal.py --recent 10  # newest tasks across every workspace
 ```
+
+`task_journal.py <state-dir> <task-id>` prints one row per task: status, stop, steps, writes and
+edits, restarts, rejections, the tool and verb mix — then the escape metrics `exec_verb_dupes`,
+`python3_c`, `shell`, `obs_chars` and `first_mutation_turn` (the turn of the first mutating cell).
+`--recent N` scans every workspace's tasks, newest first, with no server or key. The key list is
+the contract in `bench/task_journal.py`.
 
 `live.py` is the honest end-to-end test: it clones `bench/archive/results/ws/tui-base`, drives
 `tui/python/worker.py`, records `<tag>.events.jsonl`, `<tag>.prompt.txt`,

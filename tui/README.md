@@ -308,6 +308,9 @@ the worker:
 | `CODE_TUI_PYTHON` | `python3` | Python that can import `bench` |
 | `CODE_TUI_STATE_ROOT` | `~/.local/state/code-tui` | Alternative state root |
 
+`launcher.ts` also sets `CODE_TUI_URL`, `CODE_TUI_WORKSPACE` and `CODE_TUI_VERSION` in the
+client's environment; they are launcher outputs, not knobs.
+
 Key resolution, if you must run it: `~/.config/code-tui/env` (also `.env` in the launch
 directory) or an exported `DEEPSEEK_API_KEY`. The footer shows `no api key` until the key is
 available; a worker started without one fails immediately with a clear event.
@@ -392,9 +395,9 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, progress, prompt, views, selection, order, checks,
-                    # scroll, theme helpers, board and log frames — 33 tests, 10 files; React
-                    # act(...) warnings are expected noise
+bun test            # 0 fail over tests/: list, log, progress, prompt, views, selection,
+                    # order, auto-view, detect-checks, scroll, theme helpers, board and log
+                    # frames; React act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

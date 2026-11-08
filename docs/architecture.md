@@ -99,7 +99,9 @@ response delivered and `next` is the only resume cursor, a replayable argument o
 `has_more` means the file/result continues; `truncated` means a built-in default limit cut
 output the caller did not ask to have cut; `complete` is exactly `not truncated`, and an
 explicit window (`end`, `max_files`, `max_entries`, `max_results`, `max_chars`) is complete
-with `has_more` true. `complete` is the field to trust, not a prose tail. Every typed verb
+with `has_more` true. A window of 0 removes the cap instead of serving a page:
+`map(max_files=0)` and `search(max_results=0)` return every row/hit in one answer.
+`complete` is the field to trust, not a prose tail. Every typed verb
 answers a refusal with the same `{ok:false, kind, error:{code,message,use,signature}}`, and a
 typed verb that returns `ok: false` is a rejected cell and counts as an error in run metrics.
 

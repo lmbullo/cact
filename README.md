@@ -14,8 +14,9 @@ python3 bench/guide.py --module <path>  # one header, whole
 python3 bench/guide.py --check          # gate: a module header is incomplete -> exit 1
 ```
 
-Inside a kernel cell the same data is `guide(query)` / `guide(path)`. `map`, `read`, `outline` and
-`search` cover docs and files; `guide` covers source headers only.
+Inside a kernel cell the same data is `guide(query)` / `guide(path=[...])`; the list form returns
+several headers in one call. `map`, `read`, `outline` and `search` cover docs and files; `guide`
+covers source headers only.
 
 ---
 

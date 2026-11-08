@@ -9,7 +9,7 @@ WHAT IT IS
     op       the verb name
     kind     the helper's own kind (file/matches/map/git_diff/...)
     data     small, tool-specific fields (path, count, occurrences, ...)
-    page     {shown, total, offset, next, unit, has_more, complete} or None
+    page     {shown, total, offset, next, unit, has_more, truncated, complete} or None
     handle   the `_OBS[n]` address of the full delivered text, or None
     notes    human-readable notes as a list (never the only copy of a fact)
     error    {code, message, use} when ok is false
@@ -80,7 +80,7 @@ def _shown_count(shown):
 
 def page_of(kind, value):
     """The one paging contract for a verb result: {shown, total, offset, next, unit, has_more,
-    complete, ...}, or None when the result has no paging fields at all.
+    truncated, complete, ...}, or None when the result has no paging fields at all.
 
     `next` comes back as a replayable argument object: {"start": N} for read, {"offset": N} for
     every other pager. `complete` means this request was served; `has_more` means the result

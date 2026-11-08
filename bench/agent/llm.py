@@ -15,8 +15,8 @@ INVARIANTS
   - The cache key is sha256(request body + model); `bench/.cache/llm/<key>.json`. Hits come
     back with `local_cache=True` and `latency_ms=0`, which is what the traces report as a
     local hit. `BENCH_LLM_CACHE` moves the directory; `cache=False` disables it (the TUI).
-  - Retries: 4 attempts, exponential-ish sleep, only for 429/5xx and network errors. Anything
-    else raises `LLMError` with the response detail; callers turn that into a stop reason.
+  - Retries: 4 attempts, a linear sleep (1.5s x attempt), only for 429/5xx and network errors.
+    Anything else raises `LLMError` with the response detail; callers turn that into a stop reason.
   - `tools` is passed through verbatim; the loops own the specs.
   - `finish == "length"` means the reply was truncated — the loops treat that as TRUNCATED,
     so do not swallow it.
