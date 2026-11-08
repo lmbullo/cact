@@ -1,0 +1,102 @@
+"""handoff: the structured finish answer survives into the next task's prompt.
+
+WHAT IT IS
+  The cross-task half of the handoff contract: `tui/python/worker.py` appends one
+  `history.jsonl` row per task and prepends a compact `[workspace history]` prefix to the
+  next task. These checks prove that a dict `final_answer` reaches both:
+    record   the row keeps summary/changed/gates/deferred/untested
+    prefix   the next task sees the previous task's `deferred` and `untested` lines
+    legacy   an old row with only summary/files/stop still parses
+    cap      the open-items lines stay bounded (newest first, at most six)
+
+ENTRY POINTS
+  run(check)   called by bench/smoke.py::main after gates
+
+INVARIANTS
+  - Pure python and a TemporaryDirectory: no kernel, no network, and nothing in the real
+    state directory. XDG_STATE_HOME is set for the duration and restored in `finally`.
+  - It drives the real `record_history` / `history_brief`, never a copy of their format.
+  - The fake result has the same fields the loop returns (`final`, `stop`, `handoff`).
+
+WHERE TO CHANGE
+  The row format ........................ tui/python/worker.py::record_history
+  The prompt prefix ..................... tui/python/worker.py::history_brief
+  The rendered block .................... bench/agent/handoff.py
+"""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+
+from tui.python import worker
+
+
+def _result(final="", handoff=None, stop="DONE"):
+    """The loop-shaped result record_history consumes."""
+    return SimpleNamespace(final=final, stop=stop, handoff=handoff or {})
+
+
+def run(check):
+    """Record a structured answer, then read it back through the next task's prefix."""
+    old = os.environ.get("XDG_STATE_HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["XDG_STATE_HOME"] = tmp
+        try:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            worker.record_history(workspace, "first task", _result(
+                final="rendered block",
+                handoff={
+                    "summary": "added the thing",
+                    "changed": ["a.py", "b.py"],
+                    "gates": [{"name": "smoke", "ok": True, "exit": 0}],
+                    "deferred": ["next task: wire the flag"],
+                    "untested": ["the retry path"],
+                },
+            ), ["a.py", "b.py"])
+            path = worker.state_dir(workspace) / "history.jsonl"
+            row = json.loads(path.read_text().splitlines()[-1])
+            check("handoff: history.jsonl keeps the structured fields",
+                  row.get("deferred") == ["next task: wire the flag"]
+                  and row.get("untested") == ["the retry path"]
+                  and row.get("changed") == ["a.py", "b.py"]
+                  and row.get("gates") == [{"name": "smoke", "ok": True, "exit": 0}],
+                  json.dumps(row)[:300])
+
+            brief = worker.history_brief(workspace)
+            check("handoff: the next task's prefix carries the deferred line",
+                  "deferred: next task: wire the flag" in brief, brief[:400])
+            check("handoff: the prefix also carries the untested line",
+                  "untested: the retry path" in brief, brief[:400])
+
+            path.write_text(
+                json.dumps({"when": "09:00", "prompt": "legacy", "summary": "old row",
+                            "files": ["old.py"], "stop": "DONE"}) + "\n"
+                + "\n".join(path.read_text().splitlines()) + "\n"
+            )
+            legacy = worker.history_brief(workspace)
+            check("handoff: an old history line still parses",
+                  "old row" in legacy and "deferred: next task: wire the flag" in legacy,
+                  legacy[:400])
+
+            for index in range(8):
+                worker.record_history(workspace, "task %d" % index, _result(
+                    final="done %d" % index,
+                    handoff={"summary": "task %d" % index,
+                             "deferred": ["open item %d" % index],
+                             "untested": ["untested item %d" % index]},
+                ), [])
+            capped = worker.history_brief(workspace)
+            opens = [line for line in capped.splitlines()
+                     if "deferred:" in line or "untested:" in line]
+            check("handoff: the prefix caps open items and keeps the newest first",
+                  len(opens) <= 6 and "open item 7" in capped and "open item 0" not in capped,
+                  "\n".join(opens))
+        finally:
+            if old is None:
+                os.environ.pop("XDG_STATE_HOME", None)
+            else:
+                os.environ["XDG_STATE_HOME"] = old

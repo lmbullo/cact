@@ -64,6 +64,7 @@ class RunResult:
     workspace: str = ""
     llm_calls: int = 0
     error: str = ""
+    handoff: dict = field(default_factory=dict)
 
 
 def _usage_add(acc: dict, usage: dict) -> None:

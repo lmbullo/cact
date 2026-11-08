@@ -17,6 +17,7 @@ WHAT IT IS
     verbs     the typed verbs (map/read/search/splice/exec/outline/help) via Kernel.call
     gates     process gates, recall, orphan reaping, apply/commit, the state card
     revert    revert_check: a test that passes on HEAD, a dirty tree, a failed restore
+    handoff   a structured finish reaches the next task's history prefix
     turns     the turn machine: staged finishes, stop vocabulary, tool-call pairing
     repl      the fenced-block dialect reuses that machine
     wiring    every journal kind is tested and every verb has a smoke case
@@ -55,8 +56,8 @@ if str(ROOT) not in sys.path:  # script mode: make `bench` importable before the
     sys.path.insert(0, str(ROOT))
 
 from bench.smoke_checks import (  # noqa: E402
-    docs, evals, files, gates, helpers, index, plans, protocol, repl, revert, style, turns, verbs,
-    wiring,
+    docs, evals, files, gates, handoff, helpers, index, plans, protocol, repl, revert, style,
+    turns, verbs, wiring,
 )
 from bench.smoke_support import check, kernel_for, summary  # noqa: E402
 
@@ -78,6 +79,7 @@ def main() -> int:
         gates.run(check, root, kernel)
 
     revert.run(check)
+    handoff.run(check)
     turns.run(check)
     repl.run(check)
     wiring.run(check)

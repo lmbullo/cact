@@ -206,3 +206,22 @@ def run(check, root, kernel):
     cell = kernel.run("print('noise'); final_answer('x')")
     check("kernel: a printing cell still reports final (the loop rejects it)",
           cell.final == "x" and "noise" in cell.stdout, str(cell.final))
+
+    changed = ", ".join("'f%d.py'" % index for index in range(20))
+    answer = ("{'summary': 'all sections', 'changed': [%s], "
+              "'gates': [{'name': 'smoke', 'ok': True, 'exit': 0}], "
+              "'deferred': ['next: wire it'], 'untested': ['edge case']}") % changed
+    cell = kernel.run("final_answer(%s)" % answer)
+    rendered = cell.final or ""
+    check("handoff: a dict final_answer renders every section",
+          all(part in rendered for part in ("all sections", "changed:", "gates: smoke ok(0)",
+                                            "deferred: next: wire it", "untested: edge case")),
+          rendered)
+    check("handoff: a 20-path changed list caps at 12 and names the rest",
+          "f11.py" in rendered and "f12.py" not in rendered and "+8 more" in rendered
+          and cell.handoff.get("changed") and len(cell.handoff["changed"]) == 20,
+          rendered)
+
+    cell = kernel.run("final_answer('plain text')")
+    check("handoff: a string final_answer is unchanged",
+          cell.final == "plain text" and cell.handoff == {}, repr(cell.final))

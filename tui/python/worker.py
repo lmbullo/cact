@@ -53,8 +53,10 @@ INVARIANTS
     and Kernel.start forwards those four variables to exec()/run() children. It never writes
     the user's git config.
   - history_brief is prepended to the prompt (state mode only) so the next task in the same
-    workspace knows what the previous ones changed; record_history is appended after a
-    completed run even when the task failed, because a failed attempt still moved files.
+    workspace knows what the previous ones changed and, capped newest-first, which deferred
+    and untested items they left open; record_history persists the structured handoff dict
+    (`summary/changed/gates/deferred/untested`) after a completed run even when the task
+    failed, because a failed attempt still moved files.
 
 WHERE TO CHANGE
   What the TUI sends the agent .... AUTONOMOUS, the rules assembly, budgets
@@ -79,7 +81,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bench.agent import config  # noqa: E402
+from bench.agent import config, handoff  # noqa: E402
 from bench.agent.check_plan import CheckSpec, Verifier  # noqa: E402
 from bench.agent.kernel import Kernel  # noqa: E402
 from bench.agent.llm import Client, LLMError  # noqa: E402
@@ -101,8 +103,8 @@ def state_dir(workspace: Path) -> Path:
     return root / "code-tui" / "workspaces" / digest
 
 
-def history_brief(workspace: Path, limit: int = 4) -> str:
-    """The prompt prefix that tells a new task what the last few tasks in this workspace did."""
+def history_brief(workspace: Path, limit: int = 4, issues: int = 6) -> str:
+    """The prompt prefix: the last few tasks, then their open deferred/untested items."""
     path = state_dir(workspace) / "history.jsonl"
     if not path.exists():
         return ""
@@ -118,6 +120,20 @@ def history_brief(workspace: Path, limit: int = 4) -> str:
     for row in rows:
         files = ", ".join(row.get("files") or [])[:120]
         lines.append(f"- {row.get('when', '?')}: {row.get('summary', '')[:180]} [{files}]")
+    open_items = []
+    for row in reversed(rows):
+        for label in ("deferred", "untested"):
+            for item in row.get(label) or []:
+                open_items.append(f"- {row.get('when', '?')} {label}: {str(item)[:200]}")
+                if len(open_items) >= issues:
+                    break
+            if len(open_items) >= issues:
+                break
+        if len(open_items) >= issues:
+            break
+    if open_items:
+        lines.append("open items from earlier tasks (newest first):")
+        lines.extend(open_items)
     return "[workspace history] previous tasks in this workspace and what they changed:\n" + "\n".join(lines)
 
 
@@ -125,12 +141,20 @@ def record_history(workspace: Path, prompt: str, result, files: list[str]) -> No
     """Append one history.jsonl row (last 50 kept) so the next task sees what changed."""
     path = state_dir(workspace) / "history.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    structured = dict(getattr(result, "handoff", None) or {})
+    data = handoff.fields(structured) if structured else {}
+    if data and not data.get("summary"):
+        data["summary"] = str(result.final or "").strip()[:handoff.SUMMARY_CHARS]
     row = {
         "when": time.strftime("%H:%M"),
         "prompt": prompt[:200],
-        "summary": (result.final or "").strip()[:400],
+        "summary": (data.get("summary") or (result.final or "").strip())[:400],
         "files": files[:12],
         "stop": result.stop,
+        "changed": (data.get("changed") or files)[:12],
+        "gates": data.get("gates") or [],
+        "deferred": data.get("deferred") or [],
+        "untested": data.get("untested") or [],
     }
     rows = []
     if path.exists():
@@ -151,7 +175,9 @@ AUTONOMOUS TASK MODE
 You are running unattended. No human will answer questions or approve actions.
 - Inspect the workspace, make the changes, and verify them with real commands.
 - Keep working until the task is complete or you are genuinely blocked.
-- Finish with final_answer(<short summary>) in a cell that prints nothing.
+- Finish with final_answer(<short summary>) in a cell that prints nothing. When you leave
+  work open, pass the structured dict instead, so the next task inherits it:
+  final_answer({summary, changed, gates, deferred, untested}).
 - The summary should say what changed, what you verified, and any blockers.
 """
 

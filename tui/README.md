@@ -63,8 +63,9 @@ workspaces/<sha256-of-workspace, first 16 hex>/
   tasks/<id>.json      task metadata
   events/<id>.jsonl    append-only event journal
   prompts/<id>.txt     original prompt
-  history.jsonl        last 50 tasks (prompt, summary, changed files); newest 4 are
-                       prepended to the next state-mode task
+  history.jsonl        last 50 tasks (prompt, summary, changed files, gates, deferred,
+                       untested); newest 4 plus up to 6 open items are prepended to the
+                       next state-mode task
 ```
 
 The workspace is the directory where `code` ran, resolved with `path.resolve`; the server

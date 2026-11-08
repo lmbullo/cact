@@ -30,7 +30,8 @@ INVARIANTS
     can never read as `ok:true` with a traceback beside it.
   - stdin is read with one readline per request; the parent's request carries `timeout` and
     `check_cache`. `final_answer()` raises `Final`, which is reported as `Cell.final`
-    unconditionally — the loop, not the child, decides what that means.
+    unconditionally — the loop, not the child, decides what that means. A dict answer
+    travels in that same field; the parent renders it and keeps its structured handoff.
   - `_OBS` entries are appended to KERNEL_OBS_LOG after each cell so recall() survives a
     restart; the namespace itself does not survive one.
 
@@ -470,7 +471,9 @@ for line in sys.stdin:
                 else:
                     exec(compile(tree, "<cell>", "exec"), ns)
     except Final as f:
-        final = f.value if isinstance(f.value, str) else repr(f.value)
+        # A dict answer travels through the existing `final` field; the parent's
+        # handoff.split renders it and keeps the structured fields on the Cell.
+        final = f.value if isinstance(f.value, (str, dict)) else repr(f.value)
     except _CellTimeout:
         timed_out = True
         failed = True

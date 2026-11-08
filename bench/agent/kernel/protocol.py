@@ -46,11 +46,12 @@ import json
 from dataclasses import dataclass, field
 
 from ..envelope import normalize
+from ..handoff import split as _split_final
 
 # --- the protocol version: bump when either half's shape changes ---------------------------
 # The child embeds the same number through the __PROTOCOL__ placeholder; the parent compares
 # it on the first message of every cell.
-PROTOCOL = 5
+PROTOCOL = 6
 
 
 MARKER = "@@K@@"
@@ -98,7 +99,7 @@ class CellReply:
     stdout: str = ""
     stderr: str = ""
     result: str | None = None
-    final: str | None = None
+    final: str | dict | None = None
     answer: str | None = None
     runs: list[str] = field(default_factory=list)
     obs_index: int | None = None
@@ -163,6 +164,7 @@ class Cell:
     final: str | None
     duration_ms: int
     envelope: dict | None = None
+    handoff: dict = field(default_factory=dict)
     restarted: bool = False
     answer: str | None = None
     runs: list[str] | None = None
@@ -192,12 +194,14 @@ class Cell:
         if reply.tool:
             envelope = normalize(reply.tool, _json_result(reply.result),
                                  "_OBS[%s]" % reply.obs_index if reply.obs_index is not None else None)
+        final, handoff = _split_final(reply.final)
         return cls(
             stdout=_cap(reply.stdout),
             stderr=_cap(reply.stderr),
             result=reply.result,
             envelope=envelope,
-            final=reply.final,
+            final=final,
+            handoff=handoff,
             duration_ms=duration_ms,
             restarted=False,
             answer=reply.answer,

@@ -182,6 +182,7 @@ class FinishState:
     staged_turn: int | None = None
     silent: bool = False
     content: str | None = None
+    handoff: dict = field(default_factory=dict)
 
     @property
     def accepted(self) -> bool:
@@ -189,12 +190,13 @@ class FinishState:
         return self.terminal is not None
 
     def stage(self, answer: Any, turn: int | None = None, *, silent: bool = False,
-              content: str | None = None) -> None:
+              content: str | None = None, handoff: dict | None = None) -> None:
         """Hold a `final_answer` value until a later reply accepts it; records the staging turn."""
         self.staged = answer
         self.staged_turn = turn
         self.silent = silent
         self.content = content
+        self.handoff = dict(handoff or {})
 
     def clear(self, turn: int | None = None) -> None:
         """Drop the staged answer, unless `turn` staged it earlier in this same turn."""
@@ -204,6 +206,7 @@ class FinishState:
         self.staged_turn = None
         self.silent = False
         self.content = None
+        self.handoff = {}
 
     def accept(self, answer: str) -> None:
         """Promote the staged answer to `terminal`: the turn is over and `answer` is final."""
@@ -645,7 +648,8 @@ class ToolLoop:
         record.obs = obs
 
         if cell.final is not None:
-            finish.stage(cell.final, turn=step, silent=not (cell.stdout.strip() or cell.stderr.strip()))
+            finish.stage(cell.final, turn=step, handoff=getattr(cell, "handoff", None),
+                         silent=not (cell.stdout.strip() or cell.stderr.strip()))
             notice = (obs + f"\n[finish] answer staged: {str(cell.final)[:400]!r}. "
                       "The next reply with no tool call is the handoff (its content wins for "
                       "a silent cell); write the real report there, or call final_answer(...) "
@@ -924,6 +928,7 @@ class ToolLoop:
             task=task_id,
             stop=stop,
             final=final,
+            handoff=dict(finish.handoff),
             steps=tally.steps,
             calls=tally.calls,
             errors=tally.errors,
