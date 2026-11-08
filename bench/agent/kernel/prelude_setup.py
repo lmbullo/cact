@@ -10,6 +10,7 @@ WHAT IT IS
 ENTRY POINTS
   guide(query, path, limit, chars, offset, headers)   the one verb the header index adds
   _fail(kind, code, message, use, **extra)    the one error-dict builder every verb uses
+  _partial_failure(results)                   the aggregate error for a batch with bad paths
   Inside the cell namespace: _ROOT, _READS_CELL, _READS_SESSION, _READ_MAX_CHARS,
   _READ_MAX_LINES, _MUT, _JOURNAL, _SNAP, _JSEQ, _CELL_CHANGED, _SKIP_DIRS, _IGNORE
 
@@ -55,6 +56,26 @@ def _fail(kind, code, message, use, **extra):
            "error": {"code": str(code), "message": str(message), "use": str(use)}}
     out.update({key: value for key, value in extra.items() if value is not None})
     return (globals().get("_Result") or dict)(out)
+
+
+def _partial_failure(results):
+    # A batch is one answer: keep the good rows and name the paths that failed. Without an
+    # explicit error dict the aggregate `kind` became both the error code and its message.
+    failed = [item for item in results
+              if isinstance(item, dict) and not item.get("ok")]
+    missing = []
+    details = []
+    for item in failed:
+        error = item.get("error") if isinstance(item.get("error"), dict) else {}
+        path = error.get("path") or item.get("path") or item.get("root")
+        if path is not None and str(path) not in missing:
+            missing.append(str(path))
+        details.append(str(error.get("message") or item.get("kind") or "failed"))
+    message = "partial failure: " + ("; ".join(details) if details else ", ".join(missing))
+    return {"error": {"code": "partial_failure", "message": message,
+                      "use": "the successful paths are still in `files`; "
+                             "check a missing one with map(path)"},
+            "missing": missing}
 
 
 _ROOT = _os.getcwd()

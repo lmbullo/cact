@@ -203,6 +203,8 @@ VERBS: dict[str, dict] = {
             "properties": {
                 "pattern": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
+                "offset": {"type": "integer", "minimum": 0,
+                           "description": "Skip this many snippets; next.offset pages the result."},
                 "context": {"type": "integer", "minimum": 0},
             },
             "required": ["pattern"],

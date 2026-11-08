@@ -263,6 +263,7 @@ def guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, h
             if score:
                 scored.append((score, row["path"], row))
         scored.sort(key=lambda item: (-item[0], item[1]))
+        total = len(scored)
         note = _non_indexed_note(root, query, rows)
         start = max(0, int(offset or 0))
         hits = [item[2] for item in scored[start:start + page_size]]
@@ -282,9 +283,13 @@ def guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, h
                     "shown": 0, "total": 0, "next": None,
                     "note": note, "text": note}
         if not lines:
-            message = "no documented module matches %r; try map() or search()" % str(query)
+            if total and start >= total:
+                message = ("offset %d is past the end; %d documented module(s) match %r"
+                           % (start, total, str(query)))
+            else:
+                message = "no documented module matches %r; try map() or search()" % str(query)
             return {"ok": True, "kind": "guide", "query": str(query), "modules": [],
-                    "shown": 0, "total": 0, "next": None,
+                    "shown": 0, "total": total, "offset": start, "next": None,
                     "note": message, "text": message}
         nxt = {"offset": end, "unit": "module"} if end < len(scored) else None
         inlined = ""
@@ -296,7 +301,7 @@ def guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, h
         if inlined:
             body = body + "\n\n" + inlined
         return {"ok": True, "kind": "guide", "query": str(query), "modules": public,
-                "shown": len(public), "total": len(scored), "offset": start, "next": nxt,
+                "shown": len(public), "total": total, "offset": start, "next": nxt,
                 "unit": "module", "truncated": end < len(scored) and not explicit,
                 "note": note, "text": body}
     public = [{k: row[k] for k in ("path", "language", "lines", "title")} for row in rows]

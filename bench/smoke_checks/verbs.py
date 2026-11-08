@@ -350,6 +350,12 @@ def run(check, root, kernel):
     check("kernel: an explicit read window is complete with has_more",
           page.get("truncated") is False and page.get("complete") is True
           and page.get("has_more") is True, str(page)[:280])
+    cell = kernel.call("read", {"path": "paged.txt"})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: a pointer read is complete and not truncated",
+          page.get("pointer") is True and page.get("truncated") is False
+          and page.get("complete") is True and page.get("has_more") is True,
+          str(page)[:280])
     cell = kernel.call("map", {"path": ".", "include": "*.txt", "max_files": 2})
     page = (cell.envelope or {}).get("page") or {}
     check("kernel: map's explicit page size is served (complete with has_more)",
@@ -398,6 +404,13 @@ def run(check, root, kernel):
     page = (cell.envelope or {}).get("page") or {}
     check("kernel: search's default page is still 50 hits and says truncated",
           page.get("shown") == 50 and page.get("truncated") is True, str(page)[:280])
+    kernel.run("write('agg.py', '\\n'.join('def f%d():\\n    return TOPIC' % n for n in range(25)))")
+    cell = kernel.call("search", {"pattern": "TOPIC", "path": "agg.py", "max_results": 2})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: an explicit search page size is honored under section aggregation",
+          page.get("shown") == 2 and page.get("total") == 25
+          and page.get("complete") is True and page.get("next") == {"offset": 2}
+          and (cell.envelope or {}).get("kind") == "matches", str(page)[:280])
 
     kernel.run("write('bigdiff.txt', '\\n'.join('x' * 12 for _ in range(1200)))")
     cell = kernel.call("session_diff", {})

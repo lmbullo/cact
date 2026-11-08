@@ -99,6 +99,14 @@ def run(check, root, kernel):
     check("kernel: recall finds earlier cell output with its handle",
           "needle-42" in cell.stdout and "handle" in cell.stdout, cell.stdout[:200])
 
+    kernel.run("print('\\n'.join('recall-bulk-tick-%d' % n for n in range(24)))")
+    cell = kernel.call("recall", {"pattern": "recall-bulk-tick", "limit": 5})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: recall reports the true total and pages with next",
+          page.get("total") == 24 and page.get("shown") == 5
+          and page.get("next") == {"offset": 5} and page.get("has_more") is True,
+          str(page)[:280])
+
     cell = kernel.run("print(run('sleep 300 >/dev/null 2>&1 & echo $!')['stdout'].strip())")
     orphan = int(cell.stdout.strip().splitlines()[-1])
     alive = Path(f"/proc/{orphan}").exists()

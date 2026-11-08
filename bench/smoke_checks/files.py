@@ -144,6 +144,29 @@ def run(check, root, kernel):
     check("kernel: a batch read counts files, not windows",
           batch.envelope.get("page", {}).get("unit") == "file",
           str(batch.envelope.get("page")))
+    kernel.run("write('partial_good.txt', 'alpha\\nbeta\\n')")
+    cell = kernel.call("read", {"path": ["partial_good.txt", "no-such-batch.txt"]})
+    env = cell.envelope or {}
+    data = env.get("data") or {}
+    check("kernel: a batched read with one missing path is a partial_failure",
+          (env.get("error") or {}).get("code") == "partial_failure"
+          and "no-such-batch.txt" in (data.get("missing") or [])
+          and "alpha" in cell.stdout and len(data.get("missing") or []) == 1,
+          str(env)[:320])
+    cell = kernel.call("map", {"path": ["partial_good.txt", "no-such-map.txt"]})
+    env = cell.envelope or {}
+    data = env.get("data") or {}
+    check("kernel: a batched map with one missing path is a partial_failure",
+          (env.get("error") or {}).get("code") == "partial_failure"
+          and "no-such-map.txt" in (data.get("missing") or [])
+          and "partial_good.txt" in cell.stdout, str(env)[:320])
+    cell = kernel.call("outline", {"path": ["partial_good.txt", "no-such-outline.txt"]})
+    env = cell.envelope or {}
+    data = env.get("data") or {}
+    check("kernel: a batched outline with one missing path is a partial_failure",
+          (env.get("error") or {}).get("code") == "partial_failure"
+          and "no-such-outline.txt" in (data.get("missing") or [])
+          and "partial_good.txt" in cell.stdout, str(env)[:320])
     cell = kernel.call("read", {"path": "missing.txt"})
     card, _ = state_loop.render_observation(cell, 1)
     check("state: structured data survives the card", "[data]" in card and "did_you_mean" in card,

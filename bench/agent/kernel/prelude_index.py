@@ -20,7 +20,8 @@ INVARIANTS
   - Both report `offset` as the start of what they delivered (0 on the first page) and
     `truncated` only when the default page size cut the list; an explicit `max_files`/
     `max_entries` is a served window (`complete:true`, `has_more:true`).
-  - A missing path is `ok:false`/`not_found`.
+  - A missing path is `ok:false`/`not_found`; in a path list it is `partial_failure` and the
+    good files' rows are still delivered.
   - Both are read-only and never open a file through the journalled `open()`.
 
 WHERE TO CHANGE
@@ -59,12 +60,15 @@ def map(path=".", max_files=None, include=None, offset=0):
         chunks = []
         for item in results:
             chunks.append("# " + str(item.get("root") or "") + "\n" + str(item.get("text") or ""))
-        return {"ok": all(bool(item.get("ok")) for item in results), "kind": "maps",
-                "files": results, "count": len(results), "file_count": len(results),
-                "shown": len(results), "total": len(results), "offset": 0, "unit": "file",
-                "truncated": any(bool(item.get("truncated")) for item in results),
-                "has_more": any(bool(item.get("has_more")) for item in results),
-                "text": "\n\n".join(chunks)}
+        aggregate = {"ok": all(bool(item.get("ok")) for item in results), "kind": "maps",
+                     "files": results, "count": len(results), "file_count": len(results),
+                     "shown": len(results), "total": len(results), "offset": 0, "unit": "file",
+                     "truncated": any(bool(item.get("truncated")) for item in results),
+                     "has_more": any(bool(item.get("has_more")) for item in results),
+                     "text": "\n\n".join(chunks)}
+        if not aggregate["ok"]:
+            aggregate.update(_partial_failure(results))
+        return aggregate
     explicit = max_files is not None
     size = 120 if max_files is None else int(max_files)
     target, rel = _resolve(path)
@@ -214,12 +218,15 @@ def outline(path, max_entries=None, keys=False):
         for item in results:
             rel = str(item.get("path") or "")
             chunks.append("# " + rel + "\n" + str(item.get("text") or ""))
-        return {"ok": all(bool(item.get("ok")) for item in results), "kind": "outlines",
-                "files": results, "file_count": len(results), "shown": len(results),
-                "total": len(results), "offset": 0, "unit": "file",
-                "truncated": any(bool(item.get("truncated")) for item in results),
-                "has_more": any(bool(item.get("has_more")) for item in results),
-                "text": "\n\n".join(chunks)}
+        aggregate = {"ok": all(bool(item.get("ok")) for item in results), "kind": "outlines",
+                     "files": results, "file_count": len(results), "shown": len(results),
+                     "total": len(results), "offset": 0, "unit": "file",
+                     "truncated": any(bool(item.get("truncated")) for item in results),
+                     "has_more": any(bool(item.get("has_more")) for item in results),
+                     "text": "\n\n".join(chunks)}
+        if not aggregate["ok"]:
+            aggregate.update(_partial_failure(results))
+        return aggregate
     target, rel = _resolve(path)
     if target is None:
         return _Result(_fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,

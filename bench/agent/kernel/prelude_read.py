@@ -13,7 +13,7 @@ ENTRY POINTS
   read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, section=None)
   grep(pattern, path=".", max_results=None, regex=True, include=None, context=0, ...)
   search(...)          the typed verb (same engine as grep)
-  recall(pattern, limit=10, context=100) / recall_tool(...)   the typed session search
+  recall(pattern, limit=10, context=100, offset=0) / recall_tool(...)   the typed session search
   skill(name=None, root=".")   list .agent/skills/, or load one procedure
   Inside: _int_arg, _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
 
@@ -34,6 +34,7 @@ INVARIANTS
     `max_results=0` is every hit in one answer (mirroring `map(max_files=0)`), so a multi-path
     alternation grep is one call; the default page stays 50 and `offset`/`next` still page.
   - `recall()` reads `_OBS`, which survives a restart; it must not depend on live variables.
+    `limit` is its page size: `total` is every match and `next.offset` is the resume cursor.
 
 WHERE TO CHANGE
   The read budget or pointer ....... _READ_MAX_LINES, _READ_MAX_CHARS, read
@@ -204,13 +205,16 @@ def read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, 
                 chunks.append("# %s (%s)\n%s" % (rel, status, item.get("text") or ""))
             else:
                 chunks.append("# " + rel + "\n" + str(dict(item)))
-        return _Result({"ok": all(bool(item.get("ok")) for item in results),
-                        "kind": "files", "files": results, "count": len(results),
-                        "shown": len(results), "total": len(results), "offset": 0,
-                        "unit": "range",
-                        "has_more": any(bool(item.get("has_more")) for item in results),
-                        "truncated": any(bool(item.get("truncated")) for item in results),
-                        "next": None, "text": "\n\n".join(chunks)})
+        aggregate = {"ok": all(bool(item.get("ok")) for item in results),
+                     "kind": "files", "files": results, "count": len(results),
+                     "shown": len(results), "total": len(results), "offset": 0,
+                     "unit": "range",
+                     "has_more": any(bool(item.get("has_more")) for item in results),
+                     "truncated": any(bool(item.get("truncated")) for item in results),
+                     "next": None, "text": "\n\n".join(chunks)}
+        if not aggregate["ok"]:
+            aggregate.update(_partial_failure(results))
+        return _Result(aggregate)
     if path is None:
         return _fail("bad_args", "bad_arguments", "read needs path or ranges",
                      "read(path, start=..., end=...) or read(ranges=[...])")
@@ -240,13 +244,16 @@ def read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, 
                 chunks.append("# " + rel + "\n" + (item.get("text") or ""))
             else:
                 chunks.append("# " + rel + "\n" + str(dict(item)))
-        return _Result({"ok": all(bool(item.get("ok")) for item in results), "kind": "files",
-                        "files": results, "count": len(results),
-                        "shown": len(results), "total": len(results), "offset": 0,
-                        "unit": "file",
-                        "has_more": any(bool(item.get("has_more")) for item in results),
-                        "truncated": any(bool(item.get("truncated")) for item in results),
-                        "next": None, "text": "\n\n".join(chunks)})
+        aggregate = {"ok": all(bool(item.get("ok")) for item in results), "kind": "files",
+                     "files": results, "count": len(results),
+                     "shown": len(results), "total": len(results), "offset": 0,
+                     "unit": "file",
+                     "has_more": any(bool(item.get("has_more")) for item in results),
+                     "truncated": any(bool(item.get("truncated")) for item in results),
+                     "next": None, "text": "\n\n".join(chunks)}
+        if not aggregate["ok"]:
+            aggregate.update(_partial_failure(results))
+        return _Result(aggregate)
     target, rel = _resolve(path)
     if target is None:
         return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
@@ -303,8 +310,11 @@ def read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, 
         handle = "_OBS[%d]['stdout']" % int(hit["obs"])
         note = ("already delivered in this session; use read(%r, start=%d, end=%d, repeat=True) "
                 "to receive it again" % (rel, start, stop))
+        # A pointer delivers no text: the original window's truncation must not be reported
+        # on this response. `has_more` still says the file continues past the range.
         result.update({"already_read": True, "delivered": False,
-                       "handle": handle, "text": "# " + note})
+                       "handle": handle, "text": "# " + note,
+                       "truncated": False})
         return _Result(result)
     entry = _READS_CELL.setdefault(rel, {"ranges": [], "total": total})
     entry["ranges"].append([start, stop])
@@ -535,8 +545,10 @@ def grep(pattern, path=".", max_results=None, regex=True, include=None, context=
     if count:
         note = None if counts else "no matches for %r in %s" % (pattern, rel)
         return _count_result(counts, occurrences, note)
-    if explicit_file and skip == 0 and (sections is True or
-                                       (sections is None and matched_lines > 20)):
+    # An explicit max_results is a real page request: aggregation would silently ignore it.
+    # The default (no max_results) still aggregates a broad single-file result above 20 hits.
+    if (explicit_file and skip == 0 and not explicit_limit
+            and (sections is True or (sections is None and matched_lines > 20))):
         aggregated = _section_search_result(
             rel, all_numbers, matched_lines, occurrences, offset=skip,
             extra_note=("include is only used for directory paths; the explicit file was searched"
@@ -579,10 +591,8 @@ def search(pattern, path=".", max_results=None, regex=True, include=None, contex
                 section=section, sections=sections)
 
 
-def recall(pattern, limit=10, context=100):
-    # Search the full output of earlier cells, including turns a fold removed. Every cell
-    # keeps its raw stdout/stderr/result in _OBS; this returns matching snippets plus the
-    # handle to page the full text. grep is for the tree, recall is for the session.
+def _recall_hits(pattern, context=100):
+    # Every matching snippet in _OBS before paging: the caller needs the true total.
     try:
         rx = _re.compile(pattern)
     except _re.error:
@@ -602,24 +612,43 @@ def recall(pattern, limit=10, context=100):
                 out.append({"obs": i, "field": field, "source": "session",
                             "snippet": snippet, "text": snippet,
                             "handle": "_OBS[%d]['%s']" % (i, field)})
-                if len(out) >= int(limit):
-                    return out
     return out
 
 
-def recall_tool(pattern, limit=10, context=100):
+def recall(pattern, limit=10, context=100, offset=0):
+    # Search the full output of earlier cells, including turns a fold removed. `limit` is the
+    # page size, never the total: the caller pages with `offset` and reads `next`.
+    items = _recall_hits(pattern, context)
+    start = max(0, int(offset or 0))
+    size = None if limit is None else max(0, int(limit))
+    return items[start:] if size is None else items[start:start + size]
+
+
+def recall_tool(pattern, limit=10, context=100, offset=0):
     # Typed session search: the same _OBS snippets as recall(), with a text rendering so the
-    # model does not need a python cell to recover a digested card.
-    items = recall(pattern, limit=limit, context=context)
+    # model does not need a python cell to recover a digested card. `total` is every match;
+    # `shown` is this page and `next.offset` is the resume cursor.
+    items = _recall_hits(pattern, context)
+    total = len(items)
+    start = max(0, int(offset or 0))
+    size = None if limit is None else max(0, int(limit))
+    page = items[start:] if size is None else items[start:start + size]
+    end = start + len(page)
     scanned = len(globals().get("_OBS") or [])
     text = "\n".join("[%s] %s: %s" % (item["handle"], item["field"], item["text"])
-                     for item in items)
-    note = None if items else ("no matches for %r in %d earlier cell(s)" % (pattern, scanned))
+                     for item in page)
+    if not page and total and start >= total:
+        note = "end of results (offset %d >= total %d)" % (start, total)
+    elif not page:
+        note = "no matches for %r in %d earlier cell(s)" % (pattern, scanned)
+    else:
+        note = None
     if note:
         text = "note: " + note
-    return {"ok": True, "kind": "recall", "items": items,
-            "shown": len(items), "total": len(items), "next": None,
-            "scanned": scanned, "count": len(items), "note": note, "text": text}
+    return {"ok": True, "kind": "recall", "items": page,
+            "shown": len(page), "total": total, "offset": start,
+            "next": {"offset": end, "unit": "snippet"} if end < total else None,
+            "scanned": scanned, "count": total, "note": note, "text": text}
 
 
 def skill(name=None, root="."):
