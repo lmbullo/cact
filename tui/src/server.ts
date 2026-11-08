@@ -35,9 +35,11 @@
  *  - detectChecks() runs when a task starts, not once at boot, so a script an earlier
  *    task added to package.json is picked up without a server restart. CODE_TUI_CHECKS
  *    (JSON [{name, cmd, cheap, scope}]) wins, else CODE_TUI_CHECK as one entry, else
- *    `python3 bench/smoke.py` (cheap, scope bench) plus "typecheck"/"test" (or "build"
- *    when neither exists) from the root and tui/package.json (scope tui). The package
- *    manager follows the lockfile (bun.lock/bun.lockb -> bun, package-lock.json -> npm).
+ *    `python3 bench/smoke.py` (cheap, scope bench) plus `python3 -m ruff check .` (each when
+ *    its file exists), plus "lint"/"typecheck"/"format:check" (cheap) and "test" (or
+ *    "build" when neither exists) from the root and tui/package.json, each scoped to its
+ *    directory. The package manager follows the lockfile (bun.lock/bun.lockb -> bun,
+ *    package-lock.json -> npm).
  *    An empty CODE_TUI_CHECK disables it. The plan travels to the worker as `--checks
  *    <json>` and is published in ServerInfo.checks; `cheap` entries become the agent's
  *    post-mutation health check and `scope` keeps a health run to specs whose paths changed.

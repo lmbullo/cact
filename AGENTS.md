@@ -61,8 +61,9 @@ These are architecture, not style. A change that breaks one is a regression even
   plan passes. A failed check is a repair instruction, not a question. There are no interactive
   prompts in production (`tui/python/worker.py` is unattended).
 - **One fact, one place.** Adding a verb is exactly: registry entry in `verbs.py`, function in
-  `kernel/prelude.py` or `kernel/run_prelude.py`, a `Kernel.call` case in
-  `bench/smoke_checks/`, and one sentence in the rules text. Schemas and `help()` are generated;
+  the owning `kernel/prelude_*.py` fragment (the `kernel/prelude.py` header names the five) or
+  `kernel/run_prelude.py`, a `Kernel.call` case in `bench/smoke_checks/`, and one sentence in
+  the rules text. Schemas and `help()` are generated;
   the rules prose is the only hand-written catalog. Never add a second catalog to a prompt or a
   README.
 - **Machine-readable failure.** Unknown tools, bad arguments (`kind: "bad_args"`,
@@ -223,7 +224,7 @@ the offline gates and say so in the report.
 
 | Change | Touch | Verify |
 |---|---|---|
-| A typed action | `verbs.py` (entry), `kernel/prelude.py` or `kernel/run_prelude.py` (function), `bench/smoke_checks/verbs.py` (a `Kernel.call` case), rules text | smoke |
+| A typed action | `verbs.py` (entry), the owning `kernel/prelude_*.py` fragment or `kernel/run_prelude.py` (function), `bench/smoke_checks/verbs.py` (a `Kernel.call` case), rules text | smoke |
 | A process/git gate | `kernel/run_prelude.py` (`_mutating_command`, `_HINT`, `RUN_NOTE`) | `smoke_checks/gates.py` |
 | Observation shape/paging | `envelope.py`, `state_loop._observe`, `repl.observation` | smoke envelopes + a run |
 | Finish protocol or stop reason | `tool_loop.ToolLoop.run` (a reply dialect overrides `_reply`, see `repl.py`) | `smoke_checks/turns.py` |

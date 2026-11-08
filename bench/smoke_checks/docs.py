@@ -1,4 +1,4 @@
-"""docs: the four documents stay pointers, never dead links and never copies of each other.
+"""docs: the checked documents stay pointers, never dead links and never copies of each other.
 
 WHAT IT IS
   Two offline checks over the documents an agent reads before editing: `AGENTS.md`, `README.md`,
@@ -124,7 +124,7 @@ def _copies(docs):
 
 
 def run(check):
-    """Every repo path named in the four documents resolves, and no document copies another."""
+    """Every repo path named in the checked documents resolves, and no document copies another."""
     paths = list(_walk(ROOT))
     dead = []
     for name in DOCS:

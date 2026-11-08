@@ -303,11 +303,11 @@ When a task starts the server detects a plan (an ordered list of named commands)
 `CODE_TUI_CHECKS` if set, else `CODE_TUI_CHECK` as a single entry, else
 `python3 bench/smoke.py` and `python3 -m ruff check .` (each when the workspace has the file)
 plus `lint`, `typecheck`, `format:check` and `test` (or `build` when neither exists) from the
-root and `tui/package.json`. `lint` and `format:check` are cheap, so a mutating cell cannot leave
-the tree in a state the project itself would reject. The plan is re-detected per task, so a
-script an earlier task added is picked up without restarting the server. The runner follows the
-lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). The plan is passed to the
-worker as `--checks <json>`, where one `check_plan.Verifier` owns it.
+root and `tui/package.json`. `lint`, `typecheck` and `format:check` are cheap, so a mutating
+cell cannot leave the tree in a state the project itself would reject. The plan is re-detected
+per task, so a script an earlier task added is picked up without restarting the server. The
+runner follows the lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). The plan
+is passed to the worker as `--checks <json>`, where one `check_plan.Verifier` owns it.
 
 An entry is `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes for the cheap
 health run: a scoped entry is skipped unless the cell changed a path under one of them. The goal
@@ -377,8 +377,8 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, progress, prompt, view rendering, selection, checks,
-                    # theme helpers, board and log frames — 20 tests, 8 files; React act(...)
+bun test            # tests/: list, log, progress, prompt, views, selection, checks, scroll,
+                    # theme helpers, board and log frames — 30 tests, 9 files; React act(...)
                     # warnings are expected noise
 ```
 

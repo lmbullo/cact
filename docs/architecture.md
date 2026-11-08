@@ -45,7 +45,7 @@ bench/eval.py                       tui/bin/code
           stdin/stdout JSON, @@K@@ marker per request
           ├─ PRELUDE: guide/skill/map/read/session_diff/search/recall/outline/
           │           edit/splice/write/delete/mkdir/apply + python helpers
-          │           guide/grep/skill/diff/changes/undo/commit/help, final_answer/emit
+          │           guide/grep/recall/verbs/diff/changes/undo/commit/help, final_answer/emit
           └─ RUN_PRELUDE: exec (argv/commands/shell) + git; run() only in repl/bare
                   │
                   ▼
@@ -61,8 +61,9 @@ What the diagram does not show:
   `skeptic=` on the loop; `CODE_TUI_DOCS` on unless `0`, `CODE_TUI_SUBAGENTS=1`,
   `CODE_TUI_SKEPTIC=1` in the TUI), so the typed registry stays the one catalog.
 - **Model client.** `bench/agent/llm.py` posts to `https://api.deepseek.com/chat/completions`
-  (`DEEPSEEK_BASE_URL` overrides) and retries 429/5xx four times with a linear backoff. Responses
-  cache under `bench/.cache/llm/` by request hash when `Client(cache=True)`; the TUI worker
+  (`DEEPSEEK_BASE_URL` overrides) and makes four attempts, retrying 429/5xx and network errors
+  with a linear backoff. Responses cache under `bench/.cache/llm/` by request hash when
+  `Client(cache=True)`; the TUI worker
   constructs the client with `cache=False`.
   The reply is `content`, `reasoning` (the provider's `reasoning_content`), `tool_calls`, `usage`,
   `finish`; the loop appends `{"role": "assistant", "content", "tool_calls"}` to its history and
@@ -109,10 +110,10 @@ through `bench/evals/loops.py::run_loop`.
 
 | mode | Loop | Action space | Rules constant |
 |---|---|---|---|
-| `repl` | `ReplLoop` | one fenced python block per reply | `repl.REPL_RULES` / `BARE_RULES` |
+| `repl` | `ReplLoop` | one fenced python block per reply | `repl.REPL_RULES` |
 | `tool` | `ToolLoop` | typed verbs + `python` | `tool_loop.TOOL_RULES` |
 | `state` | `StateLoop` | same, observations rendered as state cards | `state_loop.STATE_RULES` |
-| `bare` | `ToolLoop` with `goal=None` and no file helpers (the archived control) | one function: `python` | `repl.BARE_RULES` |
+| `bare` | `ToolLoop` with `goal=None` and no file helpers (the archived control) | one function: `python` | `bench/archive/legacy/run.py` (`BARE_TOOL_RULES`) |
 
 All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`, `max_total_tokens`,
 where 0 means unlimited), `RunResult` and the

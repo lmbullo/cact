@@ -22,7 +22,8 @@ INVARIANTS
   - It depends on `files` having run first on the same kernel instance.
 
 WHERE TO CHANGE
-  A verb's answer shape .................. kernel/prelude.py (or run_prelude.py for exec)
+  A verb's answer shape .................. the kernel/prelude_*.py fragment that owns it
+                                           (or run_prelude.py for exec)
   The refusal codes ...................... run_prelude.py `_mutating_command` / exec_argv
   The envelope ........................... bench/agent/envelope.py
 """

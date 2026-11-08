@@ -13,8 +13,8 @@
  *    command). An empty `CODE_TUI_CHECK` disables verification.
  *  - Otherwise: `bench/smoke.py` and `ruff.toml` at the root, plus `lint`, `typecheck`,
  *    `format:check` and `test` (or `build` when neither exists) from the root and
- *    `tui/package.json`. Lint and format are cheap: a mutating cell cannot leave the tree
- *    in a state the project itself would reject.
+ *    `tui/package.json`. Lint, typecheck and format are cheap: a mutating cell cannot leave
+ *    the tree in a state the project itself would reject.
  *  - The package manager follows the lockfile: bun.lock/bun.lockb -> bun, package-lock.json
  *    -> npm, default bun. A `tests/` directory is a bun test target only for a bun project;
  *    npm projects need a `test` script.

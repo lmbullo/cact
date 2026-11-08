@@ -2,9 +2,9 @@
 
 WHAT IT IS
   The source string injected into every kernel child that has a prelude. It provides the
-  verbs from verbs.VERBS that need no process (map/read/session_diff/search/outline/edit/
-  splice/write/delete/mkdir/apply), the python helpers (guide/grep/recall/verbs/diff/changes/
-  undo/commit/help/final_answer/emit), and the journal they all commit through.
+  verbs from verbs.VERBS that need no process (map/read/session_diff/search/outline/skill/
+  edit/splice/write/delete/mkdir/apply), the python helpers (guide/grep/recall/verbs/diff/
+  changes/undo/commit/help/final_answer/emit), and the journal they all commit through.
 
   PRELUDE is one program assembled from five fragments, each its own module with its own
   header, so a change lands in the area it belongs to:
@@ -21,8 +21,8 @@ ENTRY POINTS
   PRELUDE          the assembled child source (KERNEL_PRELUDE)
   HEADERS_SOURCE   headers.py as text (KERNEL_HEADERS); shipped, never imported, because a
                    cell runs in a task workspace where `bench` is not on sys.path
-  Inside the namespace: map/read/session_diff/search/outline/edit/splice/write/delete/mkdir/
-  apply, guide/grep/recall/verbs/changes/diff/undo/commit/help, final_answer/emit.
+  Inside the namespace: map/read/session_diff/search/outline/skill/edit/splice/write/delete/
+  mkdir/apply, guide/grep/recall/verbs/changes/diff/undo/commit/help, final_answer/emit.
   `_commit` is the one journal entry point behind every mutation.
 
 INVARIANTS
