@@ -101,8 +101,7 @@ def _literal_newline_note(path, content):
 def write(path, content, force=False):
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "write", path=rel)
     if not isinstance(content, str):
         return _fail("bad_args", "bad_arguments", "content must be a string",
                      "write(path, content, force=False)", path=rel)
@@ -135,8 +134,7 @@ def delete(path):
     # refused because they would bypass the journal; this is the typed way to remove one.
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "delete", path=rel)
     if not _os.path.exists(target):
         return {"ok": True, "kind": "no_change", "path": rel, "reason": "missing",
                 "text": "no file at %s" % rel}
@@ -161,8 +159,7 @@ def mkdir(path):
     # typed verb keeps `mkdir` out of the shell gate and gives a clear result.
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "mkdir", path=rel)
     if _os.path.exists(target):
         if _os.path.isdir(target):
             return {"ok": True, "kind": "no_change", "path": rel, "reason": "exists",
@@ -262,8 +259,7 @@ def _edit_context(rel, body, closest=None):
 def edit(path, old, new, all=False, replace_all=None):
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "edit", path=rel)
     if not _os.path.isfile(target):
         return _fail("not_found", "not_found", "no file at %s" % rel,
                      "map(path) lists files; write(path, content) creates one", path=rel)
@@ -346,8 +342,7 @@ def edit_many(edits=None, path=None):
         new = item.get("new")
         target, rel = _resolve(item_path)
         if target is None:
-            return _fail("edit_failed", "outside_root", "%s is outside the workspace" % rel,
-                         _OUTSIDE_USE, index=index, path=rel)
+            return _outside("edit_failed", rel, "edit", index=index, path=rel)
         if rel not in originals:
             if not _os.path.isfile(target):
                 return _fail("edit_failed", "not_found", "no file at %s" % rel,
@@ -392,8 +387,7 @@ def splice(path, start, end=None, text=""):
     # end=start-1; text="" deletes the range. read() already returns numbered lines.
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "splice", path=rel)
     if not _os.path.isfile(target):
         return _fail("not_found", "not_found", "no file at %s" % rel,
                      "map(path) lists files; write(path, content) creates one", path=rel)
@@ -489,8 +483,7 @@ def apply(patch):
                          "name the target on a +++ b/path line")
         target, rel = _resolve(rel)
         if target is None:
-            return _fail("patch_failed", "outside_root", "%s is outside the workspace" % rel,
-                         _OUTSIDE_USE, path=rel)
+            return _outside("patch_failed", rel, "apply", path=rel)
         exists = _os.path.isfile(target)
         body = _read_text(target) if exists else ""
         lines = body.splitlines()

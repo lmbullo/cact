@@ -139,33 +139,37 @@ except Exception:
     _CHECK_SPECS = []
 _CHECK_NOTED = set()
 _STATUS_NOTED = set()
-# Documented rungs of the gate ladder, used only to recognize a plan command inside a shell
-# string (e.g. `cd tui && bun test`); a test that removes a gate is not a gate.
-_CHECK_GATES = ("bench/guide.py --check", "bench/smoke.py", "ruff check",
-                "bun run typecheck", "bun test", "pytest", "npm test", "tsc",
-                "go test", "cargo test")
+# A plan command is the same program with the same arguments. A file argument or `-t name`
+# is a narrowing: it runs less than the plan, so naming checks() there would be a wrong hint.
+_SHELL_SPLIT = _re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+
+
+def _plan_program(text):
+    # `cd tui && bun test` and `bun test` run with cwd=tui are the same program.
+    segments = [part.strip() for part in _SHELL_SPLIT.split(_norm_command(text)) if part.strip()]
+    for segment in reversed(segments):
+        if not segment.startswith("cd "):
+            return segment
+    return segments[-1] if segments else ""
 
 
 def _spec_names(specs, text):
-    # Exact plan command first; otherwise a documented gate the matching spec contains.
-    exact, loose = [], []
+    program = _plan_program(text)
+    if not program:
+        return []
+    names = []
     for item in specs:
         if not isinstance(item, dict):
             continue
         cmd = _norm_command(item.get("cmd") or "")
-        name = str(item.get("name") or cmd[:40])
-        if not cmd:
-            continue
-        if text == cmd:
-            exact.append(name)
-        elif any(gate in text and gate in cmd for gate in _CHECK_GATES):
-            loose.append(name)
-    return exact or loose
+        if cmd and _plan_program(cmd) == program:
+            names.append(str(item.get("name") or cmd[:40]))
+    return names
 
 
 def _check_note(command):
     # A plan command already has a cheaper shape: checks() runs it and reuses the cache.
-    # One note per cell, and silent when the command is not in the plan.
+    # One note per cell, and silent when the command only narrows a plan command.
     if "_check" in _CHECK_NOTED or not _CHECK_SPECS:
         return None
     text = _norm_command(command)

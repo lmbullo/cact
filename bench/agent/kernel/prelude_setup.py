@@ -58,6 +58,19 @@ def _fail(kind, code, message, use, **extra):
     return (globals().get("_Result") or dict)(out)
 
 
+def _outside(kind, rel, verb, **extra):
+    # Name the real root once, in both the message and the use line. An absolute path that
+    # was meant relative to the root keeps its tail as the suggestion.
+    shown = str(rel)
+    if _os.path.isabs(shown):
+        parts = [part for part in shown.split(_os.sep) if part]
+        if len(parts) > 1:
+            shown = _os.path.join(*parts[1:])
+    message = ("%s paths are relative to %s (yours were relative to the workspace root "
+               "already: use %s)" % (verb, _ROOT, shown))
+    return _fail(kind, "outside_root", message, _OUTSIDE_USE, **extra)
+
+
 def _partial_failure(results):
     # A batch is one answer: keep the good rows and name the paths that failed. Without an
     # explicit error dict the aggregate `kind` became both the error code and its message.
@@ -82,9 +95,9 @@ _ROOT = _os.getcwd()
 # The one story for scratch paths: exec/run may mutate /tmp, /var/tmp, /dev/shm and $TMPDIR
 # because they run outside the journal; the typed editors are workspace-only, and this hint is
 # what every outside_root refusal returns instead of implying /tmp works.
-_OUTSIDE_USE = ("typed editors are workspace-only (the journal cannot see a path outside it); "
-                "for scratch output use exec(shell=...) or python open(), or keep the file "
-                "inside the workspace under bench/.tmp/")
+_OUTSIDE_USE = ("paths are relative to %s; typed editors are workspace-only (the journal "
+                "cannot see a path outside it); for scratch output use exec(shell=...) or "
+                "python open(), or keep the file inside the workspace under bench/.tmp/" % _ROOT)
 _READS_CELL = {}
 # Session-level delivery ledger. A repeated read of a range that was already shown, while
 # the file is unchanged, returns a pointer instead of the same text again. `repeat=True`

@@ -8,9 +8,11 @@ WHAT IT IS
   `python3 -c` or a shell string, how many observation characters reached the model
   (`obs_chars`, `obs_chars_per_turn`), and the turn of the first mutating cell
   (`first_mutation_turn`). The bookkeeping keys measure the tax: `out_tokens` and
-  `reasoning_tokens`, `gate_cells` (an exec cell that ran the gate ladder by hand),
-  `git_cells` (typed git or `git ...` through exec) and `verify_turns` (turns after the
-  first mutation that ran no mutation). `checks_calls`/`status_calls`/`docs_calls` count
+  `reasoning_tokens`, `gate_cells` (an exec cell whose commands are all exact plan specs),
+  `narrow_cells` (the same program with extra args, e.g. one test file), `git_read_cells`
+  (status/log/diff/show) and `git_write_cells` (add/commit/push), with `git_cells` the total,
+  and `verify_turns` (turns after the first mutation that ran no mutation).
+  `checks_calls`/`status_calls`/`docs_calls` count
   parent-side tools from `turn.tool_calls`, because those calls emit no `cell.start`. The
   causal keys say *why* behavior changed: the turn the typed-dupe
   `note` first appeared (`dupe_note_turn`), the dupes after it (`dupes_after_note`), and how
@@ -45,7 +47,7 @@ INVARIANTS
 WHERE TO CHANGE
   New kernel verb ........ VERBS
   New escape metric ...... EXEC_DUPES, MUTATING_VERBS, _escape, summarize()
-  New bookkeeping metric . GATE_COMMANDS, _gate_cells, _git_cells, _verify_turns, _token_sum
+  New bookkeeping metric . _plan_specs, _plan_cells, _git_cells, _verify_turns, _token_sum
   New parent-side metric . _tool_call_count, summarize()
   New metric ............. summarize()
 """
@@ -72,11 +74,12 @@ DUPE_NOTE = "repeats a typed verb"
 # same strings inside the python cell's code.
 CHECK_COMMAND = "bun run typecheck"
 TEST_COMMAND = "bun test"
-# A cell that ran the project's gate ladder by hand. It is bookkeeping, not project work:
-# `checks()` answers the same plan in one call and reuses the Verifier's cache.
-GATE_COMMANDS = ("bench/guide.py --check", "bench/smoke.py", "ruff check",
-                 "bun run typecheck", "bun test", "pytest", "npm test", "tsc",
-                 "go test", "cargo test")
+# A cell that ran a plan command by hand. It is bookkeeping, not project work: `checks()`
+# answers the same plan in one call and reuses the Verifier's cache. The plan is server.json's
+# `checks`; the match rule is run_prelude._spec_names: same program, same args.
+_GIT_READ = frozenset({"status", "log", "diff", "show"})
+_GIT_WRITE = frozenset({"add", "commit", "push"})
+_SHELL_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
 
 def _events(state_dir: Path, task_id: str) -> list[dict]:
@@ -197,31 +200,77 @@ def _first_mutation_turn(turns: list[dict], cells: list[dict]) -> int | None:
     return None
 
 
-def _is_gate(command: str) -> bool:
-    """True when a command is one rung of the project's gate ladder."""
-    text = " ".join(str(command).split())
-    return any(marker in text for marker in GATE_COMMANDS)
+def _plan_specs(state_dir: Path) -> list[str]:
+    """The plan the worker was started with: server.json's `checks`, else no plan."""
+    try:
+        info = json.loads((state_dir / "server.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [str(item.get("cmd")) for item in info.get("checks") or []
+            if isinstance(item, dict) and item.get("cmd")]
 
 
-def _gate_cells(cells: list[dict]) -> int:
-    """exec cells that ran a gate command by hand instead of calling `checks()`."""
-    return sum(1 for cell in cells if cell.get("tool") == "exec"
-               and any(_is_gate(line) for line in _commands(cell)))
+def _plan_program(command: str) -> str:
+    """The program part: `cd tui && bun test` and `bun test` (cwd=tui) are the same program."""
+    segments = [part.strip() for part in _SHELL_SPLIT.split(
+        " ".join(str(command).split())) if part.strip()]
+    for segment in reversed(segments):
+        if not segment.startswith("cd "):
+            return segment
+    return segments[-1] if segments else ""
 
 
-def _git_cells(cells: list[dict]) -> int:
-    """git cells: the typed `git` tool or a hand-run `git ...` through exec."""
+def _plan_match(command: str, specs: list[str]) -> bool:
+    """True when the command is exactly a plan spec: same program, no extra arguments."""
+    program = _plan_program(command)
+    return bool(program) and any(_plan_program(spec) == program for spec in specs)
+
+
+def _plan_narrow(command: str, specs: list[str]) -> bool:
+    """True when the command narrows a plan spec with extra args (a file, `-t name`)."""
+    parts = _plan_program(command).split()
+    return any(parts[:len(program.split())] == program.split()
+               and len(parts) > len(program.split())
+               for program in map(_plan_program, specs))
+
+
+def _plan_cells(cells: list[dict], specs: list[str], narrow: bool = False) -> int:
+    """exec cells the plan could have answered: every command exact (or narrowed when asked)."""
     count = 0
     for cell in cells:
-        if cell.get("tool") == "git":
+        if cell.get("tool") != "exec":
+            continue
+        lines = _commands(cell)
+        if not lines:
+            continue
+        if narrow:
+            if (all(_plan_match(line, specs) or _plan_narrow(line, specs) for line in lines)
+                    and any(_plan_narrow(line, specs) for line in lines)):
+                count += 1
+        elif all(_plan_match(line, specs) for line in lines):
             count += 1
+    return count
+
+
+def _git_cells(cells: list[dict]) -> tuple[int, int]:
+    """(read-only, mutating) git cells: the typed `git` tool or `git ...` through exec."""
+    read = write = 0
+    for cell in cells:
+        actions = []
+        if cell.get("tool") == "git":
+            actions.append(str((cell.get("args") or {}).get("action") or ""))
         elif cell.get("tool") == "exec":
             for line in _commands(cell):
                 parts = line.split()
                 if parts and os.path.basename(parts[0]) == "git":
-                    count += 1
-                    break
-    return count
+                    actions.append(next((part for part in parts[1:]
+                                         if not part.startswith("-")), ""))
+        for action in actions:
+            if action in _GIT_READ:
+                read += 1
+            elif action in _GIT_WRITE:
+                write += 1
+    return read, write
 
 
 def _verify_turns(turns: list[dict], cells: list[dict]) -> int:
@@ -374,6 +423,8 @@ def summarize(state_dir: Path, task_id: str) -> dict:
     after_note = _escape([event for index, event in enumerate(events)
                           if note_index is not None and index > note_index
                           and event.get("kind") == "cell.start"])
+    plan_specs = _plan_specs(state_dir)
+    git_read, git_write = _git_cells(records)
     return {
         "id": task_id,
         "status": task.get("status"),
@@ -400,8 +451,11 @@ def summarize(state_dir: Path, task_id: str) -> dict:
         "obs_chars_per_turn": round(obs_chars / len(turns)) if turns else 0,
         "out_tokens": _token_sum(turns, "completion_tokens"),
         "reasoning_tokens": _token_sum(turns, "reasoning_tokens"),
-        "gate_cells": _gate_cells(records),
-        "git_cells": _git_cells(records),
+        "gate_cells": _plan_cells(records, plan_specs),
+        "narrow_cells": _plan_cells(records, plan_specs, narrow=True),
+        "git_cells": git_read + git_write,
+        "git_read_cells": git_read,
+        "git_write_cells": git_write,
         "verify_turns": _verify_turns(turns, records),
         "first_mutation_turn": _first_mutation_turn(turns, records),
         "dupe_note_turn": note_turn,
@@ -509,7 +563,9 @@ def main() -> int:
               f"first-mutation-turn={row['first_mutation_turn']}")
         print(f"   causal: note-turn={row['dupe_note_turn']} dupes-after-note={row['dupes_after_note']} "
               f"paged-followups={row['paged_followups']} obs-chars-per-turn={row['obs_chars_per_turn']}")
-        print(f"   bookkeeping: gate-cells={row['gate_cells']} git-cells={row['git_cells']} "
+        print(f"   bookkeeping: gate-cells={row['gate_cells']} narrow-cells={row['narrow_cells']} "
+              f"git-cells={row['git_cells']} (read={row['git_read_cells']} "
+              f"write={row['git_write_cells']}) "
               f"verify-turns={row['verify_turns']} out-tokens={row['out_tokens']} "
               f"reasoning-tokens={row['reasoning_tokens']}")
         print(f"   parent: checks_calls={row['checks_calls']} status_calls={row['status_calls']} "

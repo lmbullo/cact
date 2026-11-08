@@ -149,6 +149,40 @@ def _journal_metrics(check) -> None:
         (state / "events" / "t2.jsonl").write_text(
             "\n".join(json.dumps(event) for event in tui) + "\n", encoding="utf-8")
         tui_row = task_journal.summarize(state, "t2")
+        (state / "server.json").write_text(json.dumps({"checks": [
+            {"name": "test", "cmd": "cd tui && bun test"},
+            {"name": "lint", "cmd": "python3 -m ruff check ."},
+        ]}), encoding="utf-8")
+        plan_events = [
+            {"kind": "cell.start", "cell": 1, "tool": "exec",
+             "args": {"argv": ["bun", "test"], "cwd": "tui"}},
+            {"kind": "cell.start", "cell": 2, "tool": "exec",
+             "args": {"argv": ["bun", "test", "tests/x.test.tsx"], "cwd": "tui"}},
+            {"kind": "cell.start", "cell": 3, "tool": "exec",
+             "args": {"argv": ["bun", "test", "-t", "name"], "cwd": "tui"}},
+            {"kind": "cell.start", "cell": 4, "tool": "exec",
+             "args": {"shell": "cd tui && bun test"}},
+            {"kind": "cell.start", "cell": 5, "tool": "exec",
+             "args": {"commands": [["python3", "-m", "ruff", "check", "."],
+                                     ["bun", "test", "tests/x.test.tsx"]]}},
+            {"kind": "cell.start", "cell": 6, "tool": "exec",
+             "args": {"argv": ["bun", "run", "typecheck"]}},
+            {"kind": "cell.start", "cell": 7, "tool": "exec",
+             "args": {"shell": "git status"}},
+            {"kind": "cell.start", "cell": 8, "tool": "git",
+             "args": {"action": "log"}},
+            {"kind": "cell.start", "cell": 9, "tool": "git",
+             "args": {"action": "commit", "message": "x"}},
+        ]
+        (state / "tasks" / "t4.json").write_text(
+            json.dumps({"status": "done", "stop": "DONE"}), encoding="utf-8")
+        (state / "events" / "t4.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in plan_events) + "\n", encoding="utf-8")
+        plan_row = task_journal.summarize(state, "t4")
+    check("task_journal: a gate cell is an exact plan command; a narrowed run is its own key",
+          plan_row["gate_cells"] == 2 and plan_row["narrow_cells"] == 3
+          and plan_row["git_cells"] == 3 and plan_row["git_read_cells"] == 2
+          and plan_row["git_write_cells"] == 1, str(plan_row)[:360])
     check("task_journal: summarize reports the escape metrics and the first mutation",
           row["exec_verb_dupes"] == 1 and row["python3_c"] == 1 and row["shell"] == 1
           and row["obs_chars"] == 9 and row["first_mutation_turn"] == 2

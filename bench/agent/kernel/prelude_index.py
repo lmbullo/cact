@@ -73,8 +73,7 @@ def map(path=".", max_files=None, include=None, offset=0):
     size = 120 if max_files is None else int(max_files)
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "map", path=rel)
     if not _os.path.exists(target):
         near = []
         try:
@@ -229,8 +228,7 @@ def outline(path, max_entries=None, keys=False):
         return aggregate
     target, rel = _resolve(path)
     if target is None:
-        return _Result(_fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                             _OUTSIDE_USE, path=rel))
+        return _Result(_outside("wrong_call", rel, "outline", path=rel))
     if not _os.path.exists(target):
         return _Result(_fail("not_found", "not_found", "no file at %s" % rel,
                              "map(path) lists files; read(path) needs an existing file",

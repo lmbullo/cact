@@ -273,6 +273,11 @@ def run(check, root, kernel):
           str(cell.result)[:320])
     check("kernel: the outside_root refusal states the one scratch story",
           "workspace-only" in str(error.get("use")), str(error)[:240])
+    cell = kernel.call("read", {"path": "/workspace/x"})
+    error = (cell.envelope or {}).get("error") or {}
+    check("kernel: outside_root names the workspace root in message and use",
+          str(root) in str(error.get("message") or "")
+          and str(root) in str(error.get("use") or ""), str(error)[:320])
     cell = kernel.call("read", {"path": "definitely-missing.txt"})
     check("kernel: a missing path is not_found, not ok:true",
           not (cell.envelope or {}).get("ok", True)
@@ -443,7 +448,15 @@ def run(check, root, kernel):
            and cell.envelope.get("kind") == "git_status", notes[:300])
 
     # The plan is what the worker was started with; the kernel only has to name the typed call.
-    with kernel_for(root, check_commands=[{"name": "probe", "cmd": "echo plan-ok"}]) as plan_kernel:
+    with kernel_for(root, check_commands=[{"name": "probe", "cmd": "echo plan-ok"},
+                                          {"name": "test", "cmd": "cd tui && bun test"}]) as plan_kernel:
+        probe = plan_kernel.run("print(_check_note('cd tui && bun test'))")
+        check("kernel: an exact plan command names checks('<spec>')",
+              "checks('test')" in probe.stdout, probe.stdout[:200])
+        for command in ("bun test tests/x.test.tsx", "bun test -t name"):
+            probe = plan_kernel.run("_CHECK_NOTED.clear(); print(_check_note(%r))" % command)
+            check("kernel: a narrowed plan command (%s) gets no checks() note" % command,
+                  "None" in probe.stdout, probe.stdout[:200])
         probe = plan_kernel.run("print(_check_note('bun test tests/'))")
         check("kernel: an unrelated bun test tests/ gets no checks() note",
                "None" in probe.stdout, probe.stdout[:200])

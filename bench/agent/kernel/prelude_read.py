@@ -256,8 +256,7 @@ def read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, 
         return _Result(aggregate)
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "read", path=rel)
     if not _os.path.exists(target):
         near = []
         try:
@@ -452,8 +451,7 @@ def grep(pattern, path=".", max_results=None, regex=True, include=None, context=
                             total=len(hits))
     target, rel = _resolve(path)
     if target is None:
-        return _fail("wrong_call", "outside_root", "%s is outside the workspace" % rel,
-                     _OUTSIDE_USE, path=rel)
+        return _outside("wrong_call", rel, "search", path=rel)
     if not _os.path.exists(target):
         return _fail("not_found", "not_found", "no path at %s" % rel,
                      "map(path) lists files; search(pattern, path='.') walks the tree",
