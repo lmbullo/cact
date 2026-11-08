@@ -16,6 +16,10 @@
  *  - Reuse before spawn: a second `./bin/code` in the same directory attaches to the running
  *    server instead of starting a rival one. A stale server.json (dead pid, bad health) is
  *    replaced.
+ *  - server.json is the only rendezvous between the pieces: the server publishes it once it
+ *    knows its port, stop.ts removes it, this launcher reads it to reuse a healthy server, and a
+ *    running client re-reads it to follow a restart whose port changed (client.tsx,
+ *    publishedUrl).
  *  - The server is detached and outlives the TUI; stop it with `./bin/code-stop` (stop.ts).
  *  - State dir: CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then
  *    workspaces/<sha256(cwd)[:16]>/ — the same formula as server.ts and stop.ts. Change it in

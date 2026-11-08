@@ -7,6 +7,14 @@
  *  All state is local UI state; the truth is the server's snapshot/event stream, re-fetched
  *  on connect and on every reconnect (1s backoff, Ctrl-R forces one).
  *
+ *  CONNECTION
+ *  The screen outlives the server process: each reconnect attempt first asks the old URL for
+ *  `/health`, and when that is dead it re-reads `<state>/server.json`, because a restarted
+ *  server (`bin/code-stop`, then `bin/code`) binds a new OS-chosen port. A different healthy
+ *  URL replaces `baseUrl`, which re-opens the socket there, so a stopped/restarted/returning
+ *  server shows up without closing and reopening the TUI. A slow watchdog repeats the probe
+ *  while the screen thinks it is connected, so a half-open socket cannot freeze the board.
+ *
  *  This file holds `App` (state + keys + layout) and `main`; the pieces it renders live next
  *  to it: theme.ts (palette, status words, one-line helpers), board-view.tsx (Rule,
  *  SectionHeader, TaskRow), log-view.tsx (EventView, LogView).
@@ -50,7 +58,13 @@
  *  - `server.stale` is read-only truth from the snapshot: the server re-hashes its own files
  *    and this screen only repeats it. The masthead says `stale` (one word, beside `offline`);
  *    the hairline names the fix, `bin/code-stop`, because nothing in the client can reload a
- *    detached process. There is no polling here: the snapshot on connect is enough.
+ *    detached process. A `/health` read refreshes those read-time bits between snapshots; the
+ *    screen never computes them itself.
+ *  - `baseUrl` is the only address the screen talks to: the socket, the event fetch, the queue
+ *    and the cancel all read it, and it changes only when the state dir publishes a healthy
+ *    server somewhere else. Nothing here starts, stops or restarts a server.
+ *  - The reconnect loop is the only clock that reacts to the server; the watchdog is the only
+ *    poll, it is one `/health` read every `WATCHDOG_MS`, and it never cancels or queues work.
  *
  * WHERE TO CHANGE
  *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
@@ -64,6 +78,8 @@
  *                                            list-model.nextRunningTaskId
  *  Data contract ............................ types.ts
  *  What `stale` means ...................... source-hash.ts, ServerInfo.source in server.ts
+ *  Reconnecting / following a restart ...... the connection effect and the watchdog below,
+ *                                            publishedUrl above `App`
  */
 import {
   createCliRenderer,
@@ -78,6 +94,8 @@ import {
   useSelectionHandler,
   useTerminalDimensions,
 } from "@opentui/react";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ServerInfo, Snapshot, Task, TaskEvent, WsMessage } from "./types";
 import {
@@ -99,15 +117,79 @@ import { EmptyState, LogHeader, Rule, SectionHeader, TaskRow, TopBar } from "./b
 import { LogView, lastCheck } from "./log-view";
 import { copyText } from "./clipboard";
 
+/** How long one `/health` read may take before the server counts as down. */
+const PROBE_TIMEOUT_MS = 1200;
+/** Delay between reconnect attempts; every miss also re-reads `server.json`. */
+const RETRY_MS = 1000;
+/** How often a screen that thinks it is connected re-probes, so a half-open socket cannot stick. */
+const WATCHDOG_MS = 5000;
+
+/**
+ * One `/health` read: the server's own view of itself, or null when it is down, too slow to
+ * answer, or a different workspace's server on a recycled port.
+ */
+async function probeServer(url: string, workspace: string): Promise<ServerInfo | null> {
+  try {
+    const response = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const info = (await response.json()) as ServerInfo;
+    if (!info || !info.port) return null;
+    return resolve(info.workspace ?? "") === resolve(workspace) ? info : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The URL the state dir publishes now, when it is not the one already in use. A restarted server
+ * binds a fresh OS-chosen port and rewrites `server.json`; reading it is the only way a running
+ * screen can find the new process without being relaunched. A stopped server leaves no file
+ * (`stop.ts` removes it), and an unreadable or foreign one is simply not an answer.
+ */
+function publishedUrl(stateDir: string | null, workspace: string, current: string): string | null {
+  if (!stateDir) return null;
+  try {
+    const info = JSON.parse(readFileSync(join(stateDir, "server.json"), "utf8")) as ServerInfo;
+    if (!info || !info.port) return null;
+    if (info.workspace && resolve(info.workspace) !== resolve(workspace)) return null;
+    const url = `http://127.0.0.1:${info.port}`;
+    return url === current ? null : url;
+  } catch {
+    return null;
+  }
+}
+
+/** Do two server reads agree on the bits the screen draws? A health probe refreshes only these. */
+function sameServerRead(current: ServerInfo | null, fresh: ServerInfo): boolean {
+  if (!current) return false;
+  return (
+    current.port === fresh.port &&
+    current.pid === fresh.pid &&
+    current.model === fresh.model &&
+    current.effort === fresh.effort &&
+    current.hasKey === fresh.hasKey &&
+    current.stale === fresh.stale &&
+    (current.changed ?? []).join(",") === (fresh.changed ?? []).join(",")
+  );
+}
+
 /** The board: task list + live run log + one prompt box, mounted against one server's HTTP URL. */
 export function App({
   httpUrl,
   workspace,
+  stateDir = process.env.CODE_TUI_STATE ?? null,
   copy = copyText,
   autoAdvanceMs = 5000,
 }: {
   httpUrl: string;
   workspace: string;
+  /**
+   * The launcher's state dir (CODE_TUI_STATE). Its `server.json` is how this screen finds a
+   * restarted server; without it the reconnect loop just retries the same URL.
+   */
+  stateDir?: string | null;
   /** Clipboard writer; tests inject a spy so they never touch the host clipboard. */
   copy?: (renderer: CliRenderer, text: string) => Promise<boolean>;
   /** Idle time before a finished log moves to the next running task (ms); tests shorten it. */
@@ -127,6 +209,15 @@ export function App({
   const [promptRows, setPromptRows] = useState(1);
   const [toast, setToast] = useState("");
   const [socketEpoch, setSocketEpoch] = useState(0);
+  /**
+   * Where the server answers now: the launcher's URL until a restart publishes another port.
+   * The socket, the event fetch, the queue and the cancel all read it.
+   */
+  const [baseUrl, setBaseUrl] = useState(httpUrl);
+  /** Readable from a timer without making it an effect dep; mirrors `connected`. */
+  const connectedRef = useRef(false);
+  /** False until the first socket opens, so only a *return* is announced as `server is back`. */
+  const everConnectedRef = useRef(false);
   /** Wall clock for live row durations; only ticks while something is running. */
   const [now, setNow] = useState(() => Date.now());
   /** "list" is the default screen; "log" is the per-task live run view opened on demand. */
@@ -221,6 +312,12 @@ export function App({
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [selectTask]);
 
+  /**
+   * The connection loop. A socket close is not the only way to lose a server, so every attempt
+   * is a probe first: the same URL while it answers, otherwise the port `server.json` publishes
+   * now. A different healthy URL moves `baseUrl`, which tears this effect down and opens the
+   * next one there; the snapshot on open then refreshes the board, the masthead and `stale`.
+   */
   useEffect(() => {
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
@@ -237,13 +334,27 @@ export function App({
       });
     };
 
-    const connect = () => {
-      socket = new WebSocket(`${httpUrl.replace(/^http/, "ws")}/ws`);
-      socket.onopen = () => setConnected(true);
+    /** One pending attempt at a time: a new schedule replaces the old timer. */
+    const schedule = (run: () => void) => {
+      if (stopped) return;
+      if (retry) clearTimeout(retry);
+      retry = setTimeout(run, RETRY_MS);
+    };
+
+    const open = () => {
+      socket = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
+      socket.onopen = () => {
+        const back = everConnectedRef.current && !connectedRef.current;
+        everConnectedRef.current = true;
+        connectedRef.current = true;
+        setConnected(true);
+        if (back) notify("server is back");
+      };
       socket.onerror = () => socket?.close();
       socket.onclose = () => {
+        connectedRef.current = false;
         setConnected(false);
-        if (!stopped) retry = setTimeout(connect, 1000);
+        schedule(() => void reconnect());
       };
       socket.onmessage = (message) => {
         let data: WsMessage;
@@ -281,13 +392,59 @@ export function App({
       };
     };
 
-    connect();
+    /**
+     * One reconnect attempt. The current URL wins when it answers (the common case: the socket
+     * dropped but the process never did); otherwise the published port is probed before it is
+     * adopted, so a dead or foreign entry in `server.json` cannot move the screen anywhere.
+     */
+    const reconnect = async () => {
+      if (stopped) return;
+      if (await probeServer(baseUrl, workspace)) {
+        if (stopped) return;
+        open();
+        return;
+      }
+      const published = publishedUrl(stateDir, workspace, baseUrl);
+      if (published && (await probeServer(published, workspace))) {
+        if (stopped) return;
+        // The effect re-runs on the new address and opens the socket there.
+        setBaseUrl(published);
+        return;
+      }
+      schedule(() => void reconnect());
+    };
+
+    open();
     return () => {
       stopped = true;
       if (retry) clearTimeout(retry);
       socket?.close();
     };
-  }, [httpUrl, selectTask, socketEpoch]);
+  }, [baseUrl, stateDir, workspace, notify, selectTask, socketEpoch]);
+
+  /**
+   * The watchdog. A socket can die without a close event (a killed server, a suspended laptop)
+   * and `stale`/`changed` are re-hashed per read, so one light probe keeps the masthead honest
+   * between snapshots. A failed probe drops the socket and restarts the loop, which is what
+   * re-reads `server.json`; a healthy one only refreshes the read-time bits.
+   */
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void (async () => {
+        const fresh = await probeServer(baseUrl, workspace);
+        if (!fresh) {
+          connectedRef.current = false;
+          setConnected(false);
+          setSocketEpoch((value) => value + 1);
+          return;
+        }
+        setServer((current) =>
+          sameServerRead(current, fresh) ? current : { ...(current ?? fresh), ...fresh },
+        );
+      })();
+    }, WATCHDOG_MS);
+    return () => clearInterval(timer);
+  }, [baseUrl, workspace]);
 
   useEffect(() => {
     if (!selected || view !== "log") {
@@ -298,7 +455,7 @@ export function App({
     (async () => {
       try {
         const response = await fetch(
-          `${httpUrl}/api/tasks/${encodeURIComponent(selected)}/events?limit=800`,
+          `${baseUrl}/api/tasks/${encodeURIComponent(selected)}/events?limit=800`,
         );
         if (!response.ok) return;
         const data = (await response.json()) as { events?: TaskEvent[] };
@@ -313,7 +470,7 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [httpUrl, selected, connected, view]);
+  }, [baseUrl, selected, connected, view]);
 
   const ordered = useMemo(() => orderTasks(tasks, order), [tasks, order]);
   orderedRef.current = ordered;
@@ -387,7 +544,7 @@ export function App({
       if (inputRef.current) inputRef.current.clear();
       setInput("");
       try {
-        const response = await fetch(`${httpUrl}/api/tasks`, {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ prompt }),
@@ -410,7 +567,7 @@ export function App({
         inputRef.current?.focus();
       }
     },
-    [httpUrl, notify, openLog],
+    [baseUrl, notify, openLog],
   );
 
   const cancelSelected = useCallback(async () => {
@@ -422,7 +579,7 @@ export function App({
     }
     try {
       const response = await fetch(
-        `${httpUrl}/api/tasks/${encodeURIComponent(task.id)}/cancel`,
+        `${baseUrl}/api/tasks/${encodeURIComponent(task.id)}/cancel`,
         { method: "POST" },
       );
       if (!response.ok) notify(`cancel failed (${response.status})`);
@@ -430,7 +587,7 @@ export function App({
     } catch (error) {
       notify(`cancel failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [httpUrl, notify, tasks]);
+  }, [baseUrl, notify, tasks]);
 
   useKeyboard((key: KeyEvent) => {
     // Every key is input: an arrow in a finished log restarts the auto view changer's clock.

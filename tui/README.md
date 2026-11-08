@@ -38,7 +38,9 @@ interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).
 - `clipboard.ts` owns the one write to the user's clipboard: host clipboard first, OSC 52
   fallback; a remote terminal uses OSC 52 only.
 - The server broadcasts task updates and events over WebSocket; the TUI keeps only in-memory
-  state and reconnects every second on close. There is no TUI-side database.
+  state and reconnects every second on close. There is no TUI-side database. A reconnect first
+  probes the URL it knows and, when that server is gone, re-reads `server.json` in the state
+  dir, so a restarted server on a new port is picked up without closing and reopening the TUI.
 
 Invariants:
 
@@ -97,6 +99,16 @@ red when the last snapshot said this server is running older code than the tree 
 the files the detached process imported at boot, `src/server.ts`, `src/worker-events.ts` and
 `src/detect-checks.ts`).
 One blank row follows it, so the list starts with air rather than against a bar.
+
+`offline` is not a dead end and never needs a relaunch. The screen retries every second; each
+attempt asks the URL it knows for `/health`, and when that process is gone it re-reads
+`server.json` in the state dir and adopts the port published there once it answers. So
+`bin/code-stop` turns the bar to `offline` within a second, and the next `bin/code` — a fresh
+server on a fresh port — brings the board back with a `server is back` toast. A restart also
+rewrites the tasks: a `running` task does not survive it, so the row returns `failed` with
+`server restarted while this task was running`. A slow watchdog repeats the `/health` probe every
+five seconds while the screen thinks it is connected, so a half-open socket cannot freeze the
+board, and the same read refreshes `stale` between snapshots. `Ctrl+R` forces one attempt now.
 
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
@@ -481,7 +493,7 @@ the newest tasks (no server or key needed): `python3 ../bench/task_journal.py --
 
 | Symptom | Check |
 |---|---|
-| board stale / `reconnecting` | `cat <state-root>/workspaces/<hash>/server.log`; `Ctrl+R`; `server.json` for pid/port |
+| board stale / `reconnecting` | `cat <state-root>/workspaces/<hash>/server.log`; `Ctrl+R`; `server.json` for pid/port. A stopped or restarted server is followed by itself — the board goes `offline` and comes back on the new port |
 | masthead `stale` | this server runs older code than the tree: `bin/code-stop`, then `bin/code`; `/health` lists the files in `changed` |
 | server dead | `bin/code-stop`, then `bin/code`; a stale `launch.lock` is cleared by the launcher |
 | `no api key` | `~/.config/code-tui/env` or `DEEPSEEK_API_KEY` in the server environment |
