@@ -9,7 +9,9 @@
  *  below it in the same column the prompt used.
  *
  *  The run's state is rendered exactly once — by the log header, from `Task.status` — so the
- *  body must never repeat the status word and the lifecycle events must add no row at all.
+ *  body must never repeat the status word and the lifecycle events must add no row at all. The
+ *  header also says how a settled run ended (stop reason, error count, last failed check), which
+ *  is why the closing summary block carries only its cell count.
  *
  * ENTRY POINTS
  *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
@@ -24,7 +26,8 @@
  *    whole.
  *  - Exactly one status word per log is the invariant: the header's. The same holds for the
  *    counters (steps, tokens in/out, cache rate, context window): the header prints them once
- *    and the closing block repeats none of them.
+ *    and the closing block repeats none of them. How the run ended — the stop reason, the error
+ *    count, the failed check — is the header's line too, never the summary block's.
  *  - A lifecycle row or a second status word on the closing block is a regression, not a
  *    wording preference.
  *  - React `act(...)` warnings in `bun test` are expected noise.
@@ -34,6 +37,7 @@
  *  Which kinds are silent .. src/log-view.tsx (isSilent)
  *  The opening block ........ src/log-view.tsx (PromptView)
  *  The status line .......... src/board-view.tsx (LogHeader)
+ *  The last verdict .......... src/log-view.tsx (lastCheck) + the `check` event
  *  A new event kind ........ python/worker.py emit(), src/types.ts, a case here
  */
 import { afterAll, expect, test } from "bun:test";
@@ -182,11 +186,11 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(noticeLine).toContain("project check still fails");
 
   // The final event closes the log with the summary block. The header above already owns the
-  // run's state and its live counters, so the closing head names itself (`▸ summary`) and
-  // carries only what the header cannot: why the run stopped, its cell and error counts. That
-  // is the one source of truth — no second status word, no copied steps, tokens, cache rate or
-  // context window. A task with a start time also carries the timeline gutter, which the wrap
-  // must leave room for.
+  // run's state, its counters and how it ended (stop reason, error count, last failed check),
+  // so the closing head names itself (`▸ summary`) and carries only the cell count. That is the
+  // one source of truth — no second status word, no copied steps, tokens, cache rate or context
+  // window. A task with a start time also carries the timeline gutter, which the wrap must
+  // leave room for.
   const summary = "DONE: " + "y".repeat(300);
   await push(6, {
     kind: "final",
@@ -198,6 +202,7 @@ test("live log renders one line per event and truncates long payloads", async ()
     task: {
       ...task,
       status: "done",
+      stop: "DONE",
       startedAt: 1,
       steps: 7,
       usage: {
@@ -217,14 +222,17 @@ test("live log renders one line per event and truncates long payloads", async ()
   const finalRows = frame.split("\n");
   const header = finalRows.find((line) => line.includes("esc/enter: back"))!;
   expect(header).toContain("✓ done");
+  expect(header).toContain("DONE");
   expect(header).toContain("7 steps");
   expect(header).toContain("↑3.6k ↓610");
   expect(header).toContain("83% cache");
   // One status word on the whole log: the header's.
   expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
   const finalLine = finalRows.find((line) => line.includes("▸ summary"))!;
-  expect(finalLine).toContain("stop=DONE");
   expect(finalLine).toContain("3 cells");
+  // The stop reason moved up to the header: the closing block never repeats it.
+  expect(finalLine).not.toContain("stop=");
+  expect(finalLine).not.toContain("errors");
   expect(finalLine).not.toContain("7 steps");
   expect(finalLine).not.toContain("↑");
   expect(finalLine).not.toContain("cache");
@@ -283,6 +291,132 @@ test("a long prompt opens the log whole, wrapped instead of clipped", async () =
   expect(first).toMatch(/^ {5}w00/);
   expect(first).not.toContain("…");
   expect(frame.split("\n").every((line) => line.length <= 80)).toBe(true);
+
+  await dispose();
+  task = baseTask;
+});
+
+/** The one row that answers "how did this end?": the status line, found by its fixed hint. */
+const headerLine = (frame: string) => frame.split("\n").find((line) => line.includes("esc/enter: back"))!;
+
+/** Open the log for the current `task` at `width` and hand back the render setup. */
+const openLog = async (width: number) => {
+  const setup = await testRender(<App httpUrl={httpUrl} workspace="/tmp/ws" />, { width, height: 24 });
+  await setup.waitFor(() => setup.captureCharFrame().includes(task.id.slice(2)));
+  await setup.flush();
+  setup.mockInput.pressEnter();
+  await settle();
+  await setup.flush();
+  return setup;
+};
+
+test("a settled run's header carries its stop reason and error count", async () => {
+  // A done task that ran out of steps and recorded two errors: the header must say both, on the
+  // one row it already uses, without pushing the counters it already renders off the line.
+  task = {
+    ...baseTask,
+    id: "t-bbbb1111",
+    status: "done",
+    stop: "TRUNCATED",
+    errors: 2,
+    steps: 4,
+    wallMs: 4200,
+    usage: { prompt_tokens: 1200, completion_tokens: 400 },
+  };
+  const setup = await openLog(100);
+  const { captureCharFrame, dispose } = setup;
+
+  const frame = captureCharFrame();
+  const rows = frame.split("\n");
+  const header = headerLine(frame);
+  expect(header).toContain("✓ done");
+  expect(header).toContain("TRUNCATED");
+  expect(header).toContain("2 errors");
+  // The counters still share the line; only their tail may give way.
+  expect(header).toContain("4 steps");
+  expect(header).toContain("esc/enter: back");
+  expect(header.length).toBeLessThanOrEqual(100);
+  // One row, once: the reason is not repeated anywhere else on the screen.
+  expect(rows.filter((line) => line.includes("TRUNCATED")).length).toBe(1);
+  expect(rows.filter((line) => line.includes("2 errors")).length).toBe(1);
+
+  await dispose();
+  task = baseTask;
+});
+
+test("a failed check's name and first failing line ride the header, clipped to 60", async () => {
+  task = { ...baseTask, id: "t-cccc2222", status: "failed", stop: "DONE", steps: 6 };
+  const setup = await openLog(60);
+  const { captureCharFrame, flush, dispose } = setup;
+
+  // The journal's `check` event is the only source of the failing line: nothing is re-run.
+  const line = "src/client.test.tsx(12,17): error TS2304: Cannot find name 'disposeTask' and the "
+    + "rest of a compiler message that cannot possibly fit on one row";
+  sockets.at(-1)!.send(JSON.stringify({
+    type: "event",
+    taskId: task.id,
+    event: { seq: 1, ts: 1, kind: "check", check: { ok: false, name: "typecheck", line } },
+  }));
+  await settle();
+  await flush();
+
+  const frame = captureCharFrame();
+  const rows = frame.split("\n");
+  const header = headerLine(frame);
+  expect(header).toContain("✖ failed");
+  expect(header).toContain("DONE");
+  expect(header).toContain("typecheck:");
+  expect(header).toContain("…");                 // clipped, not wrapped
+  expect(header).not.toContain("compiler message");
+  expect(header.length).toBeLessThanOrEqual(60);
+  // One row still: the long line grew no second row and pushed nothing off the screen.
+  expect(rows.filter((entry) => entry.includes("typecheck:")).length).toBe(1);
+  expect(rows.every((entry) => entry.length <= 60)).toBe(true);
+  // A passing check adds nothing extra, so the same task ends up with the shorter line.
+  sockets.at(-1)!.send(JSON.stringify({
+    type: "event",
+    taskId: task.id,
+    event: { seq: 2, ts: 1, kind: "check", check: { ok: true, name: "typecheck", line: "" } },
+  }));
+  await settle();
+  await flush();
+  const passing = headerLine(captureCharFrame());
+  expect(passing).not.toContain("typecheck");
+  expect(passing).not.toContain("…");
+
+  await dispose();
+  task = baseTask;
+});
+
+test("a running task shows no stop reason and its counters do not move", async () => {
+  // `stop` is already on the task (a snapshot can carry it), yet a live run must not print it —
+  // and a failing health check must not shift the counters either.
+  task = {
+    ...baseTask,
+    id: "t-dddd3333",
+    status: "running",
+    stop: "DONE",
+    startedAt: 1,
+    steps: 3,
+    progress: { steps: 3, tokensIn: 1240, tokensOut: 210 },
+  };
+  const setup = await openLog(80);
+  const { captureCharFrame, flush, dispose } = setup;
+
+  const before = headerLine(captureCharFrame());
+  expect(before).toContain("● running");
+  expect(before).toContain("3 steps");
+  expect(before).not.toContain("DONE");
+
+  sockets.at(-1)!.send(JSON.stringify({
+    type: "event",
+    taskId: task.id,
+    event: { seq: 1, ts: 1, kind: "check", check: { ok: false, name: "typecheck", line: "still broken" } },
+  }));
+  await settle();
+  await flush();
+  const after = headerLine(captureCharFrame());
+  expect(after).toBe(before);
 
   await dispose();
   task = baseTask;

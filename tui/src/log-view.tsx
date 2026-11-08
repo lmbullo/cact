@@ -8,13 +8,15 @@
  *  notice), final (the closing summary block), error, stderr and log. The lifecycle kinds
  *  (started/finished/queued/pid), cell.start and cell.end render nothing from the journal body:
  *  they are history or the task's state, which the log header shows live from `Task` (see
- *  INVARIANTS). When the task has a start time, every row carries a
- *  dim `+12s` gutter so the run reads as a timeline.
+ *  INVARIANTS). A `check` event is silent too: how the last verification ended is the header's
+ *  line, and `lastCheck` is what hands it there. When the task has a start time, every row
+ *  carries a dim `+12s` gutter so the run reads as a timeline.
  *
  * ENTRY POINTS
  *  PromptView({task, width, origin})  the log's opening block: `▸ prompt` + the whole prompt
  *  EventView({event, width, origin, status})  one event -> one row, or null when it is silent
  *  LogView({task, events, width})     the scrollbox; nothing when no task is open
+ *  lastCheck(events)                  the task's newest verdict, for the log header
  *
  * INVARIANTS
  *  - One source of truth for the run's state: the log header (board-view.LogHeader) renders
@@ -22,8 +24,9 @@
  *    the final block — so the screen cannot show `queue` and `queued` at once, or keep a stale
  *    `queued` above a run that has moved on.
  *  - The header also owns the live counters (steps, tokens in/out, cache rate, context
- *    window, duration), so the closing block carries only what the header cannot: why the run
- *    stopped, its cell and error counts.
+ *    window, duration) and, once the run has settled, how it ended: the stop reason, the error
+ *    count and the last failed check. The closing block therefore carries only the cell count —
+ *    one fact, one place.
  *  - The log is bookended: the prompt block at the top and the summary block at the bottom share
  *    one shape — a marker + one word on the head row, then a blank row and the prose wrapped in
  *    the same INDENT column by theme.wrapText. Start and finish must line up, so a change to
@@ -44,6 +47,7 @@
  * WHERE TO CHANGE
  *  A new event kind .................... EventView's kind switch + types.ts
  *  Which kinds stay silent ............. isSilent
+ *  The header's last verification ...... lastCheck
  *  The opening prompt block ........... PromptView
  *  The counters on the closing block .. EventView's `final` case
  *  How a block wraps .................. theme.wrapText (SUMMARY_MAX_LINES)
@@ -53,7 +57,7 @@
  */
 import type { RGBA } from "@opentui/core";
 import { C, STATUS, clip, elapsed, lineCount, oneLine, toolArgs, wrapText } from "./theme";
-import type { Task, TaskEvent, TaskStatus } from "./types";
+import type { CheckState, Task, TaskEvent, TaskStatus } from "./types";
 
 /**
  * The one column a log block's body is set in. The prompt at the top and the final summary at
@@ -82,14 +86,29 @@ function noticeOf(event: TaskEvent): string {
  * True for an event that renders no row. The lifecycle kinds (queued, started, pid, finished)
  * are the task's state, which the log header shows live from `Task`; drawing the journal's copy
  * would print the same fact twice — and print `queued` forever above a run that left it behind.
+ * A `check` event is the same rule: it is how the run's verification ended, which the header
+ * says in one line (lastCheck), not something the run's timeline prints.
  * A turn is silent unless it carries a notice (see noticeOf).
  */
 function isSilent(event: TaskEvent): boolean {
-  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.end") {
+  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.end" || event.kind === "check") {
     return true;
   }
   if (event.kind === "turn") return noticeOf(event) === "";
   return false;
+}
+
+/**
+ * The task's newest verification verdict: the `check` event with the highest seq, or null when
+ * its journal has none. The header reads this and only this, so a later pass clears an earlier
+ * failure on screen and nothing is ever re-run to find out.
+ */
+export function lastCheck(events: TaskEvent[]): CheckState | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.kind === "check" && event.check) return event.check;
+  }
+  return null;
 }
 
 /**
@@ -212,13 +231,9 @@ export function EventView({
     // from the event when it has not: the header already spells the state out, so the closing
     // block colours it and names itself instead of printing the same word or glyph twice.
     const color = finalColor(status ?? String(data.status ?? ""));
-    const meta = [
-      data.stop ? `stop=${String(data.stop)}` : "",
-      data.calls !== undefined ? `${String(data.calls)} cells` : "",
-      data.errors !== undefined ? `${String(data.errors)} errors` : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    // Only the cell count: the header above already prints the stop reason, the error count and
+    // the last check's verdict, and a number or a word never appears twice on this screen.
+    const meta = data.calls !== undefined ? `${String(data.calls)} cells` : "";
 
     // The summary is the editor's note and closes the bracket the prompt opened: same head
     // shape, one blank row, the same INDENT column, wrapped to the pane and never clipped.

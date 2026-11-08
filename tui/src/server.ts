@@ -24,7 +24,9 @@
  *  - The worker speaks `@@TUI@@`-prefixed JSON lines on stdout. handleWorkerLine() is the
  *    only parser; any other line becomes a `log` event. Message shape lives in
  *    tui/python/worker.py. `cell.start`/`cell.end` are journal history only (`cell.end` is
- *    the compact per-call result task_journal reads); `turn` and `final` drive live state.
+ *    the compact per-call result task_journal reads); `turn` and `final` drive live state, and
+ *    `check` is journaled as its own event so the log header can name a failed verification
+ *    without re-running it.
  *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
  *  - A `turn` message folds the provider's usage into `Task.progress` (turn number, in/out
@@ -363,6 +365,18 @@ function handleWorkerLine(task: Task, raw: string): void {
       });
       break;
     }
+    case "check":
+      // The verdict rides its own event so the log header can name a failed check from the
+      // journal alone: the turn that caused it says only pass/fail. Capped like any payload.
+      appendEvent(task, {
+        kind: "check",
+        check: {
+          ok: Boolean(message.ok),
+          name: String(capString(message.name ?? "", 200)),
+          line: String(capString(message.line ?? "", 600)),
+        },
+      });
+      break;
     case "log":
       appendEvent(task, { kind: "log", text: capString(message.text, 4000) as string });
       break;

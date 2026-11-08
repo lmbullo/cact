@@ -186,7 +186,7 @@ as journal history; they are not rendered.
    4.5s · 'a.py'
    6.0s ↺ [finish] final_answer rejected: the project check still fails
 
-   7.5s ▸ summary  stop=DONE · 3 cells · 0 errors
+   7.5s ▸ summary  3 cells
 
      Retry added to the fetch helper; the backoff path is covered by a test.
 
@@ -202,9 +202,25 @@ as journal history; they are not rendered.
 
 The log is the same screen with its content pane swapped: the masthead, the breath under it, a
 status line, the events, and the one hairline over the prompt. The status line carries the dot,
-the status word, the short handle, then `esc/enter: back` and the live counters; the hint is
-never dropped and the counters disappear from the tail as the terminal narrows. It does not
-repeat the prompt — the log opens with that in full, right below.
+the status word, the short handle, then how the run ended, then `esc/enter: back` and the live
+counters; the hint is never dropped and the counters disappear from the tail as the terminal
+narrows. It does not repeat the prompt — the log opens with that in full, right below.
+
+Once the run has settled, the line also answers "how did this end?" at a glance, from the task
+JSON and the journal alone: the stop reason (`Task.stop` — `DONE`, `TRUNCATED`, `LLM_FAILED`,
+`GOAL_UNMET`, ...), the error count when the task recorded any (`Task.errors`), and — when the
+last `check` event of the journal failed — the check's name with the first failing line of its
+output, clipped to whatever the line has left. A check that passed adds nothing. A queued or
+running task has no stop reason yet, so it prints none of this and its counters do not move.
+
+```
+  ✓ done  #4f7c1  DONE   esc/enter: back · 7 steps · ↑12.4k ↓1.2k · 11s · 62% cache
+  ✖ failed  #9a2b0  GOAL_UNMET  typecheck: src/client.test.tsx(12,17): error TS2304: …  esc/enter: back
+```
+
+The failing check keeps a third of the row before the counters start filling it, so the counters
+give way (from the tail) rather than the verdict. At 60 columns the same line is
+`✖ failed  #9a2b0  GOAL_UNMET  typecheck: src… esc/enter: back`: still one row, still clipped.
 
 Those counters are the log's data row, and the only one. Left to right: turns taken, tokens in
 and out (`↑` prompt, `↓` completion, both summed over turns), the wall time, the prompt-cache
@@ -227,13 +243,13 @@ greys, the arguments use body ink, and nothing is bold. Colour appears only wher
 something — amber for a rejected or staged finish, clay for an error, the closing marker's
 status colour. That is the difference between a log you scan and a log that glares.
 
-The final event is the one block that grows: its head row (`▸ summary  stop=DONE · 3 cells ·
-0 errors`) is followed by one blank row and the agent's whole summary — paragraph breaks and
-bullets included — word-wrapped into an indented column by `theme.wrapText`. Nothing is
-clipped. Past `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than
-dropped. The head carries only what the status line cannot: why the run stopped, its cell and
-error counts. The status word, the steps, the tokens, the cache rate, the context window and the
-wall time live up there; the closing marker only borrows the run's status colour.
+The final event is the one block that grows: its head row (`▸ summary  3 cells`) is followed by
+one blank row and the agent's whole summary — paragraph breaks and bullets included —
+word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
+`SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped. The head
+carries only what the status line cannot: the cell count. The stop reason, the error count, the
+failed check, the status word, the steps, the tokens, the cache rate, the context window and the
+wall time all live up there; the closing marker only borrows the run's status colour.
 
 The log opens with the same block shape, upside: a head row (`0ms ▸ prompt`, the model in the
 quiet tail) and the prompt wrapped into the same four-column indent, so the start and the finish
@@ -392,17 +408,22 @@ there is no reload path, and a running server never re-imports itself.
 ## 9. Events and statuses
 
 Each task's journal is append-only JSONL with `seq`, `ts`, `kind`, and kind-specific fields.
-Kinds: `queued`, `started`, `pid`, `cell.start`, `cell.end`, `turn`, `log`, `stderr`,
-`error`, `final`, `finished`. The lifecycle kinds, `cell.start` and `cell.end` are journal
-history only: their live state is `Task.status` (and `Task.pid`), which the board and the log
-status line render, so the TUI draws them nowhere. `turn` (with a `notice`), `log`, `stderr`,
-`error` and `final` are what the log body shows. `cell.start` is the call about to run;
-`cell.end` is its compact result for analysis — `{cell, tool, ok, verb_kind, code, page,
+Kinds: `queued`, `started`, `pid`, `cell.start`, `cell.end`, `turn`, `check`, `log`, `stderr`,
+`error`, `final`, `finished`. The lifecycle kinds, `cell.start`, `cell.end` and `check` are
+journal history only: their live state is `Task.status` (and `Task.pid`), which the board and
+the log status line render, so the TUI draws them nowhere. `turn` (with a `notice`), `log`,
+`stderr`, `error` and `final` are what the log body shows. `cell.start` is the call about to
+run; `cell.end` is its compact result for analysis — `{cell, tool, ok, verb_kind, code, page,
 chars, duration_ms, notes}` with no payload body — and `bench/task_journal.py` prefers it for
-`obs_chars`, `rejected` and `dupe_note_turn`. `turn` keeps its existing shape, so a client that
-predates `cell.end` still reads every run. Payloads are capped before storage: strings at
-16000 chars, arrays at 40 items, nesting at depth 12 (`[depth]` marks the cut), so nested call
-arguments survive and one huge observation cannot bloat a journal.
+`obs_chars`, `rejected` and `dupe_note_turn`. `check` is one verification run —
+`{ok, name, line}`, where `name` is the plan entry (`typecheck`, `test`, ...) and `line` is the
+first failing line of its output (empty on a pass); `python/worker.py` emits it right after the
+`turn` whose record carried a verdict, so the log status line names a failed check from the
+newest `check` event without re-running anything. `turn` keeps its existing shape (its
+`data.check` is still the bare `{ok, cmd}`), so a client that predates `cell.end` or `check`
+still reads every run. Payloads are capped before storage: strings at 16000 chars, arrays at 40
+items, nesting at depth 12 (`[depth]` marks the cut), so nested call arguments survive and one
+huge observation cannot bloat a journal.
 
 The worker reports `done` for `DONE`/`VERIFIED`, `partial` for `STEP_LIMIT`/`WALL_LIMIT` with a
 non-empty summary, and `failed` otherwise. The server keeps the same mapping and also treats a

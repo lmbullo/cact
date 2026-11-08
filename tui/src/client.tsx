@@ -96,7 +96,7 @@ import {
 } from "./list-model";
 import { C, PROMPT_MAX_ROWS, clip } from "./theme";
 import { EmptyState, LogHeader, Rule, SectionHeader, TaskRow, TopBar } from "./board-view";
-import { LogView } from "./log-view";
+import { LogView, lastCheck } from "./log-view";
 import { copyText } from "./clipboard";
 
 /** The board: task list + live run log + one prompt box, mounted against one server's HTTP URL. */
@@ -319,6 +319,12 @@ export function App({
   orderedRef.current = ordered;
   // Hooks must run on every render, so the flat row list is built before the log view returns.
   const listRows = useMemo(() => buildRows(ordered, bandOrder(order)), [ordered, order]);
+  /**
+   * How the open run's last verification ended, derived from its own events on every batch: the
+   * header names a failed check from the journal's newest `check` event, so the client keeps no
+   * state (and a later pass simply stops the failure being drawn).
+   */
+  const logCheck = useMemo(() => lastCheck(events), [events]);
   const selectedTask = ordered.find((task) => task.id === selected) ?? null;
   const runningCount = ordered.filter((task) => task.status === "running").length;
 
@@ -672,7 +678,7 @@ export function App({
         overflow: "hidden",
       }}
     >
-      {logTask ? <LogHeader task={logTask} width={width} now={now} /> : null}
+      {logTask ? <LogHeader task={logTask} width={width} now={now} check={logCheck} /> : null}
     </box>
   );
 

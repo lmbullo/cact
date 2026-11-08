@@ -12,14 +12,16 @@ ENTRY POINTS
                                --allow-run, --check, --checks
   emit(payload)                one `@@TUI@@{json}` line on stdout (the only protocol channel)
   StreamingKernel(kernel)      Kernel that also emits `cell.start` before each cell
-  EventTrace                   Trace-shaped adapter: turn records -> `turn` events
+  EventTrace                   Trace-shaped adapter: turn records -> `turn` (+ `check`) events
   state_dir(workspace)         ~/.local/state/code-tui/workspaces/<sha256(cwd)[:16]>
   history_brief / record_history   history.jsonl read (prompt prefix) and appended
 
 MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
   cell.start {cell, tool, code|args} | cell.end {cell, tool, ok, verb_kind, code, page,
-  chars, duration_ms, notes} | turn {turn, data} | log {text} | error {text}
-  final {status, final, stop, steps, calls, llmCalls, errors, usage, wallMs}
+  chars, duration_ms, notes} | turn {turn, data} | check {ok, name, line} | log {text}
+  | error {text} | final {status, final, stop, steps, calls, llmCalls, errors, usage, wallMs}
+  `check` is emitted right after the turn whose record carried a verdict; it is the one place
+  the failing line lives, so the log header can name a failed check without re-running it.
 
 INVARIANTS
   - Rules = STATE_RULES (or TOOL_RULES when MODE != "state") + AUTONOMOUS, plus RUN_NOTE
@@ -32,6 +34,9 @@ INVARIANTS
     never ends the run by itself. The same object decides the `cheap` health run (the
     `[check]` card line): each spec's `scope` keeps it to the paths that changed, the whole
     plan still runs on a finish, and the cache is injected into the kernel.
+  - A turn whose record carries `check` is followed by one `check` event: the verdict, the
+    plan entry's *name* (not its command line) and the first failing line of its output, read
+    from the Verifier's last `Check`. The journal is the only source; nothing is re-run for it.
   - CODE_TUI_LEGACY_CHECK=1 makes the goal answer with a bare pass/fail (no Check text);
     CODE_TUI_LEGACY_TIMEOUT=1 turns off the in-child cell alarm.
   - Status mapping is fixed: DONE|VERIFIED -> done, STEP_LIMIT|WALL_LIMIT with a non-empty
@@ -177,6 +182,44 @@ def cell_end_payload(cell, number: int, tool: str) -> dict[str, Any]:
     }
 
 
+def check_name(cmd: str, specs: Any) -> str:
+    """The plan entry's name for a `Check.cmd`, so a header reads `typecheck`, not its shell."""
+    for spec in specs or ():
+        name = str(getattr(spec, "name", "") or "")
+        if name and (cmd == name or cmd.startswith(name + ": ")):
+            return name
+    return cmd.split(": ", 1)[0] if ": " in cmd else cmd
+
+
+def first_failure(check: Any) -> str:
+    """The first failing line a `Check` parsed, else the first non-empty line of its output."""
+    for hit in getattr(check, "failures", None) or ():
+        text = str(hit.get("text") or "").strip() if isinstance(hit, dict) else str(hit).strip()
+        if text:
+            return text
+    for stream in (getattr(check, "stderr", ""), getattr(check, "stdout", "")):
+        for line in str(stream or "").splitlines():
+            if line.strip():
+                return line.strip()
+    return ""
+
+
+def check_payload(check: dict, verifier: Any) -> dict[str, Any]:
+    """One `check` event: the verdict, the check's name and the first failing line.
+
+    The turn record only says pass/fail (`{ok, cmd}`); the failing line is what the log header
+    needs at a glance, so it is taken from the Verifier's own last `Check` and never re-run.
+    """
+    ok = bool(check.get("ok"))
+    cmd = str(check.get("cmd") or "")
+    return {
+        "kind": "check",
+        "ok": ok,
+        "name": check_name(cmd, getattr(verifier, "specs", ())),
+        "line": "" if ok else (first_failure(getattr(verifier, "last", None)) or "failed"),
+    }
+
+
 class StreamingKernel(Kernel):
     """A Kernel that emits `cell.start` before each cell and one compact `cell.end` after it."""
 
@@ -208,8 +251,9 @@ class EventTrace:
     """The Trace duck type that streams each turn event instead of writing a file; drops summaries
     (the final event carries those)."""
 
-    def __init__(self, emit_event) -> None:
+    def __init__(self, emit_event, verifier: Any = None) -> None:
         self._emit_event = emit_event
+        self._verifier = verifier
 
     def write(self, record: dict) -> None:
         """Stream one turn record (the fields the TUI renders); the summary record is dropped."""
@@ -237,6 +281,11 @@ class EventTrace:
             "notice": record.get("notice"),
         }
         self._emit_event({"kind": "turn", "turn": int(record.get("turn") or 0), "data": data})
+        # The verdict rides its own event: the header reads the *last* one, so a later pass
+        # clears an earlier failure instead of leaving it on screen.
+        check = record.get("check")
+        if isinstance(check, dict):
+            self._emit_event(check_payload(check, self._verifier))
 
     def close(self) -> None:
         """No-op: there is no file to close, the events were streamed as they happened."""
@@ -366,7 +415,7 @@ def main() -> int:
         brief = history_brief(workspace)
         if brief and config.MODE == "state":
             prompt = brief + "\n\n[TASK]\n" + prompt
-        result = loop.run("tui-task", prompt, EventTrace(emit))
+        result = loop.run("tui-task", prompt, EventTrace(emit, verifier))
         try:
             record_history(workspace, original, result, sorted(getattr(loop, "changed", set())))
         except OSError:

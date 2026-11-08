@@ -12,7 +12,7 @@
  *  Rule({width, note})                    the hairline above the prompt box
  *  SectionHeader({status, count})         `● running  1`
  *  TaskRow({task, selected, width, now, onSelect})  one task, one line, click or key selects
- *  LogHeader({task, width, now})          the run log's status line, navigation hint kept
+ *  LogHeader({task, width, now, check})  the run log's status line: state, then how it ended
  *  EmptyState({width})                    the first screen, before any task exists
  *
  * INVARIANTS
@@ -32,6 +32,9 @@
  *  - The log header is the single source of the run's state: dot, word and handle come from
  *    `Task.status`, once. The log body never repeats them (log-view.isSilent) and the header
  *    does not repeat the prompt either — that block is the first thing in the log, in full.
+ *  - The header also owns how a settled run ended — `Task.stop`, `Task.errors` and the last
+ *    failed `check` — so the closing summary block carries only the cell count. A live run
+ *    prints none of it: there is no stop reason yet and the counters must not move.
  *
  * WHERE TO CHANGE
  *  The top bar's contents or priority .... TopBar
@@ -40,9 +43,10 @@
  *  Colours ............................... theme.ts
  */
 import { TextAttributes } from "@opentui/core";
+import type { RGBA } from "@opentui/core";
 import { C, STATUS, clip, shortPath } from "./theme";
 import { taskCounters, taskDuration, taskHandle, taskProgress } from "./list-model";
-import type { Task, TaskStatus } from "./types";
+import type { CheckState, Task, TaskStatus } from "./types";
 
 /**
  * The one-row masthead: who we are, where we are, and what the server is doing. The right
@@ -182,15 +186,28 @@ export function TaskRow(props: {
 
 /**
  * The run log's status line, and the log's one source of truth for the run's state: the dot,
- * the status word and the handle come from `Task.status` and appear here and nowhere else. The
- * live counters (steps, tokens in/out, duration, cache hit rate, context window) sit on the
+ * the status word and the handle come from `Task.status` and appear here and nowhere else. Once
+ * the run has settled, the line also says how it ended: `Task.stop` (DONE, TRUNCATED,
+ * GOAL_UNMET, ...), `Task.errors` when it recorded any, and — when the last `check` event of the
+ * journal failed — the check's name and the first failing line of its output, clipped. A live
+ * task has no stop reason yet, so its line keeps exactly the shape it had before this existed.
+ *
+ * The live counters (steps, tokens in/out, duration, cache hit rate, context window) sit on the
  * right and are the only place those numbers are printed — the log body never repeats them and
  * the board row formats the same `taskCounters` parts. The prompt is not repeated (the log
  * opens with it in full), and `esc/enter: back` is never dropped — a log you cannot leave is a
  * trap. The extras are dropped from the tail as the terminal narrows, so the order is by
- * priority: counters, clock, then the derived ratios.
+ * priority: the reason is fixed, the failing check keeps a third of the line, then the hint,
+ * then the counters from the tail.
  */
-export function LogHeader({ task, width, now }: { task: Task; width: number; now: number }) {
+export function LogHeader(props: {
+  task: Task;
+  width: number;
+  now: number;
+  /** The task's last `check` event, if its journal has one; see log-view.lastCheck. */
+  check?: CheckState | null;
+}) {
+  const { task, width, now, check } = props;
   const meta = STATUS[task.status];
   const label = `${meta.mark} ${meta.word}`;
   const handlePart = `  #${taskHandle(task.id)}`;
@@ -205,21 +222,48 @@ export function LogHeader({ task, width, now }: { task: Task; width: number; now
   ].filter(Boolean);
   // The box pads one column each side, so the line shares `width - 2`.
   const content = Math.max(0, width - 2);
+
+  // How the run ended, in priority order. A queued/running task has no stop reason yet, so the
+  // cluster stays empty and the counters keep the exact place this line gave them before.
+  const live = task.status === "queued" || task.status === "running";
+  const stopPart = live ? "" : (task.stop ?? "").trim();
+  const errorPart = !live && task.errors && task.errors > 0 ? `${task.errors} errors` : "";
+  const reasons: { text: string; color: RGBA }[] = [];
+  if (stopPart) reasons.push({ text: stopPart, color: C.faint });
+  if (errorPart) reasons.push({ text: errorPart, color: C.red });
+  const reasonRoom = reasons.reduce((sum, part, index) => sum + (index ? 3 : 2) + part.text.length, 0);
+  const left = label + handlePart;
+
+  // A failing check is the point of the line, so it keeps its share before the counters grow;
+  // a passing one (or none) adds nothing, and the counters fill the line as they always have.
+  const failure = !live && check && !check.ok ? `${check.name}: ${check.line ?? ""}`.trim() : "";
+  const reserve = failure ? Math.max(12, Math.floor(content / 3)) : 0;
+
   // Grow the right side from the essential hint, so what gets dropped is always the tail.
   const rightParts = [essential];
-  const budget = content - label.length - handlePart.length;
+  const joined = (parts: string[]) => parts.join(" · ");
   for (const extra of extras) {
-    if ([...rightParts, extra].join(" · ").length > budget) break;
+    const candidate = [...rightParts, extra];
+    if (left.length + reasonRoom + 2 + joined(candidate).length + reserve + 1 > content) break;
     rightParts.push(extra);
   }
-  const right = rightParts.join(" · ");
-  const gap = Math.max(1, content - label.length - handlePart.length - right.length);
+  const right = joined(rightParts);
+
+  // What the counters left over is the check's, clipped to it; the gap soaks up the rest.
+  const room = content - left.length - reasonRoom - right.length - 3;
+  const checkText = failure && room > 1 ? clip(failure, room) : "";
+  const checkPart = checkText ? `  ${checkText}` : "";
+  const gap = Math.max(1, content - left.length - reasonRoom - checkPart.length - right.length);
   return (
     <box style={{ height: 1, flexShrink: 0, flexDirection: "row", paddingLeft: 1, paddingRight: 1 }}>
       <text>
         <span fg={meta.color}>{meta.mark}</span>
         <span fg={C.dim}>{` ${meta.word}`}</span>
         <span fg={C.quiet}>{handlePart}</span>
+        {reasons.map((part, index) => (
+          <span key={`${index}:${part.text}`} fg={part.color}>{`${index ? " · " : "  "}${part.text}`}</span>
+        ))}
+        {checkPart ? <span fg={C.red}>{checkPart}</span> : null}
         <span>{" ".repeat(gap)}</span>
         <span fg={C.quiet}>{right}</span>
       </text>

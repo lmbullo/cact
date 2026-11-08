@@ -3,14 +3,15 @@
  *
  * WHAT IT IS
  *  Types only. `Task` is one queued/running/finished agent task (the board row and the
- *  detail view); `TaskEvent` is one line of events/<id>.jsonl; `ServerInfo` is server.json
- *  and GET /health; `CheckSpec` is one entry of the verification plan;
+ *  detail view); `TaskEvent` is one line of events/<id>.jsonl; `CheckState` is the verdict a
+ *  `check` event carries; `ServerInfo` is server.json and GET /health; `CheckSpec` is one entry
+ *  of the verification plan;
  *  `Snapshot`/`WsMessage` are the WebSocket messages; `WorkerMessage` is the `@@TUI@@`
  *  payload emitted by python/worker.py.
  *
  * ENTRY POINTS
- *  Task, TaskStatus, TaskEvent, ServerInfo, SourceFingerprint, CheckSpec, Snapshot, WsMessage,
- *  WorkerMessage
+ *  Task, TaskStatus, TaskEvent, CheckState, ServerInfo, SourceFingerprint, CheckSpec, Snapshot,
+ *  WsMessage, WorkerMessage
  *
  * INVARIANTS
  *  - Types only: no runtime code, nothing to import at runtime. Changing a field here means
@@ -20,6 +21,9 @@
  *  - `Task.progress` is the live estimate from turn events; `steps`/`usage` are the final
  *    counters, and `context`/`window` keep the last turn's prompt size and the model's window.
  *    The client derives every counter from them in list-model.taskUsage.
+ *  - `Task.stop`/`Task.errors` are the final verdict and the error count; `CheckState` is the
+ *    same verdict for one verification run, carried by a `check` event. The log header reads
+ *    the three of them and nothing else about how a run ended.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
  *  - `ServerInfo.source` is the boot fingerprint of the two files the detached server imported
@@ -32,6 +36,7 @@
  * WHERE TO CHANGE
  *  The task shape ................. Task / TaskStatus
  *  The journal line shape ......... TaskEvent
+ *  A verification verdict ......... CheckState
  *  The detection plan ............ CheckSpec; detectChecks in detect-checks.ts
  *  A worker message .............. WorkerMessage + handleWorkerLine in server.ts
  */
@@ -80,6 +85,15 @@ export type Task = {
   cancelRequested?: boolean;
 };
 
+/** One verification run as the journal records it: the verdict, the check's name and the first
+ * failing line of its output (empty when it passed). Written by python/worker.py, journaled by
+ * server.ts as a `check` event, read by board-view.LogHeader from the task's last one. */
+export type CheckState = {
+  ok: boolean;
+  name: string;
+  line?: string;
+};
+
 /** One line of events/<id>.jsonl: what the log view renders, in `seq` order. */
 export type TaskEvent = {
   seq: number;
@@ -99,6 +113,8 @@ export type TaskEvent = {
   chars?: number;
   duration_ms?: number;
   notes?: string[];
+  /** check: the verification verdict this event carries (see CheckState). */
+  check?: CheckState;
 };
 
 /**
@@ -169,6 +185,8 @@ export type WorkerMessage =
   | { kind: "cell.start"; cell: number; code?: string; tool?: string; args?: Record<string, unknown> }
   | { kind: "cell.end"; cell: number; tool?: string; ok?: boolean; verb_kind?: string; code?: string; page?: Record<string, unknown> | null; chars?: number; duration_ms?: number; notes?: string[] }
   | { kind: "turn"; turn: number; data: Record<string, unknown> }
+  // Emitted right after a turn whose record carried a verdict; the last one is the current state.
+  | { kind: "check"; ok: boolean; name: string; line?: string }
   | { kind: "final"; status: "done" | "partial" | "failed"; final?: string; stop?: string; usage?: Record<string, number>; steps?: number; calls?: number; llmCalls?: number; errors?: number; wallMs?: number }
   // A `turn`'s `data` carries {usage, cache, window, ...}; see python/worker.py EventTrace.
   | { kind: "error"; text: string }
