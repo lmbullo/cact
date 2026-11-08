@@ -34,6 +34,10 @@ INVARIANTS
     normally and carries ONE `note` naming the typed call (`_VERB_DUPE`); it is never refused,
     and with a flag the typed verb cannot express (`_DUPE_OPAQUE`: `grep -o/-l/-v/-A/-B/-P`,
     `sed` without `-i`) the note stays silent. One note per program per cell.
+  - A plan command run through exec carries ONE note naming `checks('<spec>')`, and
+    `git action='status'` names `status()`. Both are silent when the command is not in the plan
+    (a test that runs is not a gate) and neither ever refuses. The plan arrives as
+    KERNEL_CHECK_COMMANDS; the kernel only names it, never runs it.
 
 WHERE TO CHANGE
   What exec/git refuse ......................... `_RUN_SHELL_MUTATORS`, `_RUN_GIT_MUTATORS`,
@@ -42,6 +46,8 @@ WHERE TO CHANGE
   The duplicate-verb note ..................... `_VERB_DUPE`, `_DUPE_OPAQUE`, `_typed_dupe`
                                               (a path outside the workspace gets no note:
                                               the typed verb would refuse it)
+  The plan-command / status notes ............ `_check_note`, `_status_note`,
+                                              KERNEL_CHECK_COMMANDS
   The spawn gate ............................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
   exec's argv/commands/shell shape ............. `exec_argv`
   The typed git actions ........................ `git_tool`
@@ -124,6 +130,63 @@ _VERB_DUPE = {
 _DUPE_OPAQUE = {"grep": "olvABCPLxqmFzZ", "rg": "olvABCPLxqmFzZ",
                 "find": "execoknewprmfa1", "ls": "1l", "cat": "AnbeEsTtv", "sed": "ns"}
 _DUPE_NOTED = set()
+# The plan the worker was started with: [{name, cmd}]. The kernel never runs it; it is only
+# there to name the typed checks() call when a model reaches for a gate command through exec.
+_CHECK_SPECS = []
+try:
+    _CHECK_SPECS = _json.loads(_ros.environ.get("KERNEL_CHECK_COMMANDS") or "[]")
+except Exception:
+    _CHECK_SPECS = []
+_CHECK_NOTED = set()
+_STATUS_NOTED = set()
+# Documented rungs of the gate ladder, used only to recognize a plan command inside a shell
+# string (e.g. `cd tui && bun test`); a test that removes a gate is not a gate.
+_CHECK_GATES = ("bench/guide.py --check", "bench/smoke.py", "ruff check",
+                "bun run typecheck", "bun test", "pytest", "npm test", "tsc",
+                "go test", "cargo test")
+
+
+def _spec_names(specs, text):
+    # Exact plan command first; otherwise a documented gate the matching spec contains.
+    exact, loose = [], []
+    for item in specs:
+        if not isinstance(item, dict):
+            continue
+        cmd = _norm_command(item.get("cmd") or "")
+        name = str(item.get("name") or cmd[:40])
+        if not cmd:
+            continue
+        if text == cmd:
+            exact.append(name)
+        elif any(gate in text and gate in cmd for gate in _CHECK_GATES):
+            loose.append(name)
+    return exact or loose
+
+
+def _check_note(command):
+    # A plan command already has a cheaper shape: checks() runs it and reuses the cache.
+    # One note per cell, and silent when the command is not in the plan.
+    if "_check" in _CHECK_NOTED or not _CHECK_SPECS:
+        return None
+    text = _norm_command(command)
+    names = _spec_names(_CHECK_SPECS, text)
+    if not names:
+        return None
+    _CHECK_NOTED.add("_check")
+    if len(names) == 1:
+        return ("`%s` is a plan check; checks('%s') runs it with the cache in one call."
+                % (text, names[0]))
+    return ("`%s` is a plan check; checks() runs the plan with the cache in one call."
+            % text)
+
+
+def _status_note():
+    # git(action='status') already ran; the note names the one call that adds the journal.
+    if "_status" in _STATUS_NOTED:
+        return None
+    _STATUS_NOTED.add("_status")
+    return ("git status is a typed action; status() returns the branch, dirty files and "
+            "the session journal in one call.")
 
 
 def _typed_dupe(argv, cwd=None):
@@ -332,12 +395,16 @@ def _run_shell(command, timeout=60, cwd=None):
         items = [_run_shell(item, timeout=timeout, cwd=cwd) for item in command]
         stdout = "\n".join(str(item.get("stdout") or "") for item in items).strip()
         stderr = "\n".join(str(item.get("stderr") or "") for item in items).strip()
-        return _Result({"ok": all(bool(item.get("ok")) for item in items), "kind": "commands",
+        result = _Result({"ok": all(bool(item.get("ok")) for item in items), "kind": "commands",
                         "count": len(items), "shown": len(items), "total": len(items),
                         "unit": "command", "offset": 0, "truncated": False,
                         "commands": items, "stdout": stdout, "stderr": stderr,
                         "exit_code": next((item.get("exit_code") for item in items
                                             if item.get("exit_code") not in (0, None)), 0)})
+        note = next((item.get("note") for item in items if item.get("note")), None)
+        if note:
+            result["note"] = note
+        return result
     _RUN_LOG.append(str(command))
     cached = _CHECK_CACHE.get(_norm_command(command))
     if cached:
@@ -406,8 +473,12 @@ def _run_shell(command, timeout=60, cwd=None):
         return _Result({"ok": True, "kind": "timeout", "command": str(command), "timeout_s": float(timeout),
                 "exit_code": None, "stdout": out or "", "stderr": err or "",
                 "note": "the command hit its own timeout and its process group was killed; the kernel is intact"})
-    return _Result({"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
+    result = _Result({"ok": True, "kind": "command", "command": str(command), "exit_code": proc.returncode,
             "stdout": out or "", "stderr": err or ""})
+    note = _check_note(command)
+    if note:
+        result["note"] = note
+    return result
 
 
 run = _run_shell
@@ -473,12 +544,16 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
         stderr = "\n".join(str(item.get("stderr") or "") for item in items).strip()
         results = [{"argv": item.get("argv"), "exit_code": item.get("exit_code"),
                     "ok": item.get("ok")} for item in items]
-        return _Result({"ok": ok, "kind": "commands", "count": len(items),
+        result = _Result({"ok": ok, "kind": "commands", "count": len(items),
                         "shown": len(items), "total": len(items), "unit": "command",
                         "offset": 0, "truncated": False,
                         "results": results, "stdout": stdout, "stderr": stderr,
                         "exit_code": next((item.get("exit_code") for item in items
                                            if item.get("exit_code") not in (0, None)), 0)})
+        note = next((item.get("note") for item in items if item.get("note")), None)
+        if note:
+            result["note"] = note
+        return result
     if isinstance(argv, str):
         # A model that passes the whole command as argv gets it run once, with a note. The old
         # shell_string refusal was correct but cost a retry on the most common call shape.
@@ -579,6 +654,9 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
         _DUPE_NOTED.add(dupe[0])
         result["note"] = ("`%s` repeats a typed verb; %s answers it in one call."
                           % (dupe[0], dupe[1]))
+    check_note = _check_note(command)
+    if check_note and not result.get("note"):
+        result["note"] = check_note
     return result
 
 
@@ -671,9 +749,13 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=Non
                 continue
             if len(line) > 3:
                 changed.append({"status": line[:2].strip(), "path": line[3:].strip()})
-        return _Result({"ok": ok, "kind": "git_status", "action": action,
+        result = _Result({"ok": ok, "kind": "git_status", "action": action,
                         "branch": branch_name, "changed": changed, "clean": not changed,
                         "text": out, "exit_code": code, "stderr": err})
+        note = _status_note()
+        if note:
+            result["note"] = note
+        return result
     if action == "log":
         commits = []
         for line in out.splitlines():

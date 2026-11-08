@@ -10,7 +10,9 @@ WHAT IT IS
   (`first_mutation_turn`). The bookkeeping keys measure the tax: `out_tokens` and
   `reasoning_tokens`, `gate_cells` (an exec cell that ran the gate ladder by hand),
   `git_cells` (typed git or `git ...` through exec) and `verify_turns` (turns after the
-  first mutation that ran no mutation). The causal keys say *why* behavior changed: the turn the typed-dupe
+  first mutation that ran no mutation). `checks_calls`/`status_calls`/`docs_calls` count
+  parent-side tools from `turn.tool_calls`, because those calls emit no `cell.start`. The
+  causal keys say *why* behavior changed: the turn the typed-dupe
   `note` first appeared (`dupe_note_turn`), the dupes after it (`dupes_after_note`), and how
   often a read/map/search resumed the page the previous result left open (`paged_followups`).
   (No benchmark CLI runs any more: `bench/eval.py` is the eval front end; this is the reader
@@ -44,6 +46,7 @@ WHERE TO CHANGE
   New kernel verb ........ VERBS
   New escape metric ...... EXEC_DUPES, MUTATING_VERBS, _escape, summarize()
   New bookkeeping metric . GATE_COMMANDS, _gate_cells, _git_cells, _verify_turns, _token_sum
+  New parent-side metric . _tool_call_count, summarize()
   New metric ............. summarize()
 """
 from __future__ import annotations
@@ -113,6 +116,18 @@ def _call_mix(turns: list[dict]) -> dict[str, int]:
             if name:
                 counts[name] = counts.get(name, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _tool_call_count(turns: list[dict], name: str) -> int:
+    """Calls to one parent-side tool from `turn.tool_calls`: `cell.start` cannot see them."""
+    total = 0
+    for turn in turns:
+        for call in turn.get("tool_calls") or []:
+            if isinstance(call, dict):
+                call = (call.get("function") or {}).get("name") or call.get("name")
+            if str(call) == name:
+                total += 1
+    return total
 
 
 def _commands(cell: dict) -> list[str]:
@@ -376,6 +391,10 @@ def summarize(state_dir: Path, task_id: str) -> dict:
         "refused": obs.count("refused_truncation"),
         "check_runs": checks,
         "test_runs": tests,
+        # Parent-side verbs run in the loop, not the kernel: `tool_calls` is the only record.
+        "checks_calls": _tool_call_count(turns, "checks"),
+        "status_calls": _tool_call_count(turns, "status"),
+        "docs_calls": _tool_call_count(turns, "docs"),
         **_escape(records),
         "obs_chars": obs_chars,
         "obs_chars_per_turn": round(obs_chars / len(turns)) if turns else 0,
@@ -493,6 +512,8 @@ def main() -> int:
         print(f"   bookkeeping: gate-cells={row['gate_cells']} git-cells={row['git_cells']} "
               f"verify-turns={row['verify_turns']} out-tokens={row['out_tokens']} "
               f"reasoning-tokens={row['reasoning_tokens']}")
+        print(f"   parent: checks_calls={row['checks_calls']} status_calls={row['status_calls']} "
+              f"docs_calls={row['docs_calls']}")
         print(f"   verbs={row['verbs']}")
         print(f"   tools={row['tools']} rejected={row.get('rejected')}")
     return 0

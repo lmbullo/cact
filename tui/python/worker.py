@@ -386,6 +386,7 @@ def main() -> int:
             supervise=os.environ.get("CODE_TUI_LEGACY_TIMEOUT") != "1",
             extra_verbs=custom.verbs(extra),
             extra_prelude=custom.prelude(extra),
+            check_commands=[{"name": spec.name, "cmd": spec.cmd} for spec in specs],
             emit_event=emit,
         )
         loop = config.build(

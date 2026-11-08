@@ -10,7 +10,7 @@ WHAT IT IS
 ENTRY POINTS
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, allow_shell=None, supervise=True,
-         extra_verbs=None, extra_prelude="")
+         extra_verbs=None, extra_prelude="", check_commands=None)
     .start()                            spawn the child (lazy: run()/call() start it)
     .run(code, check_cache=None, extra_obs=None)        one python cell -> Cell
     .call(tool, args, check_cache=None, extra_obs=None) one typed verb -> the same Cell pipeline
@@ -18,7 +18,8 @@ ENTRY POINTS
     .stop()                             SIGKILL the group, reap orphans, drop the obs log
   The child's environment is the wire: KERNEL_PRELUDE, KERNEL_RUN_PRELUDE, KERNEL_HEADERS,
   KERNEL_VERBS, KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL,
-  KERNEL_EXTRA_VERBS, KERNEL_EXTRA_PRELUDE (per-run experiment tools).
+  KERNEL_EXTRA_VERBS, KERNEL_EXTRA_PRELUDE (per-run experiment tools), and the plan as
+  KERNEL_CHECK_COMMANDS so an exec of a gate command can name checks().
 
 INVARIANTS
   - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and restarted
@@ -85,7 +86,7 @@ class Kernel:
     def __init__(self, root: Path, timeout: float = CELL_TIMEOUT, writable: bool = False,
                  prelude: str = "off", allow_run: bool = False, allow_shell: bool | None = None,
                  supervise: bool = True, extra_verbs: dict | None = None,
-                 extra_prelude: str = "") -> None:
+                 extra_prelude: str = "", check_commands: list | None = None) -> None:
         self.root = Path(root).resolve()
         self.timeout = timeout
         self.writable = writable
@@ -95,6 +96,7 @@ class Kernel:
         self.supervise = supervise
         self.extra_verbs = dict(extra_verbs or {})
         self.extra_prelude = str(extra_prelude or "")
+        self.check_commands = list(check_commands or [])
         self.proc: subprocess.Popen | None = None
         self.orphan_journal: str | None = None
         self.obs_log: str | None = None
@@ -201,6 +203,8 @@ class Kernel:
                 **({"KERNEL_EXTRA_VERBS": json.dumps(self.extra_verbs),
                     "KERNEL_EXTRA_PRELUDE": self.extra_prelude}
                    if self.extra_verbs or self.extra_prelude else {}),
+                **({"KERNEL_CHECK_COMMANDS": json.dumps(self.check_commands)}
+                   if self.check_commands else {}),
             },
         )
 

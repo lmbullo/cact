@@ -163,6 +163,14 @@ def _journal_metrics(check) -> None:
           tui_row["dupe_note_turn"] == 3 and tui_row["dupes_after_note"] == 0
           and tui_row["paged_followups"] == 1 and tui_row["obs_chars_per_turn"] > 0,
           str(tui_row)[:300])
+    # checks()/status() run in the loop, so `turn.tool_calls` is the only record of them.
+    parent_turns = [{"tool_calls": ["checks", "status", "checks"]},
+                    {"tool_calls": [{"function": {"name": "docs"}}, "checks"]}]
+    check("task_journal: parent-side calls come from turn.tool_calls",
+          task_journal._tool_call_count(parent_turns, "checks") == 3
+          and task_journal._tool_call_count(parent_turns, "status") == 1
+          and task_journal._tool_call_count(parent_turns, "docs") == 1,
+          str(parent_turns)[:240])
 
 
 def _cell_end_metrics(check) -> None:

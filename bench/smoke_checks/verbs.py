@@ -432,10 +432,25 @@ def run(check, root, kernel):
     cell = kernel.call("status", {})
     data = (cell.envelope or {}).get("data") or {}
     check("kernel: status is one read-only call with branch and journal summary",
-          cell.tool == "status" and "journal:" in cell.stdout
-          and "changed_total" in data and "adds" in data
-          and not cell.changed and not cell.mutated,
-          (cell.stdout + str(cell.envelope))[:300])
+           cell.tool == "status" and "journal:" in cell.stdout
+           and "changed_total" in data and "adds" in data
+           and not cell.changed and not cell.mutated,
+           (cell.stdout + str(cell.envelope))[:300])
+    cell = kernel.call("git", {"action": "status"})
+    notes = " ".join((cell.envelope or {}).get("notes") or [])
+    check("kernel: git(action='status') carries one note naming status()",
+           "status()" in notes and "session journal" in notes
+           and cell.envelope.get("kind") == "git_status", notes[:300])
+
+    # The plan is what the worker was started with; the kernel only has to name the typed call.
+    with kernel_for(root, check_commands=[{"name": "probe", "cmd": "echo plan-ok"}]) as plan_kernel:
+        probe = plan_kernel.run("print(_check_note('bun test tests/'))")
+        check("kernel: an unrelated bun test tests/ gets no checks() note",
+               "None" in probe.stdout, probe.stdout[:200])
+        cell = plan_kernel.call("exec", {"argv": ["echo", "plan-ok"]})
+        notes = " ".join((cell.envelope or {}).get("notes") or [])
+        check("kernel: an exec of a plan command names checks('<spec>')",
+               "checks('probe')" in notes and "plan-ok" in cell.stdout, notes[:300])
 
     kernel.run("write('ctx.py', 'def alpha():\\n    return 1\\n')")
     cell = kernel.call("edit", {"edits": [{"path": "ctx.py", "old": "return 2",
@@ -451,9 +466,13 @@ def run(check, root, kernel):
           cell.stdout[:240])
     cell = kernel.call("guide", {"path": ["outline.py", "ctx.py"]})
     check("kernel: guide(path=[...]) returns several modules' headers in one call",
-          '"kind": "guides"' in (cell.result or "")
-          and "outline.py" in cell.stdout and "ctx.py" in cell.stdout,
-          (cell.stdout + (cell.result or ""))[:240])
+           '"kind": "guides"' in (cell.result or "")
+           and "outline.py" in cell.stdout and "ctx.py" in cell.stdout,
+           (cell.stdout + (cell.result or ""))[:240])
+    cell = kernel.call("skill", {})
+    check("kernel: skill lists the project procedures without a shell",
+           '"kind": "skills"' in (cell.result or "") and not cell.rejected,
+           (cell.stdout + (cell.result or ""))[:240])
 
     # --- the boundary: registry coercion, a crashed verb, and data that must survive -----
     cell = kernel.call("map", {"max_files": "x"})

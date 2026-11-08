@@ -311,6 +311,8 @@ for line in sys.stdin:
         ns["_CHECK_CACHE"] = request.get("check_cache") or {}
         ns["_READS_CELL"] = {}
         ns["_DUPE_NOTED"] = set()
+        ns["_CHECK_NOTED"] = set()
+        ns["_STATUS_NOTED"] = set()
         if kind == "call" and not isinstance(request.get("args") or {}, dict):
             raise ValueError("call args must be an object")
         if kind == "code" and not isinstance(code, str):
