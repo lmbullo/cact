@@ -103,13 +103,18 @@ the list starts with air rather than against a bar.
 ```
 
 Grouping order: `running`, `queued`, `done`, `partial`, `failed`, `cancelled`. The `queued`
-state renders as the shorter word `queue`. A band is a dot, its word and its count — no rule and
-no column of dashes: the blank row between bands is what separates them, and a row never repeats
-the status word its section already said. Telemetry is right-aligned and the prompt gives up room
-first, so steps, tokens and wall time form one readable column. Two numbers on a row never
-describe the same thing: `↑` is prompt tokens, `↓` completion tokens, `% cache` the hit rate,
-and none of them is a copy of another. A running row's wall time ticks once a second; an idle
-board does not re-render.
+state renders as the shorter word `queue`. `Ctrl-O` cycles the board arrangement in place:
+`by status` (the default just described, oldest task first inside a band), `newest first` (the
+same bands, newest task on top) and `problems first` (`cancelled`, `failed`, `partial` above the
+live work, `done` last, newest first inside a band). An arrangement is display-only: the same
+tasks sorted again, never a write to the server, so a snapshot or a task update cannot undo the
+reader's choice. While it is not the default the hairline prints `order: <word>`. A band is a
+dot, its word and its count — no rule and no column of dashes: the blank row between bands is
+what separates them, and a row never repeats the status word its section already said. Telemetry
+is right-aligned and the prompt gives up room first, so steps, tokens and wall time form one
+readable column. Two numbers on a row never describe the same thing: `↑` is prompt tokens, `↓`
+completion tokens, `% cache` the hit rate, and none of them is a copy of another. A running
+row's wall time ticks once a second; an idle board does not re-render.
 
 | State | Section label | Dot | Colour |
 |---|---|---|---|
@@ -255,6 +260,7 @@ keys on both screens, and a prompt can be typed and queued while a run streams.
 | `Ctrl+Enter` | Queue the prompt |
 | `Ctrl+N` / `Ctrl+P` | Move the task highlight without the arrow keys |
 | `Ctrl+K` | Cancel selected queued/running task |
+| `Ctrl+O` | Cycle the board arrangement: by status → newest first → problems first |
 | `Ctrl+R` | Reconnect the WebSocket |
 | `Ctrl+Q` / `Ctrl+C` | Close the TUI; leave the server running |
 | Left-drag | Select text; release copies it and clears the highlight |
@@ -377,9 +383,9 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun test            # tests/: list, log, progress, prompt, views, selection, checks, scroll,
-                    # theme helpers, board and log frames — 30 tests, 9 files; React act(...)
-                    # warnings are expected noise
+bun test            # tests/: list, log, progress, prompt, views, selection, order, checks,
+                    # scroll, theme helpers, board and log frames — 33 tests, 10 files; React
+                    # act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character

@@ -16,11 +16,11 @@
  *  App({httpUrl, workspace})    the whole screen: top bar, log header, list or log, prompt box, toast
  *
  * KEYS
- *  Ctrl-C / Ctrl-Q quit, Ctrl-K cancel the selected task, Ctrl-R reconnect,
- *  up/down move the highlight (or the cursor inside a multi-row prompt), Enter opens the
- *  selected task's log (empty prompt) / adds a line, Ctrl-Enter submits, Esc clears the
- *  prompt then leaves the log. A left-drag selects text; releasing copies it and clears the
- *  highlight.
+ *  Ctrl-C / Ctrl-Q quit, Ctrl-K cancel the selected task, Ctrl-R reconnect, Ctrl-O cycle the
+ *  board arrangement (by status / newest first / problems first), up/down move the highlight
+ *  (or the cursor inside a multi-row prompt), Enter opens the selected task's log (empty
+ *  prompt) / adds a line, Ctrl-Enter submits, Esc clears the prompt then leaves the log. A
+ *  left-drag selects text; releasing copies it and clears the highlight.
  *
  * INVARIANTS
  *  - Pure rendering helpers live in list-model.ts (ordering, rows, scroll) and theme.ts
@@ -34,6 +34,9 @@
  *  - Live progress is `taskProgress(task)`: `Task.progress` from the server's turn handling,
  *    falling back to the final `steps`/`usage` once a task ends. Wall time is
  *    `taskDuration(task, now)`, and `now` only ticks while a task is running.
+ *  - The board arrangement (`order`) is local UI state, never sent to the server: the same
+ *    tasks re-sorted, so a reconnect or a task update cannot undo the reader's choice. The
+ *    hairline prints it while it is not the default.
  *
  * WHERE TO CHANGE
  *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
@@ -42,6 +45,7 @@
  *  Keys / focus rules ....................... the useKeyboard block below
  *  Selection copy ........................... clipboard.ts, the useSelectionHandler call below
  *  Ordering, rows, scrolling ................ list-model.ts
+ *  The arrangements Ctrl-O cycles ........... list-model.BOARD_ORDERS
  *  Data contract ............................ types.ts
  */
 import {
@@ -60,11 +64,15 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ServerInfo, Snapshot, Task, TaskEvent, WsMessage } from "./types";
 import {
+  bandOrder,
   buildRows,
   followSelection,
+  nextOrder,
+  orderLabel,
   orderTasks,
   selectedRowIndex,
   stepSelection,
+  type BoardOrder,
   type ScrollState,
 } from "./list-model";
 import { C, PROMPT_MAX_ROWS, clip } from "./theme";
@@ -101,6 +109,8 @@ export function App({
   const [now, setNow] = useState(() => Date.now());
   /** "list" is the default screen; "log" is the per-task live run view opened on demand. */
   const [view, setView] = useState<"list" | "log">("list");
+  /** How the board arranges its bands; local UI state, cycled by Ctrl-O. Never sent to the server. */
+  const [order, setOrder] = useState<BoardOrder>("status");
 
   const inputRef = useRef<TextareaRenderable | null>(null);
   const viewRef = useRef<"list" | "log">("list");
@@ -272,9 +282,9 @@ export function App({
     };
   }, [httpUrl, selected, connected, view]);
 
-  const ordered = useMemo(() => orderTasks(tasks), [tasks]);
+  const ordered = useMemo(() => orderTasks(tasks, order), [tasks, order]);
   // Hooks must run on every render, so the flat row list is built before the log view returns.
-  const listRows = useMemo(() => buildRows(ordered), [ordered]);
+  const listRows = useMemo(() => buildRows(ordered, bandOrder(order)), [ordered, order]);
   const selectedTask = ordered.find((task) => task.id === selected) ?? null;
   const runningCount = ordered.filter((task) => task.status === "running").length;
 
@@ -380,6 +390,16 @@ export function App({
       key.stopPropagation();
       setSocketEpoch((value) => value + 1);
       notify("reconnecting");
+      return;
+    }
+    if (key.ctrl && key.name === "o") {
+      // Rearrange the board in place: bands and the tasks inside them, never the server's
+      // data. One press is one arrangement, announced on the hairline like any other toast.
+      key.preventDefault();
+      key.stopPropagation();
+      const next = nextOrder(order);
+      setOrder(next);
+      notify(`order: ${orderLabel(next)}`);
       return;
     }
     if (viewRef.current === "log") {
@@ -530,7 +550,12 @@ export function App({
     !showingLog && listRows.length > winSize
       ? `rows ${winStart + 1}–${winStart + winSize}/${listRows.length}`
       : "";
-  const note = [statusNote, scrollNote].filter(Boolean).join(" · ");
+  // The arrangement is quiet chrome: it appears only while it differs from the default board,
+  // so the hairline does not narrate the normal case.
+  const orderNote = order === "status" ? "" : `order: ${orderLabel(order)}`;
+  const note = [statusNote, orderNote, scrollNote]
+    .filter((part, index, all) => Boolean(part) && all.indexOf(part) === index)
+    .join(" · ");
 
   // The one prompt box, rendered outside the view switch. Because it never unmounts, the
   // text, the cursor row, the row count, and the focus survive a move between the board

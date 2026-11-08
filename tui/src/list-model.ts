@@ -8,9 +8,14 @@
  *
  * ENTRY POINTS
  *  STATUS_ORDER                         running -> queued -> done -> partial -> failed -> cancelled
- *  orderTasks(tasks)                    stable sort by rank, then createdAt (oldest first)
+ *  TRIAGE_ORDER                         cancelled -> failed -> partial -> running -> queued -> done
+ *  BOARD_ORDERS                         the arrangements the order key cycles, with their labels
+ *  bandOrder(order) -> TaskStatus[]      the bands one arrangement draws, in order
+ *  nextOrder(order) -> BoardOrder        the next arrangement in the keybind cycle
+ *  orderLabel(order) -> string           the hairline word for an arrangement (`newest first`)
+ *  orderTasks(tasks, order)             stable sort by band rank, then createdAt (oldest or newest first)
  *  taskHandle(id)                       short `#suffix` display handle for a task id
- *  buildRows(ordered) -> ListRow[]      header + task rows (what the board renders)
+ *  buildRows(ordered, bands) -> ListRow[]  header + task rows (what the board renders)
  *  stepSelection(ordered, current, d)   move the highlight, clamped
  *  selectedRowIndex(rows, selected)     row index for the highlighted task (-1 when absent)
  *  scrollWindow(rowCount, budget, focus, anchor)
@@ -28,6 +33,9 @@
  *  - Deterministic and side-effect free: same input, same output, no clock. `taskDuration`
  *    takes `now` as an argument for the same reason.
  *  - Ties are broken by `createdAt`, so a re-render never reshuffles the list.
+ *  - The arrangement is display-only: `orderTasks` and `buildRows` take it as an argument and
+ *    the server's task list is never rewritten, so a snapshot cannot undo a reorder.
+ *  - `order === "status"` is the default board: live work first, oldest task first in a band.
  *  - `taskUsage` is the only place a counter is read: the board row, the log header and the
  *    closing block all format what it returns, so two views cannot print different steps,
  *    tokens, cache rate or context for the same task.
@@ -40,7 +48,8 @@
  *    band reorder) by pinning that task to the screen row it already occupied.
  *
  * WHERE TO CHANGE
- *  Section order or row shape ... STATUS_ORDER, rank, buildRows
+ *  Section order or row shape ... STATUS_ORDER, TRIAGE_ORDER, BOARD_ORDERS, bandOrder, buildRows
+ *  What the order key cycles ..... BOARD_ORDERS, nextOrder, orderLabel
  *  Keyboard movement ............ stepSelection
  *  Visible window maths ......... scrollWindow, followSelection
  *  A task's numbers ............. taskUsage (read this, not Task fields, in a view)
@@ -61,9 +70,53 @@ export const STATUS_ORDER: TaskStatus[] = [
   "cancelled",
 ];
 
-function rank(task: Task): number {
-  const index = STATUS_ORDER.indexOf(task.status);
-  return index < 0 ? STATUS_ORDER.length : index;
+/**
+ * The band order for problems first: everything that did not finish clean (cancelled, failed,
+ * partial) above the live work, and `done` last. It is the same set as STATUS_ORDER, reversed
+ * in priority, so no status can be dropped from the board.
+ */
+export const TRIAGE_ORDER: TaskStatus[] = [
+  "cancelled",
+  "failed",
+  "partial",
+  "running",
+  "queued",
+  "done",
+];
+
+/** How the board arranges its status bands and the tasks inside them. */
+export type BoardOrder = "status" | "recent" | "triage";
+
+/** One arrangement in the order cycle, with the word the hairline prints for it. */
+export type BoardOrderPreset = { order: BoardOrder; label: string };
+
+/** The arrangements the order key cycles through, in press order; the first is the default. */
+export const BOARD_ORDERS: BoardOrderPreset[] = [
+  { order: "status", label: "by status" },
+  { order: "recent", label: "newest first" },
+  { order: "triage", label: "problems first" },
+];
+
+/** The status bands one arrangement draws, in the order the board renders them. */
+export function bandOrder(order: BoardOrder): TaskStatus[] {
+  return order === "triage" ? TRIAGE_ORDER : STATUS_ORDER;
+}
+
+/** The next arrangement in the cycle: by status -> newest first -> problems first -> by status. */
+export function nextOrder(order: BoardOrder): BoardOrder {
+  const index = BOARD_ORDERS.findIndex((preset) => preset.order === order);
+  return BOARD_ORDERS[(index + 1) % BOARD_ORDERS.length]!.order;
+}
+
+/** The hairline word for an arrangement (`by status`, `newest first`, `problems first`). */
+export function orderLabel(order: BoardOrder): string {
+  return BOARD_ORDERS.find((preset) => preset.order === order)?.label ?? order;
+}
+
+/** A task's band position inside `bands`; an unknown status sorts after every known one. */
+function bandRank(task: Task, bands: TaskStatus[]): number {
+  const index = bands.indexOf(task.status);
+  return index < 0 ? bands.length : index;
 }
 
 /** The numbers one task reports, already reconciled: never render a raw `Task` counter. */
@@ -196,11 +249,17 @@ export function taskDuration(task: Task, now: number): string {
   return elapsed(end - start);
 }
 
-/** Board order: status band first (running, queued, done, failed), then oldest task first. */
-export function orderTasks(tasks: Task[]): Task[] {
+/**
+ * Board order: the arrangement's band order first, then `createdAt` — oldest first for the
+ * default board, newest first for `recent` and `triage` (the newest problem reads at the top).
+ */
+export function orderTasks(tasks: Task[], order: BoardOrder = "status"): Task[] {
+  const bands = bandOrder(order);
+  const newestFirst = order !== "status";
   return [...tasks].sort((a, b) => {
-    const diff = rank(a) - rank(b);
-    return diff !== 0 ? diff : a.createdAt - b.createdAt;
+    const diff = bandRank(a, bands) - bandRank(b, bands);
+    if (diff !== 0) return diff;
+    return newestFirst ? b.createdAt - a.createdAt : a.createdAt - b.createdAt;
   });
 }
 
@@ -222,11 +281,12 @@ export type ListRow =
 
 /**
  * Flat render list: one header per status band, then that band's tasks, with one blank row
- * between bands. The blank is what makes the board read as sections instead of a table.
+ * between bands. The blank is what makes the board read as sections instead of a table. The
+ * bands come from the arrangement (`bandOrder`), so a reorder moves whole sections, not rows.
  */
-export function buildRows(ordered: Task[]): ListRow[] {
+export function buildRows(ordered: Task[], bands: TaskStatus[] = STATUS_ORDER): ListRow[] {
   const rows: ListRow[] = [];
-  for (const status of STATUS_ORDER) {
+  for (const status of bands) {
     const group = ordered.filter((task) => task.status === status);
     if (group.length === 0) continue;
     if (rows.length > 0) rows.push({ kind: "space" });
