@@ -201,6 +201,16 @@ def run(check, root, kernel):
     check("kernel: guide() reports a miss as text",
           ("no documented module" in cell.stdout
            or "not in the contract index" in cell.stdout), (cell.stdout + cell.stderr)[:200])
+    (root / "offset_demo.py").write_text(
+        '"""An offset demo.\n\nWHAT IT IS\n  zzquuxoffset marker\n\nENTRY POINTS\n'
+        '  none\n\nINVARIANTS\n  none\n\nWHERE TO CHANGE\n  here\n"""\n', encoding="utf-8")
+    cell = kernel.call("guide", {"query": "zzquuxoffset", "offset": 1})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: guide offset past the end keeps the true total",
+          page.get("total") == 1 and page.get("shown") == 0
+          and page.get("next") is None
+          and "past the end" in " ".join((cell.envelope or {}).get("notes") or []),
+          str(cell.envelope)[:280])
 
     cell = kernel.run("run('cat a.txt')")
     allowed = str(cell.result)
