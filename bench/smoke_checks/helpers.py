@@ -37,6 +37,7 @@ import bench.agent.state_loop as state_loop
 import bench.agent.tools as tools
 import bench.agent.trace as trace
 import bench.agent.verbs as verbs
+import bench.remote as remote
 import bench.snapshot as snapshot
 import bench.task_journal as task_journal
 from bench.agent.kernel import Cell, CellReply, Kernel
@@ -90,6 +91,7 @@ def run(check):
     _journal_metrics(check)
     _cell_end_metrics(check)
     _worker_cell_end(check)
+    _remote_adapter(check)
     check("snapshot: workspace helpers",
           callable(snapshot.manifest) and callable(snapshot.clone) and callable(snapshot.changed))
     typed_names = tuple(name for name, meta in verbs.VERBS.items() if meta.get("typed", True))
@@ -315,3 +317,38 @@ def _worker_cell_end(check) -> None:
           len(ends) == 3 and [event["cell"] for event in ends] == [1, 2, 3]
           and [event["tool"] for event in ends] == ["python", "read", "map"],
           str(ends)[:320])
+
+
+def _remote_adapter(check) -> None:
+    """The Daytona adapter is optional and offline-safe: no key, no SDK, no network needed."""
+    report = remote.status()
+    check("remote: status names the SDK and the key without touching the network",
+          set(report) == {"sdk", "key", "hint"} and isinstance(report["sdk"], bool)
+          and isinstance(report["key"], bool), str(report))
+    original = remote.api_key
+    try:
+        remote.api_key = lambda: None
+        raised = ""
+        try:
+            remote.create()
+        except remote.RemoteError as exc:
+            raised = str(exc)
+        check("remote: create without a key refuses with the env var it wants",
+              "DAYTONA_API_KEY" in raised, raised[:200])
+    finally:
+        remote.api_key = original
+    seen: dict = {}
+
+    class FakeProcess:
+        """Stands in for the SDK process handle so `run()` can be tested without a network."""
+
+        def exec(self, command, cwd=None, env=None, timeout=None):
+            """Record the command the adapter built and answer a success reply."""
+            seen.update(command=command, cwd=cwd, timeout=timeout)
+            return type("R", (), {"exit_code": 0, "result": "ok\n"})()
+
+    box = remote.Sandbox(type("Raw", (), {"id": "sb-1", "process": FakeProcess()})())
+    reply = box.run(["echo", "two words"], cwd="/tmp", timeout=5)
+    check("remote: run joins argv and never builds a shell line",
+          reply["ok"] and reply["exit"] == 0 and seen["command"] == "echo 'two words'"
+          and seen["cwd"] == "/tmp" and seen["timeout"] == 5, str(seen))

@@ -60,7 +60,16 @@ python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt
 python3 bench/task_journal.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
 python3 bench/task_journal.py --compare ~/.local/state/code-tui/workspaces/<hash> A B  # an A/B
 python3 bench/task_journal.py --recent 10  # newest tasks across every workspace
+python3 -m bench.remote --check        # optional: is the Daytona SDK + key usable (offline)
+python3 -m bench.remote --self-test    # optional: create a sandbox, run, delete (spends credit)
 ```
+
+`bench/remote.py` is the only third-party dependency in `bench/` and it is lazy: importing it
+never requires the SDK, and every entry point answers `RemoteError` with the install line when
+it is missing (`python3 -m pip install --user daytona`). The key is `DAYTONA_API_KEY`, read from
+the environment or the same `~/.config/code-tui/{env,.env}` the TUI launcher loads — never from
+the repo. `create()` always sets an auto-stop interval, so a crashed caller cannot leave a
+sandbox billing.
 
 `task_journal.py <state-dir> <task-id>` prints one row per task: status, stop, steps, writes and
 edits, restarts, rejections, the tool and verb mix — then the escape metrics `exec_verb_dupes`,
