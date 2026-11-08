@@ -21,6 +21,10 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
 import bench.agent.config as config
 import bench.agent.llm as llm
 import bench.agent.loop as loop
@@ -59,6 +63,7 @@ def run(check):
     check("llm: error type", issubclass(llm.LLMError, RuntimeError))
     check("trace: render is callable", callable(trace.render))
     check("task_journal: verbs", "final_answer" in task_journal.VERBS)
+    _journal_metrics(check)
     check("snapshot: workspace helpers",
           callable(snapshot.manifest) and callable(snapshot.clone) and callable(snapshot.changed))
     typed_names = tuple(name for name, meta in verbs.VERBS.items() if meta.get("typed", True))
@@ -74,3 +79,35 @@ def run(check):
     check("verbs: run is a python helper; exec is the typed process tool",
           "run" not in tools.TOOL_NAMES and "run" in verbs.VERBS and "exec" in tools.TOOL_NAMES,
           str(tools.TOOL_NAMES))
+
+
+def _journal_metrics(check) -> None:
+    """summarize() over a two-turn journal: the escape counts and the first mutating turn."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp)
+        (state / "tasks").mkdir()
+        (state / "events").mkdir()
+        (state / "tasks" / "t1.json").write_text(
+            json.dumps({"status": "done", "stop": "DONE", "usage": {"total_tokens": 7}}),
+            encoding="utf-8")
+        events = [
+            {"kind": "cell.start", "cell": 1, "tool": "exec",
+             "args": {"argv": ["grep", "-rn", "x", "."]}},
+            {"kind": "cell.start", "cell": 2, "tool": "exec",
+             "args": {"argv": ["python3", "-c", "print(1)"]}},
+            {"kind": "turn", "data": {"turn": 1, "code": "", "calls": [{}, {}],
+                                      "observation": {"stdout": "abc", "stderr": ""}}},
+            {"kind": "cell.start", "cell": 3, "tool": "exec", "args": {"shell": "echo hi"}},
+            {"kind": "cell.start", "cell": 4, "tool": "write", "args": {"path": "a.txt"}},
+            {"kind": "turn", "data": {"turn": 2, "code": "", "calls": [{}, {}],
+                                      "observation": {"stdout": "defgh", "stderr": ""}}},
+        ]
+        (state / "events" / "t1.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n{not json\n",
+            encoding="utf-8")
+        row = task_journal.summarize(state, "t1")
+    check("task_journal: summarize reports the escape metrics and the first mutation",
+          row["exec_verb_dupes"] == 1 and row["python3_c"] == 1 and row["shell"] == 1
+          and row["obs_chars"] == 9 and row["first_mutation_turn"] == 2
+          and row["steps"] == 2 and row["cells"] == 4
+          and {"tool_mix", "verbs", "usage", "rejected"} <= set(row), str(row)[:300])

@@ -42,7 +42,8 @@ INVARIANTS
     sorts by score then path, and caps at `limit`. Deterministic: same tree, same order.
   - `headers=N` inlines the full header of the top N hits in the same response, so "which
     module owns this, and what is its contract" is one call, not a second `guide(path)`.
-  - A `path` that is not an indexed module is `ok:false`/`not_found` with the nearest paths;
+  - A `path` that is not an indexed module is `ok:false`/`not_found` with the nearest paths
+    (with a list of paths, the ones that exist are rendered and the rest are noted);
     a query that matches nothing stays `ok:true` with a note (a miss is an answer about the
     index, and the note names the fallback).
   - Rendering truncates each section at `chars` and always keeps the path line, so a card
@@ -213,7 +214,8 @@ def _non_indexed_note(root, query, rows):
 def guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, headers=0):
     """Answer "which module owns this?" over the headers.
 
-    No query, no path -> one line per source file (the map). `path` -> that module's header.
+    No query, no path -> one line per source file (the map). `path` -> that module's header,
+    or one header per entry when `path` is a list (several modules, one call).
     `query` -> the best `limit` documented matches, ranked, with their sections; `headers=N`
     also inlines the full header of the top N hits.
     """
@@ -221,18 +223,34 @@ def guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, h
     page_size = 10 if limit is None else max(1, int(limit))
     rows = index(root)
     if path:
-        want = str(path).replace(os.sep, "/").lstrip("./")
-        hits = [row for row in rows if row["path"] == want or row["path"].endswith("/" + want)]
+        wants = ([str(item) for item in path] if isinstance(path, (list, tuple, set))
+                 else [str(path)])
+        hits, missing = [], []
+        for raw in wants:
+            want = raw.replace(os.sep, "/").lstrip("./")
+            found = [row for row in rows
+                     if row["path"] == want or row["path"].endswith("/" + want)]
+            if found:
+                hits.extend(found)
+            else:
+                missing.append(want)
         if not hits:
-            near = difflib.get_close_matches(want, [row["path"] for row in rows], n=3, cutoff=0.3)
-            message = "no module at %s; map() lists the files, search() finds text" % want
-            return {"ok": False, "kind": "not_found", "path": want, "modules": [],
+            near = difflib.get_close_matches(wants[0], [row["path"] for row in rows],
+                                             n=3, cutoff=0.3)
+            message = "no module at %s; map() lists the files, search() finds text" % ", ".join(wants)
+            return {"ok": False, "kind": "not_found", "path": wants[0], "modules": [],
                     "shown": 0, "total": 0, "next": None, "did_you_mean": near,
                     "error": {"code": "not_found", "message": message,
-                             "use": "guide(query=...) ranks modules; map(path) lists files"},
+                              "use": "guide(query=...) ranks modules; map(path) lists files"},
                     "note": message, "text": message}
-        return {"ok": True, "kind": "guide", "modules": hits, "shown": len(hits),
-                "total": len(hits), "next": None, "text": render(hits, chars)}
+        text = render(hits, chars)
+        result = {"ok": True, "kind": "guide" if len(wants) == 1 else "guides",
+                  "modules": hits, "shown": len(hits), "total": len(hits), "next": None,
+                  "text": text}
+        if missing:
+            result["note"] = "no module at " + ", ".join(missing)
+            result["text"] = text + "\nnote: " + result["note"]
+        return result
     if query:
         terms = [term for term in _TERMS.split(str(query).lower()) if term]
         scored = []

@@ -41,13 +41,14 @@ from __future__ import annotations
 VERBS: dict[str, dict] = {
     "guide": {
         "function": "guide",
-        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked one-line rows (truthful total/next; default limit 10; offset pages), path gives one module's whole header. Read-only and in-kernel (no bench/guide.py process). Only source headers are indexed; current docs use map/outline/search.",
+        "summary": "Answer 'which module owns this?' from the source headers: no query gives the module map, query gives ranked one-line rows (truthful total/next; default limit 10; offset pages), path gives one module's whole header (or a list of paths: several headers in one call). Read-only and in-kernel (no bench/guide.py process). Only source headers are indexed; current docs use map/outline/search.",
         "mutates": False,
         "schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "path": {"type": "string"},
+                "path": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                         "description": "One module path, or a list of them for several headers in one call."},
                 "limit": {"type": "integer", "minimum": 1},
                 "offset": {"type": "integer", "minimum": 0,
                            "description": "Row offset into the ranked query results; use next.offset."},
@@ -133,7 +134,7 @@ VERBS: dict[str, dict] = {
     },
     "search": {
         "function": "search",
-        "summary": "Search for a regex (default) or literal. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count; within=[start,end] or section='Heading' restricts a range. include filters directory walks; a file path is searched as given.",
+        "summary": "Search for a regex (default) or literal; `path` takes a list and the pattern is a regex, so search(pattern='alpha|beta', path=[a, b], max_results=0) is one whole multi-file grep in one call. stdout is path:line:text for hits and path:line-text for context; merged context appears once. The envelope carries shown/total/offset/next/unit/complete (offset is the current start, next the cursor); above max_chars broad context becomes locators (max_chars is a threshold, not a cap); a paged result adds by-file hit ranges; count=true returns only path:count; within=[start,end] or section='Heading' restricts a range. include filters directory walks; a file path is searched as given.",
         "mutates": False,
         "schema": {
             "type": "object",
@@ -148,8 +149,8 @@ VERBS: dict[str, dict] = {
                 "context": {"type": "integer", "minimum": 0,
                             "description": "Lines before and after each hit; 0 returns the matching line only."},
                 "ignore_case": {"type": "boolean"},
-                "max_results": {"type": "integer", "minimum": 1,
-                                "description": "Page size (default 50); passing it makes the page an explicit window, so a cut result is has_more rather than truncated."},
+                "max_results": {"type": "integer", "minimum": 0,
+                                "description": "Page size (default 50); 0 returns every hit in one answer; passing it makes the page an explicit window, so a cut result is has_more rather than truncated."},
                 "offset": {"type": "integer", "minimum": 0,
                            "description": "Skip this many matching lines; next.offset pages the result."},
                 "count": {"type": "boolean", "default": False,

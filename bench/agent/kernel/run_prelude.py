@@ -9,7 +9,7 @@ WHAT IT IS
 ENTRY POINTS
   RUN_PRELUDE   the child source (KERNEL_RUN_PRELUDE); present only when allow_run is on
   In the namespace: exec_argv(), git_tool(), run() (only when KERNEL_SHELL=1), plus the
-  private gate: `_mutating_command`, `_HINT`, `_audit_spawn`, `_SpawnBlocked`.
+  private gate: `_mutating_command`, `_HINT`, `_VERB_DUPE`, `_audit_spawn`, `_SpawnBlocked`.
 
 INVARIANTS
   - `exec` never parses a shell string for a program: a shell interpreter with `-c`/`-lc` in
@@ -30,11 +30,16 @@ INVARIANTS
     KERNEL_ORPHAN_JOURNAL, so killing the kernel group cannot leak it (see process.py).
   - `check_cache` answers a repeated command with `kind: "check_cached"` instead of spawning
     it twice.
+  - A program that duplicates a typed verb (`grep`, `cat`, `ls`, `find`, `sed -i`, ...) runs
+    normally and carries ONE `note` naming the typed call (`_VERB_DUPE`); it is never refused,
+    and with a flag the typed verb cannot express (`_DUPE_OPAQUE`: `grep -o/-l/-v/-A/-B/-P`,
+    `sed` without `-i`) the note stays silent. One note per program per cell.
 
 WHERE TO CHANGE
   What exec/git refuse ......................... `_RUN_SHELL_MUTATORS`, `_RUN_GIT_MUTATORS`,
                                                  `_mutating_command`, `_HINT`, then RUN_NOTE
                                                  in repl.py and AGENTS.md §4 invariant 2
+  The duplicate-verb note ..................... `_VERB_DUPE`, `_DUPE_OPAQUE`, `_typed_dupe`
   The spawn gate ............................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
   exec's argv/commands/shell shape ............. `exec_argv`
   The typed git actions ........................ `git_tool`
@@ -100,6 +105,42 @@ _HINT = {
     ">": "splice(path, start, end, text) or write(path, content)", "find -delete": "map() then delete(path)",
     "xargs": "a Python loop",
 }
+# Programs a typed verb already answers. One `note` on the result, never a refusal: the call
+# worked, and the model should know the cheaper shape for next time.
+_VERB_DUPE = {
+    "grep": "search(pattern, path=[...], max_results=0)",
+    "rg": "search(pattern, path=[...], max_results=0)",
+    "cat": "read(path)",
+    "ls": "map(path)",
+    "find": "map(path, include='*.py')",
+    "sed": "splice(path, start, end, text) or edit(path, old, new)",
+    "mkdir": "mkdir(path)",
+    "rm": "delete(path)",
+}
+# Short flags the typed verb cannot express (`grep -o`, `grep -v`, `find -exec`). With one of
+# these the note stays silent: naming a call that would return something else is a wrong hint.
+_DUPE_OPAQUE = {"grep": "olvABCPLxqmFzZ", "rg": "olvABCPLxqmFzZ",
+                "find": "execoknewprmfa1", "ls": "1l", "cat": "AnbeEsTtv", "sed": "ns"}
+_DUPE_NOTED = set()
+
+
+def _typed_dupe(argv):
+    # (program, typed call) when this argv repeats a typed verb that can express it, else None.
+    if not argv:
+        return None
+    program = _ros.path.basename(str(argv[0])).lower()
+    use = _VERB_DUPE.get(program)
+    if not use:
+        return None
+    args = [str(item) for item in argv[1:]]
+    short = "".join(item[1:] for item in args
+                    if item.startswith("-") and not item.startswith("--") and len(item) > 1)
+    if any(char in _DUPE_OPAQUE.get(program, "") for char in short):
+        return None
+    if program == "sed" and not any(item.startswith("-i") or item.startswith("--in-place")
+                                    for item in args):
+        return None
+    return (program, use)
 
 
 def _segments(command):
@@ -515,9 +556,15 @@ def exec_argv(argv=None, commands=None, shell=None, timeout=60, cwd=None, env=No
         return _Result({"ok": True, "kind": "timeout", "argv": argv, "command": command,
                 "timeout_s": float(timeout), "exit_code": None, "stdout": out or "", "stderr": err or "",
                 "note": "the program hit its own timeout and its process group was killed; the kernel is intact"})
-    return _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
+    result = _Result({"ok": True, "kind": "command", "argv": argv, "command": command,
             "cwd": cwd or _RUN_ROOT, "exit_code": proc.returncode,
             "stdout": out or "", "stderr": err or ""})
+    dupe = _typed_dupe(argv)
+    if dupe and dupe[0] not in _DUPE_NOTED:
+        _DUPE_NOTED.add(dupe[0])
+        result["note"] = ("`%s` repeats a typed verb; %s answers it in one call."
+                          % (dupe[0], dupe[1]))
+    return result
 
 
 def _git_page(text, offset=0, max_chars=None):

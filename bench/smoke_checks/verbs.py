@@ -198,6 +198,21 @@ def run(check, root, kernel):
     check("kernel: call(exec) refuses a mutating program",
           "mutation_via_exec" in (cell.result or "") and "one" in (root / "call_a.txt").read_text(),
           (cell.result or "")[:200])
+    cell = kernel.call("exec", {"argv": ["grep", "-n", "TWO", "call_a.txt"]})
+    notes = " ".join((cell.envelope or {}).get("notes") or [])
+    check("kernel: a grep exec carries one note naming the search() call",
+          not cell.rejected and "search(pattern, path=[...], max_results=0)" in notes
+          and "TWO" in cell.stdout, notes[:280])
+    cell = kernel.call("exec", {"argv": ["grep", "-o", "TWO", "call_a.txt"]})
+    check("kernel: grep -o gets no note because search cannot express it",
+          not cell.rejected
+          and not any("search(" in note for note in (cell.envelope or {}).get("notes") or []),
+          str((cell.envelope or {}).get("notes"))[:240])
+    cell = kernel.run("a = exec_argv(['grep', '-n', 'TWO', 'call_a.txt']); "
+                      "b = exec_argv(['grep', '-n', 'one', 'call_a.txt']); "
+                      "print('note' in a, 'note' in b)")
+    check("kernel: the duplicate-verb note is not repeated twice in one cell",
+          "True False" in cell.stdout, (cell.stdout + cell.stderr)[:240])
     (root / "outline.md").write_text("# Title\n\n## Section\ntext\n", encoding="utf-8")
     (root / "outline.py").write_text("class A:\n    def m(self):\n        pass\n\ndef top():\n    pass\n", encoding="utf-8")
     cell = kernel.call("outline", {"path": "outline.md"})
@@ -360,6 +375,21 @@ def run(check, root, kernel):
     check("kernel: search labels hits vs hit_ranges",
           data.get("hits") == 700 and "hit_ranges" in data and "ranges" not in data,
           str(data)[:280])
+    kernel.run("write('dupe_a.txt', '\\n'.join('alpha %d' % n for n in range(30))); "
+               "write('dupe_b.txt', '\\n'.join('beta %d' % n for n in range(30)))")
+    cell = kernel.call("search", {"pattern": "alpha|beta", "path": ["dupe_a.txt", "dupe_b.txt"],
+                                  "max_results": 0})
+    data = (cell.envelope or {}).get("data") or {}
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: search max_results=0 is one whole multi-file grep (path list + alternation)",
+          data.get("hits") == 60 and page.get("shown") == 60 and page.get("next") is None
+          and page.get("truncated") is False
+          and {"dupe_a.txt", "dupe_b.txt"} <= set(data.get("by_file") or {}),
+          str(page) + str(data)[:160])
+    cell = kernel.call("search", {"pattern": "alpha|beta", "path": ["dupe_a.txt", "dupe_b.txt"]})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: search's default page is still 50 hits and says truncated",
+          page.get("shown") == 50 and page.get("truncated") is True, str(page)[:280])
 
     kernel.run("write('bigdiff.txt', '\\n'.join('x' * 12 for _ in range(1200)))")
     cell = kernel.call("session_diff", {})
@@ -389,5 +419,10 @@ def run(check, root, kernel):
     check("kernel: guide(headers=N) inlines the top hit's header in one call",
           "WHAT IT IS" in cell.stdout and "ENTRY POINTS" in cell.stdout,
           cell.stdout[:240])
+    cell = kernel.call("guide", {"path": ["outline.py", "ctx.py"]})
+    check("kernel: guide(path=[...]) returns several modules' headers in one call",
+          '"kind": "guides"' in (cell.result or "")
+          and "outline.py" in cell.stdout and "ctx.py" in cell.stdout,
+          (cell.stdout + (cell.result or ""))[:240])
 
     kernel.run("undo('call_a.txt'); undo('call_b.txt')")

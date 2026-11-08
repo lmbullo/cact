@@ -31,6 +31,8 @@ INVARIANTS
   - Search text is exact (no clipping); context is merged so a line appears once; above
     `max_chars` a broad result degrades to locators instead of a silent digest. The two search
     counts are labelled: `hits` (matching lines) and `hit_ranges` (contiguous ranges).
+    `max_results=0` is every hit in one answer (mirroring `map(max_files=0)`), so a multi-path
+    alternation grep is one call; the default page stays 50 and `offset`/`next` still page.
   - `recall()` reads `_OBS`, which survives a restart; it must not depend on live variables.
 
 WHERE TO CHANGE
@@ -405,9 +407,12 @@ def grep(pattern, path=".", max_results=None, regex=True, include=None, context=
     # Search: one path or a list, an optional include glob, and optional context. The typed
     # `search` and the python `grep` share this one implementation and the same regex default.
     # `max_results` is the page size; passing it makes the page an explicit window (complete),
-    # omitting it means the default page and a cut is `truncated`.
+    # omitting it means the default page and a cut is `truncated`. `max_results=0` means every
+    # hit in one answer, mirroring `map(max_files=0)`: a whole multi-file grep is one call.
     explicit_limit = max_results is not None
-    max_results = 50 if max_results is None else max(1, int(max_results))
+    page = 50 if max_results is None else int(max_results)
+    if page <= 0:
+        page = None
     path = _coerce_paths(path)
     if isinstance(path, (list, tuple, set)):
         if count:
@@ -430,8 +435,8 @@ def grep(pattern, path=".", max_results=None, regex=True, include=None, context=
             hits.extend(result.get("matches") or [])
             occurred += int(result.get("occurrences") or 0)
             truncated = truncated or bool(result.get("truncated"))
-            if len(hits) >= int(max_results):
-                return _grep_result(hits[:int(max_results)], occurred, not explicit_limit, max_chars,
+            if page is not None and len(hits) >= page:
+                return _grep_result(hits[:page], occurred, not explicit_limit, max_chars,
                                     offset=offset, total=int(result.get("total") or len(hits)))
         return _grep_result(hits, occurred, truncated, max_chars, offset=offset,
                             total=len(hits))
@@ -523,7 +528,7 @@ def grep(pattern, path=".", max_results=None, regex=True, include=None, context=
                 continue
             if matched_lines <= skip:
                 continue
-            if len(hits) < int(max_results):
+            if page is None or len(hits) < page:
                 hits.append(hit)
             else:
                 truncated = not explicit_limit

@@ -202,6 +202,7 @@ for line in sys.stdin:
         budget = float(request.get("timeout") or 15.0)
         ns["_CHECK_CACHE"] = request.get("check_cache") or {}
         ns["_READS_CELL"] = {}
+        ns["_DUPE_NOTED"] = set()
         if kind == "call" and not isinstance(request.get("args") or {}, dict):
             raise ValueError("call args must be an object")
         if kind == "code" and not isinstance(code, str):
@@ -271,7 +272,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "skill", "skills") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "guides", "skill", "skills") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))
@@ -292,7 +293,7 @@ for line in sys.stdin:
                             summary["shown"] = len(value.get("entries") or value.get("files") or [])
                             summary.pop("entries", None)
                             summary.pop("files", None)
-                        if value.get("kind") in ("recall", "guide"):
+                        if value.get("kind") in ("recall", "guide", "guides"):
                             summary.pop("items", None)
                             summary.pop("modules", None)
                     result_repr = json.dumps(summary, default=repr)
