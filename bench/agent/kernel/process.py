@@ -12,8 +12,9 @@ ENTRY POINTS
          allow_run=False, allow_shell=None, supervise=True,
          extra_verbs=None, extra_prelude="")
     .start()                            spawn the child (lazy: run()/call() start it)
-    .run(code, check_cache=None)        one python cell -> Cell
-    .call(tool, args, check_cache=None) one typed verb -> the same Cell pipeline
+    .run(code, check_cache=None, extra_obs=None)        one python cell -> Cell
+    .call(tool, args, check_cache=None, extra_obs=None) one typed verb -> the same Cell pipeline
+                                                `extra_obs` seeds the child's `_OBS` first
     .stop()                             SIGKILL the group, reap orphans, drop the obs log
   The child's environment is the wire: KERNEL_PRELUDE, KERNEL_RUN_PRELUDE, KERNEL_HEADERS,
   KERNEL_VERBS, KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL,
@@ -244,19 +245,23 @@ class Kernel:
         return (f"kernel protocol mismatch: child speaks {got!r}, parent expects {PROTOCOL}; "
                 "restarted with an empty namespace (earlier output survives in recall())")
 
-    def run(self, code: str, check_cache: dict | None = None) -> Cell:
+    def run(self, code: str, check_cache: dict | None = None,
+            extra_obs: list | None = None) -> Cell:
         """One python cell -> one Cell; restarts the child on a timeout, a crash or a stale protocol."""
         if len(code) > MAX_CODE:
             return Cell.failure("kernel: code exceeds 20000 characters; split it into smaller cells",
                                 restarted=False)
         return self._execute(CellRequest(code=code, timeout=float(self.timeout),
-                                         check_cache=dict(check_cache or {})))
+                                         check_cache=dict(check_cache or {}),
+                                         extra_obs=list(extra_obs or [])))
 
-    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None) -> Cell:
+    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None,
+             extra_obs: list | None = None) -> Cell:
         """Execute one typed verb through the same child, journal and Cell pipeline."""
         return self._execute(CellRequest(kind="call", tool=str(tool), args=dict(args or {}),
                                          timeout=float(self.timeout),
-                                         check_cache=dict(check_cache or {})))
+                                         check_cache=dict(check_cache or {}),
+                                         extra_obs=list(extra_obs or [])))
 
     def _execute(self, request: CellRequest) -> Cell:
         if self.proc is None:

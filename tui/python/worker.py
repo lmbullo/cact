@@ -193,15 +193,8 @@ def check_name(cmd: str, specs: Any) -> str:
 
 def first_failure(check: Any) -> str:
     """The first failing line a `Check` parsed, else the first non-empty line of its output."""
-    for hit in getattr(check, "failures", None) or ():
-        text = str(hit.get("text") or "").strip() if isinstance(hit, dict) else str(hit).strip()
-        if text:
-            return text
-    for stream in (getattr(check, "stderr", ""), getattr(check, "stdout", "")):
-        for line in str(stream or "").splitlines():
-            if line.strip():
-                return line.strip()
-    return ""
+    method = getattr(check, "first_failure", None)
+    return method() if callable(method) else ""
 
 
 def check_payload(check: dict, verifier: Any) -> dict[str, Any]:

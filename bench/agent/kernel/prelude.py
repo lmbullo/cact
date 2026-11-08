@@ -22,7 +22,7 @@ ENTRY POINTS
   HEADERS_SOURCE   headers.py as text (KERNEL_HEADERS); shipped, never imported, because a
                    cell runs in a task workspace where `bench` is not on sys.path
   Inside the namespace: map/read/session_diff/search/outline/skill/edit/splice/write/delete/
-  mkdir/apply, guide/grep/recall/verbs/changes/diff/undo/commit/help, final_answer/emit.
+  mkdir/apply, guide/grep/recall/verbs/changes/diff/undo/status/commit/help, final_answer/emit.
   `_commit` is the one journal entry point behind every mutation.
 
 INVARIANTS

@@ -21,6 +21,9 @@ ENTRY POINTS
                                                .applies(paths) filters by changed paths
   run_plan(specs, cwd, paths=None) -> (Check | None, {cmd: Check})
   run_specs(specs, cwd, paths=None) -> Check | None   the combined verdict
+  run_each(specs, cwd, paths=None, name=None, cache=None) -> list[dict]
+                                                   one {name, ok, exit, first_line} row per spec,
+                                                   reusing a cached green command
   Verifier(specs=(), cwd="", *, check=None, window=HEALTH_WINDOW, legacy=False,
            cheap_enabled=True)
     .should_run(paths, now) -> bool   throttle + scope decision (reserves the window)
@@ -55,7 +58,7 @@ INVARIANTS
 WHERE TO CHANGE
   Plan parsing .................... CheckSpec.parse
   Scope matching .................. CheckSpec.applies
-  How a plan runs and what it returns ... run_plan / run_specs
+  How a plan runs and what it returns ... run_plan / run_specs / run_each
   Throttle / cache / goal policy ... Verifier
   The default plan for a workspace ...... tui/src/detect-checks.ts::detectChecks
 """
@@ -147,6 +150,36 @@ def run_specs(specs: Iterable[CheckSpec], cwd: str,
               paths: Iterable[str] | None = None) -> Check | None:
     """run_plan's verdict only: the first failing Check, or a synthetic passed, or None."""
     return run_plan(specs, cwd, paths)[0]
+
+
+def run_each(specs: Iterable[CheckSpec], cwd: str,
+             paths: Iterable[str] | None = None, name: str | None = None,
+             cache: dict | None = None) -> list[dict]:
+    """One `{name, ok, exit, first_line}` row per applicable spec, in plan order.
+
+    `name` selects one spec. A command whose cache entry is green for this tree is reused, so a
+    second `checks()` call never re-runs a spec the cheap check already passed. Every other
+    command goes through `run_check`, exactly as the goal and the cheap subset do.
+    """
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for spec in specs:
+        if name is not None and spec.name != name:
+            continue
+        if not spec.applies(paths) or spec.cmd in seen:
+            continue
+        seen.add(spec.cmd)
+        cached = (cache or {}).get(spec.cmd)
+        if isinstance(cached, dict) and cached.get("ok"):
+            rows.append({"name": spec.name, "ok": True, "exit": 0, "first_line": ""})
+            continue
+        result = run_check(spec.cmd, cwd)
+        rows.append({"name": spec.name, "ok": bool(result.ok),
+                     "exit": result.exit_code,
+                     "first_line": "" if result.ok else result.first_failure()})
+        if isinstance(cache, dict):
+            cache[spec.cmd] = {"text": result.text(600), "ok": bool(result.ok)}
+    return rows
 
 
 class Verifier:

@@ -8,7 +8,9 @@ failure is `../AGENTS.md` §6, and its symptom table is `../AGENTS.md` §8.
 ## 1. Gate order
 
 Run in this order. A failure is a contract change, not a flaky test: fix the code or fix the
-document in the same change.
+document in the same change. Inside an agent run, the same plan is `checks()` (one call,
+`bench/agent/check_plan.py`); it reuses a cached green spec and its rows are the verdict. Do
+not run this ladder by hand.
 
 | Command | Covers | Expected |
 |---|---|---|

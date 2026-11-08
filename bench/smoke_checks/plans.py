@@ -85,6 +85,22 @@ def run(check):
     check("verifier: the goal runs the whole plan on every attempt",
           first_ok and second_ok and counter.read_text() == "xx"
           and first_check.state == "passed", counter.read_text())
+    passing = check_plan.CheckSpec.parse([{"name": "ok", "cmd": "true"}])
+    failing = check_plan.CheckSpec.parse([{"name": "bad", "cmd": "false"}])
+    check("checks: run_each agrees with run_specs on a passing spec",
+          check_plan.run_each(passing, str(root))[0]["ok"] is True
+          and check_plan.run_specs(passing, str(root)).ok is True)
+    failing_row = check_plan.run_each(failing, str(root))[0]
+    check("checks: run_each agrees with run_specs on a failing spec",
+          failing_row["ok"] is False and failing_row["exit"] == 1
+          and check_plan.run_specs(failing, str(root)).ok is False, str(failing_row))
+    cache_marker = root / "cache-shortcut"
+    cached_specs = check_plan.CheckSpec.parse([
+        {"name": "touch", "cmd": f"touch {cache_marker}"}])
+    rows = check_plan.run_each(cached_specs, str(root),
+                               cache={f"touch {cache_marker}": {"ok": True}})
+    check("checks: a cached green spec is not re-run",
+          rows[0]["ok"] is True and not cache_marker.exists(), str(rows))
     legacy_ok, legacy_check = check_plan.Verifier(goal_specs, str(root), legacy=True).authoritative()
     check("verifier: the legacy goal answers a bare bool",
           legacy_ok is True and legacy_check is None, str(legacy_ok))

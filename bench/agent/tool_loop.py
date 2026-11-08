@@ -59,6 +59,11 @@ INVARIANTS
     plan; after a mutating cell `invalidate()` drops the cache, and `should_run`/`run`
     refresh `self.last_check` (the `[check]` line of the next card). It never ends the run;
     the full goal does. `goal=`/`health=` remain accepted for the benchmark and smoke tests.
+  - `checks(name=None)` is parent-side and reuses the Verifier's specs and cache: it never
+    shells out a second time for a command the cheap check already passed. A failing row is
+    data; the automatic cheap check and `final_answer`'s GOAL_UNMET gate are unchanged.
+  - A failing `[check]` is one line; its full text is queued as the next `_OBS` entry (via
+    CellRequest.extra_obs) so the card can name a real handle instead of dumping the output.
   - A finish is never rejected for citation coverage: `read()` records ranges for the
     `[read]` card, but reads through python `run()`/`open()` are equally valid and the ledger
     cannot see them, so gating the finish on it was inconsistent.
@@ -97,8 +102,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from .check_plan import run_each
 from .check_run import Check, evaluate
 from .kernel import Kernel
+from .kernel.protocol import Cell, CellReply
 from .llm import Client, LLMError
 from .loop import Budget, RunResult, _usage_add
 from .docs import DOCS_TOOL
@@ -145,7 +152,7 @@ PYTHON_TOOL = {
     },
 }
 
-TOOL_RULES = """You act by calling tools. The typed tools (guide, skill, map, read, session_diff, search, recall, outline, edit, splice, write, delete, mkdir, apply, exec, git) execute against the workspace and return structured observations. A typed observation has `[observe]`/`[page]` (`shown/total/next/unit/has_more/complete`) and `[data]`; the card does not clip it, so trust `page.complete` rather than a prose tail. When an API or library behavior is uncertain, call docs(url) to read one documentation page instead of guessing; it returns clean text with a character budget. When a task names a project procedure, call skill(name) to load it from .agent/skills/ instead of inventing the steps. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
+TOOL_RULES = """You act by calling tools. The typed tools (guide, skill, map, read, session_diff, checks, status, search, recall, outline, edit, splice, write, delete, mkdir, apply, exec, git) execute against the workspace and return structured observations. A typed observation has `[observe]`/`[page]` (`shown/total/next/unit/has_more/complete`) and `[data]`; the card does not clip it, so trust `page.complete` rather than a prose tail. When an API or library behavior is uncertain, call docs(url) to read one documentation page instead of guessing; it returns clean text with a character budget. When a task names a project procedure, call skill(name) to load it from .agent/skills/ instead of inventing the steps. The python tool is a persistent kernel: variables, imports and data persist between calls; use it for computation and anything the typed tools do not cover. In typed modes there is no run() helper; exec(shell=...) is the explicit shell escape hatch.
 
 For "which module owns this?", use guide(query) (ranked rows; total/next are truthful, default limit 10) or guide(path) for one module's full header, or guide(path=[...]) for several headers in one call. For files, use map, outline, read and search. map(path, include='*.md') lists files with line counts; a literal include is an exact relative path and a glob matches full path or basename, skipping .gitignore/generated trees (use it instead of ls/find through exec); outline(path) returns headings and definitions with line numbers (Markdown sections, Python classes/functions/methods, TS/JS defs and tests, HTML sections/headings inside JS template literals, CSS section comments), so read a long file by its structure instead of guessing. read takes a path or a list and a line range (start/end); page.next is a replayable argument (`{"start": N}`), has_more means the file continues, truncated only means the default page limit cut it, and a range already shown this session returns a short pointer (read(..., repeat=True) re-delivers it). search takes a pattern, one path or a list, include='*.py' to filter, context=N for merged surrounding lines, and ignore_case; its line text is exact, and broad context returns locators (`text_elided`) instead of a silently digested blob. Search is regex by default, so `a|b` is one call; pass regex=False for a literal substring. They return line numbers and handles, so you can go straight to the range you need.
 
@@ -352,7 +359,9 @@ class ToolLoop:
         self.verifier = verifier
         self.wrap_up_at = wrap_up_at
         self.last_check: Any = None
+        self.last_check_handle: str | None = None
         self._health_at = 0.0
+        self._extra_obs: list[dict] = []
         self.check_cache: dict[str, str] = {}
 
     @property
@@ -594,10 +603,14 @@ class ToolLoop:
         else:
             seen.add(key)
         tally.calls += 1
-        if name == "python":
-            cell = self.kernel.run(code, check_cache=self._check_cache())
+        if name == "checks":
+            cell = self._checks_cell(args)
+        elif name == "python":
+            cell = self.kernel.run(code, check_cache=self._check_cache(),
+                                   extra_obs=self._take_extra_obs())
         else:
-            cell = self.kernel.call(name, args, check_cache=self._check_cache())
+            cell = self.kernel.call(name, args, check_cache=self._check_cache(),
+                                    extra_obs=self._take_extra_obs())
         record.runs = (record.runs or []) + (cell.runs or [])
         record.reads = cell.reads or {}
         self._note_cell(cell)
@@ -621,6 +634,7 @@ class ToolLoop:
             else:
                 self.check_cache = {}
             self.last_check = None
+            self.last_check_handle = None
             self._refresh_health(record, cell)
         if cell.changed:
             self.changed.update(cell.changed)
@@ -692,6 +706,53 @@ class ToolLoop:
     def _check_cache(self) -> dict:
         return self.verifier.cache() if self.verifier is not None else self.check_cache
 
+    def _take_extra_obs(self) -> list[dict]:
+        """The parent-side observations queued for the next kernel request; empties the queue."""
+        extra = self._extra_obs
+        self._extra_obs = []
+        return extra
+
+    def _checks_cell(self, args: dict) -> Cell:
+        """`checks(name=None)`: the plan's rows, reusing every cached green spec.
+
+        Parent-side, like `docs`: it needs the Verifier the worker built, not the kernel. A
+        failing row is data, not a refusal; an unknown `name` is a refusal with the plan's
+        names. The synthetic Cell goes through the same observation renderer as a typed call.
+        """
+        started = time.perf_counter()
+        name = str(args.get("name") or "").strip() or None
+        specs = list(getattr(self.verifier, "specs", ()) or ()) if self.verifier is not None else []
+        payload: dict = {"ok": True, "kind": "checks", "rows": [], "passed": 0, "failed": 0}
+        rejected = False
+        if not specs:
+            payload["text"] = "no check plan is configured for this run"
+        elif name is not None and name not in [spec.name for spec in specs]:
+            rejected = True
+            payload.update({"ok": False, "kind": "checks", "error": {
+                "code": "unknown_check",
+                "message": "no check spec named %r" % name,
+                "use": "available: " + ", ".join(spec.name for spec in specs)}})
+            payload["text"] = "no check spec named %r; available: %s" % (
+                name, ", ".join(spec.name for spec in specs))
+        else:
+            rows = run_each(specs, self.verifier.cwd, cache=self.verifier.cache(), name=name)
+            passed = sum(1 for row in rows if row["ok"])
+            failed = len(rows) - passed
+            lines = ["[checks] %d spec(s): %d passed, %d failed" % (len(rows), passed, failed)]
+            for row in rows:
+                if row["ok"]:
+                    lines.append("- %s: ok exit=%s" % (row["name"], row["exit"]))
+                else:
+                    lines.append("- %s: FAIL exit=%s: %s" % (
+                        row["name"], row["exit"], row["first_line"] or "failed"))
+            payload.update({"rows": rows, "passed": passed, "failed": failed,
+                            "ok": failed == 0, "text": "\n".join(lines)})
+        reply = CellReply(tool="checks", stdout=str(payload.get("text") or ""),
+                          result=json.dumps(payload))
+        cell = Cell.from_reply(reply, duration_ms=int((time.perf_counter() - started) * 1000))
+        cell.rejected = rejected
+        return cell
+
     def _refresh_health(self, record: CallRecord, cell) -> None:
         """Refresh the cheap check after a mutation, at most once every 20s."""
         if self.verifier is not None:
@@ -705,6 +766,7 @@ class ToolLoop:
             else:
                 self.last_check = self.verifier.last
             self.check_cache = self.verifier.cache()
+            self._queue_check_obs(cell)
             if self.last_check is not None:
                 record.check = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
             return
@@ -726,8 +788,20 @@ class ToolLoop:
             self.last_check = outcome
         if isinstance(self.last_check, bool):
             self.last_check = Check(cmd="health", state="passed" if self.last_check else "failed")
+        self._queue_check_obs(cell)
         if self.last_check is not None:
             record.check = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
+
+    def _queue_check_obs(self, cell) -> None:
+        """A failing check's full text becomes the next `_OBS` entry; the card names its index."""
+        self.last_check_handle = None
+        if self.last_check is None or self.last_check.ok:
+            return
+        if getattr(cell, "obs_index", None) is None:
+            return
+        index = int(cell.obs_index) + 1 + len(self._extra_obs)
+        self._extra_obs.append({"stdout": self.last_check.text(), "stderr": "", "result": None})
+        self.last_check_handle = "_OBS[%d]" % index
 
     def _merge_calls(self, rec: dict, records: list[CallRecord]) -> None:
         """Mirror the pre-`calls` turn shape: last writer wins per field, runs concatenate."""

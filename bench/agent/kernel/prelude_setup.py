@@ -32,7 +32,7 @@ from __future__ import annotations
 
 # --- part 1/5: imports, namespace, read ledgers, path matching ---------------------------
 _SETUP = r"""
-import ast as _ast, difflib as _difflib, fnmatch as _fnmatch, hashlib as _hashlib, os as _os, re as _re
+import ast as _ast, difflib as _difflib, fnmatch as _fnmatch, hashlib as _hashlib, os as _os, re as _re, subprocess as _sp
 
 _HEADERS = {}
 exec(_os.environ.get("KERNEL_HEADERS") or "", _HEADERS)

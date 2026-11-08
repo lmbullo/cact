@@ -11,7 +11,9 @@ WHAT IT IS
     _json_result, _cap  the two normalizers Cell.from_reply needs
 
 ENTRY POINTS
-  CellRequest(...).to_wire() -> dict           the one JSON line written to the child
+  CellRequest(...).to_wire() -> dict           the one JSON line written to the child;
+                                                `extra_obs` prepends parent-side entries to
+                                                the child's `_OBS` before the cell runs
   CellReply.from_wire(dict)                     parse a reply (the version is checked by
                                                process.Kernel._protocol_error on arrival)
   ExtendNotice.from_wire(dict)                 the deadline extension
@@ -48,7 +50,7 @@ from ..envelope import normalize
 # --- the protocol version: bump when either half's shape changes ---------------------------
 # The child embeds the same number through the __PROTOCOL__ placeholder; the parent compares
 # it on the first message of every cell.
-PROTOCOL = 4
+PROTOCOL = 5
 
 
 MARKER = "@@K@@"
@@ -72,6 +74,7 @@ class CellRequest:
     args: dict = field(default_factory=dict)
     protocol: int = PROTOCOL
     check_cache: dict = field(default_factory=dict)
+    extra_obs: list = field(default_factory=list)
 
     def to_wire(self) -> dict:
         """The one JSON object written as a line to the child: protocol, timeout, kind, body."""
@@ -83,6 +86,8 @@ class CellRequest:
             payload["code"] = self.code
         if self.check_cache:
             payload["check_cache"] = self.check_cache
+        if self.extra_obs:
+            payload["extra_obs"] = [dict(item) for item in self.extra_obs]
         return payload
 
 

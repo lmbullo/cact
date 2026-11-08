@@ -9,7 +9,7 @@ WHAT IT IS
 ENTRY POINTS
   Inside the cell namespace: _commit, open, _resolve, _read_text, _digest, _snapshot,
   _tree_state, _row, changes(), diff(path, max_chars), diff_tool(path, max_chars),
-  session_diff(path, max_chars), undo(path, n)
+  session_diff(path, max_chars), status(cwd), undo(path, n)
   `_HINT` maps a refused shell verb to the typed helper that replaces it.
 
 INVARIANTS
@@ -25,10 +25,13 @@ INVARIANTS
     functions must tolerate `_BASE == {}` until then.
   - `undo()` restores session-start text and drops files created this session; it never
     touches git.
+  - `status()` is read-only: one `git status --porcelain=v1 -b` plus `diff_tool`'s file
+    summary. It never journals and never mutates.
 
 WHERE TO CHANGE
   The journal row or delta ................ _commit, _row, _delta
   What `undo` restores .................... undo
+  The tree-state summary .................. status
   The refusal hints ....................... _HINT (and run_prelude's `_mutating_command`)
 """
 from __future__ import annotations
@@ -308,6 +311,64 @@ def diff_tool(path=None, max_chars=None):
     if notes:
         result["note"] = "; ".join(notes)
     return result
+
+
+def status(cwd=None):
+    # One call for tree state: branch, capped short status, ahead/behind, and the session
+    # journal's paths with add/del counts (never the diff text). Read-only: no journal row and
+    # no mutation, so it is safe between edits.
+    base = cwd or _ROOT
+    try:
+        proc = _sp.run(["git", "status", "--porcelain=v1", "-b"], cwd=base,
+                       capture_output=True, text=True, errors="replace", timeout=10)
+        out, err, code = proc.stdout or "", proc.stderr or "", proc.returncode
+    except (OSError, _sp.TimeoutExpired) as exc:
+        out, err, code = "", "%s: %s" % (type(exc).__name__, exc), None
+    branch, ahead, behind = "", None, None
+    changed = []
+    for line in out.splitlines():
+        if line.startswith("## "):
+            head = line[3:].strip()
+            meta = _re.search(r"\[(.+)\]$", head)
+            if meta:
+                found = _re.search(r"ahead (\d+)", meta.group(1))
+                if found:
+                    ahead = int(found.group(1))
+                found = _re.search(r"behind (\d+)", meta.group(1))
+                if found:
+                    behind = int(found.group(1))
+                head = head[:meta.start()].strip()
+            branch = head.split("...")[0].strip()
+            continue
+        if len(line) > 3:
+            changed.append({"status": line[:2].strip(), "path": line[3:].strip()})
+    journal = diff_tool(max_chars=0)
+    files = [{"path": item.get("path"), "state": item.get("state"),
+              "adds": int(item.get("adds") or 0), "dels": int(item.get("dels") or 0)}
+             for item in journal.get("files") or []]
+    adds = sum(item["adds"] for item in files)
+    dels = sum(item["dels"] for item in files)
+    lines = ["branch: %s%s" % (branch or "(unknown)",
+                               "" if ahead is None and behind is None
+                               else " (ahead %s, behind %s)" % (ahead, behind)),
+             "git: %d changed" % len(changed)]
+    for item in changed[:15]:
+        lines.append("  %-2s %s" % (item["status"], item["path"]))
+    if len(changed) > 15:
+        lines.append("  +%d more" % (len(changed) - 15))
+    lines.append("journal: %d file(s) +%d -%d" % (len(files), adds, dels))
+    for item in files[:10]:
+        lines.append("  %s +%d -%d" % (item["path"], item["adds"], item["dels"]))
+    if len(files) > 10:
+        lines.append("  +%d more" % (len(files) - 10))
+    if err.strip():
+        lines.append("git error: " + err.strip().splitlines()[0][:200])
+    text = "\n".join(lines)
+    return {"ok": code in (0, None), "kind": "status", "branch": branch,
+            "ahead": ahead, "behind": behind, "changed": changed[:50],
+            "changed_total": len(changed), "clean": not changed and not files,
+            "files": files, "file_count": len(files), "adds": adds, "dels": dels,
+            "ignored": int(journal.get("ignored") or 0), "text": text}
 
 
 def changes():

@@ -40,7 +40,7 @@ from pathlib import Path
 
 RESERVED = frozenset({
     "python", "delegate", "final_answer", "help", "skill", "verbs",
-    "map", "read", "session_diff", "search", "recall", "outline",
+    "map", "read", "session_diff", "checks", "status", "search", "recall", "outline",
     "edit", "splice", "write", "delete", "mkdir", "apply", "exec", "git",
     "run", "commit", "diff", "changes", "undo", "grep", "guide",
 })

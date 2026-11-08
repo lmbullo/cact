@@ -6,7 +6,7 @@ not a missing document.
 
 | Trigger | File | Owns |
 |---|---|---|
-| before any edit | `../AGENTS.md` | precedence, the 16-verb action space, invariants, change recipes, failure modes |
+| before any edit | `../AGENTS.md` | precedence, the 18-verb action space, invariants, change recipes, failure modes |
 | what the product is | `../README.md` | identity, entry points, install, the eval registry and grading |
 | about to run something | `run.md` | the gate ladder, each command's expected result and proof, the knobs |
 | need the runtime shape | `architecture.md` | tree kinds, one cell end to end, the loops, paging, the check plan |

@@ -7,7 +7,8 @@ WHAT IT IS
   typed tool (`typed`, default True) or a python-only helper. `tools.py` builds the provider
   specs from the typed entries; `kernel/process.py` ships the whole dict to the child as
   KERNEL_VERBS so `help()`/`verbs()` and the driver resolve the same names. Adding a verb
-  here, implementing the function in kernel/prelude.py, adding a smoke call in
+  here, implementing the function in kernel/prelude.py (or, for a parent-side tool like
+  `checks`, a handler in tool_loop.py plus a prelude stub), adding a smoke call in
   bench/smoke_checks/, and mentioning it in the rules text is the whole job.
 
 ENTRY POINTS
@@ -128,6 +129,31 @@ VERBS: dict[str, dict] = {
             "properties": {
                 "path": {"type": "string"},
                 "max_chars": {"type": "integer", "minimum": 0},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "checks": {
+        "function": "checks",
+        "summary": "Run the check plan this task was started with. One row per spec: {name, ok, exit, first_line}; name= runs that one spec. A cached green spec for this tree is not re-run, and a failing plan still blocks final_answer. The plan is checks(); do not run a gate by hand.",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "Run only the plan entry with this name."},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "status": {
+        "function": "status",
+        "summary": "One call for tree state: branch, capped `git status --short`, ahead/behind when cheap, and the session journal's paths with add/del counts (never diff text). Read-only: it never journals and never mutates. Tree state is status().",
+        "mutates": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "cwd": {"type": "string", "description": "Run git here (default the workspace root)."},
             },
             "additionalProperties": False,
         },

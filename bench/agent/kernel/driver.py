@@ -327,6 +327,22 @@ for line in sys.stdin:
     if "_CELL_CHANGED" in ns:
         ns["_CELL_CHANGED"] = []
     saved_stdin = sys.stdin
+    # Parent-side observations (a check failure's full output) are queued with the NEXT
+    # request, so their index is deterministic: `_OBS` grows by exactly one per entry before
+    # the cell's own append. Persist them too, so a restart keeps the same numbering.
+    _extra_obs = request.get("extra_obs") or []
+    if isinstance(_extra_obs, list) and _extra_obs:
+        _log = ns.setdefault("_OBS", [])
+        for _entry in _extra_obs:
+            if not isinstance(_entry, dict):
+                continue
+            _log.append(_entry)
+            if _OBS_PATH:
+                try:
+                    with open(_OBS_PATH, "a", encoding="utf-8") as _fh:
+                        _fh.write(json.dumps(_entry) + "\n")
+                except OSError:
+                    pass
     _arm(budget)
     try:
         sys.stdin = io.StringIO("")
@@ -408,7 +424,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "guides", "skill", "skills") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "guides", "skill", "skills", "status") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))

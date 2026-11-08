@@ -415,6 +415,15 @@ def run(check, root, kernel):
                   for note in (cell.envelope or {}).get("notes") or []),
           str(cell.envelope)[:320])
 
+    kernel.call("exec", {"argv": ["git", "init", "-q"]})
+    cell = kernel.call("status", {})
+    data = (cell.envelope or {}).get("data") or {}
+    check("kernel: status is one read-only call with branch and journal summary",
+          cell.tool == "status" and "journal:" in cell.stdout
+          and "changed_total" in data and "adds" in data
+          and not cell.changed and not cell.mutated,
+          (cell.stdout + str(cell.envelope))[:300])
+
     kernel.run("write('ctx.py', 'def alpha():\\n    return 1\\n')")
     cell = kernel.call("edit", {"edits": [{"path": "ctx.py", "old": "return 2",
                                                  "new": "return 3"}]})

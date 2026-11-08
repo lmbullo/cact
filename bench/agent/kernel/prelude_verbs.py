@@ -71,6 +71,14 @@ _VERBS = r"""def verbs(topic=None):
 help = verbs
 
 
+def checks(name=None):
+    # Parent-side tool: the loop's Verifier owns the plan, the cache and the rows, so a python
+    # cell cannot run it. This stub keeps the registry truthful and help() honest; the typed
+    # `checks` call is intercepted before the kernel.
+    return _fail("checks", "parent_only", "checks() runs in the agent loop, not a python cell",
+                 "call the typed checks tool, or checks(name=...) as a tool")
+
+
 # A literal backslash-n in source code is real content; in prose it is a model that
 # double-escaped. Only the second case gets a note, so a code write stays quiet.
 _ESCAPE_OK_EXT = {".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".json", ".c", ".h",

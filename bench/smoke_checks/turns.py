@@ -31,6 +31,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import bench.agent.check_plan as check_plan
 import bench.agent.llm as llm
 import bench.agent.loop as loop
 import bench.agent.state_loop as state_loop
@@ -229,6 +230,27 @@ def run(check):
     check("turn: the rejection notice names the check",
           "You finished without a passing check" in client.requests[1][-1]["content"],
           str(client.requests[1][-1])[:200])
+
+    plan_root = Path(tempfile.mkdtemp(prefix="cact-smoke-plan-"))
+    passing_verifier = check_plan.Verifier(
+        check_plan.CheckSpec.parse([{"name": "ok", "cmd": "true"}]), str(plan_root))
+    plan_loop = tool_loop.ToolLoop(FakeClient([]), FakeKernel({}), loop.Budget(),
+                                   verifier=passing_verifier)
+    plan_cell = plan_loop._checks_cell({})
+    plan_rows = (plan_cell.envelope or {}).get("data", {}).get("rows") or []
+    check("turn: checks() returns one row per plan spec",
+          plan_rows == [{"name": "ok", "ok": True, "exit": 0, "first_line": ""}]
+          and (plan_cell.envelope or {}).get("ok") is True, str(plan_cell.envelope)[:280])
+    failing_verifier = check_plan.Verifier(
+        check_plan.CheckSpec.parse([{"name": "bad", "cmd": "false"}]), str(plan_root))
+    reject_loop = tool_loop.ToolLoop(
+        FakeClient([_reply(content="I am done", finish="stop"),
+                    _reply(content="", finish="stop")]),
+        FakeKernel({}), loop.Budget(max_steps=1), verifier=failing_verifier)
+    reject_result = reject_loop.run("smoke", "task")
+    check("turn: a failing check plan still rejects final_answer",
+          reject_result.turns[0]["stop"] == tool_loop.GOAL_UNMET,
+          f"{reject_result.turns[0]['stop']} {reject_result.stop}")
 
     goal_checks = []
 

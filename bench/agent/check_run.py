@@ -55,6 +55,18 @@ class Check:
         """True only for a run that exited 0."""
         return self.state == "passed"
 
+    def first_failure(self) -> str:
+        """The first failing line `_PATTERNS` found, else the first non-empty output line."""
+        for hit in self.failures or ():
+            text = str(hit.get("text") or "").strip() if isinstance(hit, dict) else str(hit).strip()
+            if text:
+                return text
+        for stream in (self.stderr, self.stdout):
+            for line in str(stream or "").splitlines():
+                if line.strip():
+                    return line.strip()
+        return ""
+
     def text(self, limit: int = 3000) -> str:
         """The model-facing line(s): verdict first, then the parsed failure lines or a tail."""
         if self.state == "passed":

@@ -132,14 +132,16 @@ class FakeKernel:
         self.codes: list[str] = []
         self.calls: list[tuple[str, dict]] = []
 
-    def run(self, code: str, check_cache: dict | None = None) -> Cell:
+    def run(self, code: str, check_cache: dict | None = None,
+            extra_obs: list | None = None) -> Cell:
         """The scripted Cell for this code (an empty one when unscripted); `raises` makes it blow up."""
         self.codes.append(code)
         if code in self.raises:
             raise RuntimeError("kernel exploded")
         return self.cells.get(code) or _cell()
 
-    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None) -> Cell:
+    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None,
+             extra_obs: list | None = None) -> Cell:
         """The scripted Cell for this typed tool, stamped with the tool name; records the call."""
         self.calls.append((tool, dict(args or {})))
         if tool in self.raises:

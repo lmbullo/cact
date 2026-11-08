@@ -69,7 +69,8 @@ INVARIANTS
     unified diff, and `Cell.delta` is only their joined text for the card. `_note_cell`
     reads the structured `deltas`; it never re-parses the text.
   - `[check]` is ToolLoop's `last_check` (the Verifier's cheap subset, refreshed after a
-    mutating cell at most every 20s); this class only renders it.
+    mutating cell at most every 20s); this class renders one line: `pass`, or `<spec> :
+    <first failing line>` with the full output named as the `_OBS[n]` handle ToolLoop queued.
   - Compaction triggers on the real prompt token count at `context_budget` (config sets 85%
     of the 1M window), never on a character estimate; it cuts only on a tool-call boundary.
 
@@ -101,7 +102,7 @@ Every tool result is a state card, not a terminal transcript:
   [hits]   a paged search's per-file hit ranges, so read() can finish the job
   [check]  the project's cheap verification result after a change, when the workspace defines one
 
-Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature. Two routes replace a shell habit: guide(path=['a.py', 'b.py']) returns those module headers from the index in one call (a header is the contract, not the whole file), so no python3 -c + subprocess to read source. And a repo import (import bench.task_journal) only works through exec(['python3', '-c', '...']) because the kernel namespace has the verbs, not the `bench` package.
+Read [page] before [data]: `next` is a replayable argument object (read: `{"start": N}`, other pagers: `{"offset": N}`), `complete` says this request was served, and `has_more` says the file/result continues; a `ranges` read labels a `# path (next=...|complete)` block. Read the diff after a mutation. A file is only "read" up to the ranges shown by [read]; the `(unread: ...)` on that line lists the holes. Page the rest with `read(path, **page.next)`; for search/map use `offset=page.next["offset"]`. `has_more` means the result continues; `truncated` means a default page limit cut the output you asked to see, and `complete` is its inverse (an explicit window is complete with has_more true); read(ranges=[...]) batches different windows; read(path, section='Heading') resolves through outline. A range already shown this session returns a short pointer instead of the same text; pass read(..., repeat=True) to re-deliver it. Coverage is guidance, not a finish gate: reads through python open() are equally valid and are not tracked. changes(), diff() and undo() are still available for the whole session. Large output is never silently lost: the card names the _OBS[n] handle that holds it, and print(_OBS[n]['stdout'][a:b]) pages it. Every `ok:false` carries error.code/error.message/error.use: read `use` before retrying, and help(tool) prints the live signature. The plan is `checks()`; do not run a gate by hand. Tree state is `status()`. Two routes replace a shell habit: guide(path=['a.py', 'b.py']) returns those module headers from the index in one call (a header is the contract, not the whole file), so no python3 -c + subprocess to read source. And a repo import (import bench.task_journal) only works through exec(['python3', '-c', '...']) because the kernel namespace has the verbs, not the `bench` package.
 """
 
 DATA_LINES = 10
@@ -112,7 +113,7 @@ _NUMBERED = re.compile(r"^\s*(\d+)\| ?(.*)$")
 # Typed verbs already page and name their own loss. The card renders their observation
 # verbatim; only process/python output is digested, because only it has no paging contract.
 _VERBATIM_TOOLS = frozenset({"read", "search", "map", "outline", "guide", "recall",
-                            "session_diff", "git"})
+                            "session_diff", "git", "checks", "status"})
 
 
 def merge_ranges(ranges) -> list[list[int]]:
@@ -286,7 +287,8 @@ def delivered_ranges(reads, body: str = "", digested: bool = False) -> dict[str,
 
 def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
                        output_budget: int = 12_000,
-                       coverage: dict | None = None) -> tuple[str, dict[str, list[list[int]]]]:
+                       coverage: dict | None = None,
+                       check_handle: str | None = None) -> tuple[str, dict[str, list[list[int]]]]:
     """A cell -> `(the state card, the read ranges the card made visible)`.
 
     Pure: it reads no workspace file and does not mutate the loop's coverage ledger. The ranges
@@ -307,9 +309,13 @@ def render_observation(cell, steps: int, prompt_tokens: int = 0, check=None,
         parts.append("[diff]\n" + clip(cell.delta, 6000))
     if check is not None:
         if check.ok:
-            parts.append(f"[check] {check.cmd}: passed")
+            parts.append("[check] pass")
         else:
-            parts.append("[check] failing\n" + clip(check.text(1200), 1500))
+            name = check.cmd.split(": ", 1)[0] if ": " in check.cmd else check.cmd
+            line = "%s : %s" % (name, check.first_failure() or "failed")
+            if check_handle:
+                line += " (full: %s)" % check_handle
+            parts.append("[check] " + clip(line, 240))
     handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
     body: list[str] = []
     digested = False
@@ -456,7 +462,8 @@ class StateLoop(ToolLoop):
 
     def _observe(self, cell, steps: int) -> str:
         text, displayed = render_observation(
-            cell, steps, self.last_prompt_tokens, self.last_check, self.output_budget, self.coverage)
+            cell, steps, self.last_prompt_tokens, self.last_check, self.output_budget,
+            self.coverage, getattr(self, "last_check_handle", None))
         for path, ranges in displayed.items():
             total = int((cell.reads.get(path) or {}).get("total") or 0)
             entry = self.coverage.setdefault(path, {"ranges": [], "total": 0})

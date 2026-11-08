@@ -7,7 +7,10 @@ WHAT IT IS
   — and the escape hatch: how often `exec` stood in for a typed verb (`exec_verb_dupes`), ran
   `python3 -c` or a shell string, how many observation characters reached the model
   (`obs_chars`, `obs_chars_per_turn`), and the turn of the first mutating cell
-  (`first_mutation_turn`). The causal keys say *why* behavior changed: the turn the typed-dupe
+  (`first_mutation_turn`). The bookkeeping keys measure the tax: `out_tokens` and
+  `reasoning_tokens`, `gate_cells` (an exec cell that ran the gate ladder by hand),
+  `git_cells` (typed git or `git ...` through exec) and `verify_turns` (turns after the
+  first mutation that ran no mutation). The causal keys say *why* behavior changed: the turn the typed-dupe
   `note` first appeared (`dupe_note_turn`), the dupes after it (`dupes_after_note`), and how
   often a read/map/search resumed the page the previous result left open (`paged_followups`).
   (No benchmark CLI runs any more: `bench/eval.py` is the eval front end; this is the reader
@@ -40,6 +43,7 @@ INVARIANTS
 WHERE TO CHANGE
   New kernel verb ........ VERBS
   New escape metric ...... EXEC_DUPES, MUTATING_VERBS, _escape, summarize()
+  New bookkeeping metric . GATE_COMMANDS, _gate_cells, _git_cells, _verify_turns, _token_sum
   New metric ............. summarize()
 """
 from __future__ import annotations
@@ -65,6 +69,11 @@ DUPE_NOTE = "repeats a typed verb"
 # same strings inside the python cell's code.
 CHECK_COMMAND = "bun run typecheck"
 TEST_COMMAND = "bun test"
+# A cell that ran the project's gate ladder by hand. It is bookkeeping, not project work:
+# `checks()` answers the same plan in one call and reuses the Verifier's cache.
+GATE_COMMANDS = ("bench/guide.py --check", "bench/smoke.py", "ruff check",
+                 "bun run typecheck", "bun test", "pytest", "npm test", "tsc",
+                 "go test", "cargo test")
 
 
 def _events(state_dir: Path, task_id: str) -> list[dict]:
@@ -147,16 +156,81 @@ def _rejected(turns: list[dict], cells: list[dict] | None = None) -> int:
                           if (turn.get("observation") or {}).get("exit") == "error")
 
 
-def _first_mutation_turn(turns: list[dict], cells: list[dict]) -> int | None:
-    """The 1-based turn that held the first mutating cell; None when nothing was changed."""
+def _turn_cells(turns: list[dict], cells: list[dict]) -> list[tuple[int, list[dict]]]:
+    """`(turn number, its cells)` in journal order; archived calls without a cell become `{tool}`."""
+    grouped: list[tuple[int, list[dict]]] = []
     index = 0
     for turn in turns:
-        for _ in turn.get("calls") or turn.get("tool_calls") or []:
-            cell = cells[index] if index < len(cells) else {}
+        calls = turn.get("calls") or turn.get("tool_calls") or []
+        items = []
+        for call in calls:
+            if index < len(cells):
+                items.append(cells[index])
+            else:
+                name = call.get("name") if isinstance(call, dict) else call
+                items.append({"tool": str(name or "")})
             index += 1
-            if str(cell.get("tool") or "") in MUTATING_VERBS:
-                return int(turn.get("turn") or 0)
+        grouped.append((int(turn.get("turn") or 0), items))
+    return grouped
+
+
+def _first_mutation_turn(turns: list[dict], cells: list[dict]) -> int | None:
+    """The 1-based turn that held the first mutating cell; None when nothing was changed."""
+    for turn, items in _turn_cells(turns, cells):
+        if any(str(cell.get("tool") or "") in MUTATING_VERBS for cell in items):
+            return turn
     return None
+
+
+def _is_gate(command: str) -> bool:
+    """True when a command is one rung of the project's gate ladder."""
+    text = " ".join(str(command).split())
+    return any(marker in text for marker in GATE_COMMANDS)
+
+
+def _gate_cells(cells: list[dict]) -> int:
+    """exec cells that ran a gate command by hand instead of calling `checks()`."""
+    return sum(1 for cell in cells if cell.get("tool") == "exec"
+               and any(_is_gate(line) for line in _commands(cell)))
+
+
+def _git_cells(cells: list[dict]) -> int:
+    """git cells: the typed `git` tool or a hand-run `git ...` through exec."""
+    count = 0
+    for cell in cells:
+        if cell.get("tool") == "git":
+            count += 1
+        elif cell.get("tool") == "exec":
+            for line in _commands(cell):
+                parts = line.split()
+                if parts and os.path.basename(parts[0]) == "git":
+                    count += 1
+                    break
+    return count
+
+
+def _verify_turns(turns: list[dict], cells: list[dict]) -> int:
+    """Turns after the first mutation that ran no mutation: the verification detour."""
+    grouped = _turn_cells(turns, cells)
+    first = _first_mutation_turn(turns, cells)
+    if first is None:
+        return 0
+    return sum(1 for turn, items in grouped if turn >= first
+               and not any(str(cell.get("tool") or "") in MUTATING_VERBS for cell in items))
+
+
+def _token_sum(turns: list[dict], key: str) -> int:
+    """Sum one provider usage field over every turn; reasoning sits in completion details."""
+    total = 0
+    for turn in turns:
+        usage = turn.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        value = details.get(key, usage.get(key))
+        try:
+            total += int(value or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 def _dupe_note(events: list[dict], cell_ends: bool = False) -> tuple[int | None, int | None]:
@@ -305,6 +379,11 @@ def summarize(state_dir: Path, task_id: str) -> dict:
         **_escape(records),
         "obs_chars": obs_chars,
         "obs_chars_per_turn": round(obs_chars / len(turns)) if turns else 0,
+        "out_tokens": _token_sum(turns, "completion_tokens"),
+        "reasoning_tokens": _token_sum(turns, "reasoning_tokens"),
+        "gate_cells": _gate_cells(records),
+        "git_cells": _git_cells(records),
+        "verify_turns": _verify_turns(turns, records),
         "first_mutation_turn": _first_mutation_turn(turns, records),
         "dupe_note_turn": note_turn,
         "dupes_after_note": after_note["exec_verb_dupes"] if note_index is not None else None,
@@ -411,6 +490,9 @@ def main() -> int:
               f"first-mutation-turn={row['first_mutation_turn']}")
         print(f"   causal: note-turn={row['dupe_note_turn']} dupes-after-note={row['dupes_after_note']} "
               f"paged-followups={row['paged_followups']} obs-chars-per-turn={row['obs_chars_per_turn']}")
+        print(f"   bookkeeping: gate-cells={row['gate_cells']} git-cells={row['git_cells']} "
+              f"verify-turns={row['verify_turns']} out-tokens={row['out_tokens']} "
+              f"reasoning-tokens={row['reasoning_tokens']}")
         print(f"   verbs={row['verbs']}")
         print(f"   tools={row['tools']} rejected={row.get('rejected')}")
     return 0

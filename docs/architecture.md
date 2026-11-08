@@ -149,9 +149,13 @@ and `Check` rendering. Results cache until the next mutating cell: a matching `r
 answered from `check_cache` (`kind: "check_cached"`) instead of spawning the same command twice.
 
 Cheap entries are health checks: they re-run after a mutating cell in their `scope` (at most every
-20s) and print as the `[check]` line of the next state card. They never end a run. The whole plan
-is the goal: `final_answer` is rejected (`GOAL_UNMET`) until every entry passes, then the task
-lands `done` with `verified: <names> passed`.
+20s) and print as the one-line `[check]` card (`pass`, else `<spec> : <first failing line>` with
+the full output behind the queued `_OBS[n]`). They never end a run. The whole plan is the goal:
+`final_answer` is rejected (`GOAL_UNMET`) until every entry passes, then the task lands `done`
+with `verified: <names> passed`. The agent calls the plan with `checks(name=None)`; it returns
+one `{name, ok, exit, first_line}` row per spec and reuses the Verifier's cache, so a green spec
+is never spawned twice. `status()` covers tree state (branch, capped short status, ahead/behind,
+and the journal's add/del summary).
 
 Production passes `goal_stops=False`, so a passing health check after a mutation is evidence, not
 a verdict: the model keeps working until it calls `final_answer` and the whole plan accepts that

@@ -24,6 +24,10 @@ python3 -m ruff check .                  # gate: the code contract (ruff.toml)
 python3 bench/smoke.py                   # offline contract check, no key, no network
 ```
 
+Inside a task the same plan is one call: `checks()`. The tree-state equivalent of `git status`
++ `git log` + `session_diff` is `status()`. Run a gate ladder by hand only when debugging
+`checks()` itself.
+
 Then read only the header and the line range you need (`read(path, section=...)` inside a code
 cell, `read`/`outline`/`search` as tools). Do not read a 1000-line module to learn its entry
 points; the header says them and every public name carries a one-line docstring.
@@ -37,11 +41,11 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the failure-mode evals (`bench/evals/`), archived legacy suites and results (`bench/archive/`) |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The action space is 16 typed
+The agent is a model in a loop with a **persistent Python kernel**. The action space is 18 typed
 tools generated from one registry (`bench/agent/verbs.py`): `guide`, `skill`, `map`, `read`,
-`session_diff`, `search`, `recall`, `outline`, `edit`, `splice`, `write`, `delete`, `mkdir`,
-`apply`, `exec`, `git`. `python` is the escape hatch for computation, not a verb. `run()` is a
-python-only helper, present in `repl`/`bare` modes and absent from typed modes.
+`session_diff`, `checks`, `status`, `search`, `recall`, `outline`, `edit`, `splice`, `write`,
+`delete`, `mkdir`, `apply`, `exec`, `git`. `python` is the escape hatch for computation, not a
+verb. `run()` is a python-only helper, present in `repl`/`bare` modes and absent from typed modes.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install` in
 `tui/`.
