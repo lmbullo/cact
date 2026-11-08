@@ -221,21 +221,23 @@ class StreamingKernel(Kernel):
         self._emit_event = emit_event
         self._cell_no = 0
 
-    def run(self, code: str, check_cache: dict | None = None):
+    def run(self, code: str, check_cache: dict | None = None,
+            extra_obs: list | None = None):
         """One python cell: `cell.start` before it runs, `cell.end` after it answers."""
         self._cell_no += 1
         number = self._cell_no
         self._emit_event({"kind": "cell.start", "cell": number, "tool": "python", "code": code})
-        cell = super().run(code, check_cache=check_cache)
+        cell = super().run(code, check_cache=check_cache, extra_obs=extra_obs)
         self._emit_event(cell_end_payload(cell, number, "python"))
         return cell
 
-    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None):
+    def call(self, tool: str, args: dict | None = None, check_cache: dict | None = None,
+             extra_obs: list | None = None):
         """One typed verb call: `cell.start` with its tool/args, then `cell.end` with its counts."""
         self._cell_no += 1
         number = self._cell_no
         self._emit_event({"kind": "cell.start", "cell": number, "tool": tool, "args": args or {}})
-        cell = super().call(tool, args, check_cache=check_cache)
+        cell = super().call(tool, args, check_cache=check_cache, extra_obs=extra_obs)
         self._emit_event(cell_end_payload(cell, number, tool))
         return cell
 

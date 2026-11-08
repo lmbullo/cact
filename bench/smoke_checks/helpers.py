@@ -24,6 +24,7 @@ WHERE TO CHANGE
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import tempfile
 from pathlib import Path
@@ -219,12 +220,21 @@ def _worker_cell_end(check) -> None:
           and record["page"]["shown"] == 1 and record["duration_ms"] == 7
           and "stdout" not in record and "result" not in record,
           str(record)[:320])
-    # The emitter (not just the payload builder): one compact record per call, in order.
+    # The emitter (not just the payload builder): one compact record per call, in order, and
+    # the override must accept every keyword the base adds - a subclass that shadows
+    # `extra_obs` breaks every typed call in the TUI while the kernel tests stay green.
+    base_run = inspect.signature(Kernel.run).parameters
+    base_call = inspect.signature(Kernel.call).parameters
+    for name, base, override in (("run", base_run, worker.StreamingKernel.run),
+                                 ("call", base_call, worker.StreamingKernel.call)):
+        have = inspect.signature(override).parameters
+        check("worker: StreamingKernel.%s accepts every Kernel.%s keyword" % (name, name),
+              set(base) <= set(have), "%s vs %s" % (sorted(base), sorted(have)))
     outer_run, outer_call = Kernel.run, Kernel.call
     try:
-        Kernel.run = lambda self, code, check_cache=None: Cell(
+        Kernel.run = lambda self, code, check_cache=None, extra_obs=None: Cell(
             stdout="a", stderr="", result=None, final=None, duration_ms=1)
-        Kernel.call = lambda self, tool, args=None, check_cache=None: Cell(
+        Kernel.call = lambda self, tool, args=None, check_cache=None, extra_obs=None: Cell(
             stdout="b", stderr="", result='{"ok": true, "kind": "file"}',
             final=None, duration_ms=1)
         stream = worker.StreamingKernel.__new__(worker.StreamingKernel)
@@ -232,7 +242,7 @@ def _worker_cell_end(check) -> None:
         stream._emit_event = events.append
         stream._cell_no = 0
         stream.run("print(1)")
-        stream.call("read", {"path": "a"})
+        stream.call("read", {"path": "a"}, extra_obs=[{"stdout": "seeded"}])
         stream.call("map", {"path": "."})
     finally:
         Kernel.run, Kernel.call = outer_run, outer_call
