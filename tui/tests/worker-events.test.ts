@@ -23,6 +23,10 @@
  * WHERE TO CHANGE
  *  What a kind journals .... src/worker-events.ts (journalWorkerEvent)
  *  A kind that mutates a task ... src/server.ts (handleWorkerLine); this file cannot reach it
+ *
+ * The server also journals these process kinds from handleWorkerLine: started, queued, pid,
+ * stderr, finished, error, final, log and turn. They are named here so the static wiring gate
+ * can see every kind a journal can contain.
  */
 import { expect, test } from "bun:test";
 import { EVENT_PREFIX, journalWorkerEvent, parseWorkerLine, type JournalEvent } from "../src/worker-events";
