@@ -56,14 +56,18 @@ python3 -m bench.snapshot diff  DST        # added/modified/deleted vs the manif
 python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt "make typecheck pass" \
         --check "bun run typecheck" --legacy r3
 python3 bench/task_journal.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
+python3 bench/task_journal.py --compare ~/.local/state/code-tui/workspaces/<hash> A B  # an A/B
 python3 bench/task_journal.py --recent 10  # newest tasks across every workspace
 ```
 
 `task_journal.py <state-dir> <task-id>` prints one row per task: status, stop, steps, writes and
 edits, restarts, rejections, the tool and verb mix — then the escape metrics `exec_verb_dupes`,
-`python3_c`, `shell`, `obs_chars` and `first_mutation_turn` (the turn of the first mutating cell).
-`--recent N` scans every workspace's tasks, newest first, with no server or key. The key list is
-the contract in `bench/task_journal.py`.
+`python3_c`, `shell`, `obs_chars` and `first_mutation_turn` (the turn of the first mutating cell),
+then the causal keys `dupe_note_turn`, `dupes_after_note`, `paged_followups` and
+`obs_chars_per_turn`. The counts come from the `cell.start` records a TUI run writes, so
+`sum(tools.values()) == cells`. `--compare <state-dir> A B` prints the same row for two tasks side
+by side with deltas; `--recent N` scans every workspace's tasks, newest first, with no server or
+key. The key list is the contract in `bench/task_journal.py`.
 
 `live.py` is the honest end-to-end test: it clones `bench/archive/results/ws/tui-base`, drives
 `tui/python/worker.py`, records `<tag>.events.jsonl`, `<tag>.prompt.txt`,

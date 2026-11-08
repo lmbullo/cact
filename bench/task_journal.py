@@ -3,24 +3,32 @@
 WHAT IT IS
   Post-hoc analysis for one task in a TUI state directory
   (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts the typed call mix
-  (`tool_mix`), structured rejections, which kernel verbs the model used, which files it
-  wrote, steps, tokens, stop reason — and the escape hatch: how often `exec` stood in for a
-  typed verb (`exec_verb_dupes`), ran `python3 -c` or a shell string, how many observation
-  characters reached the model (`obs_chars`), and the turn of the first mutating cell
-  (`first_mutation_turn`). (No benchmark CLI runs any more: `bench/eval.py` is the eval front
-  end; this is the reader for the journals the TUI records.)
+  (`tools`), the kernel verbs the model used, which files it wrote, steps, tokens, stop reason
+  — and the escape hatch: how often `exec` stood in for a typed verb (`exec_verb_dupes`), ran
+  `python3 -c` or a shell string, how many observation characters reached the model
+  (`obs_chars`, `obs_chars_per_turn`), and the turn of the first mutating cell
+  (`first_mutation_turn`). The causal keys say *why* behavior changed: the turn the typed-dupe
+  `note` first appeared (`dupe_note_turn`), the dupes after it (`dupes_after_note`), and how
+  often a read/map/search resumed the page the previous result left open (`paged_followups`).
+  (No benchmark CLI runs any more: `bench/eval.py` is the eval front end; this is the reader
+  for the journals the TUI records.)
 
 ENTRY POINTS
   python3 bench/task_journal.py <state-dir> <task-id>
+  python3 bench/task_journal.py --compare <state-dir> <task-a> <task-b>  the two rows + deltas
   python3 bench/task_journal.py --recent [N]  every workspace's latest tasks, newest first
   load(state_dir, task_id) -> (task, turns)
   summarize(state_dir, task_id) -> dict
+  compare(state_dir, task_ids) -> int
   recent(state_root, limit) -> list[dict]
 
 INVARIANTS
   - Read-only: it never writes into the state dir.
-  - `VERBS` is a regex list of `verb(` occurrences over the concatenated cell code, so it is
-    an approximation, not a parse. Keep it in sync when the kernel gains a verb.
+  - A TUI run's counts come from its `cell.start` records (one per call: `tool` + `args`), not
+    from the python `turn.code` the TUI never emits. `sum(tools.values()) == cells`, by
+    construction and asserted; that one line would have caught the regex counters reading zero.
+  - The `turn.code` regex path survives only for the archived journal shape (turns with
+    `calls`/`code` and no `cell.start`); on a TUI run `VERBS` is just the tool mix.
   - Malformed journal lines are skipped, not fatal: a killed worker leaves a partial file.
   - The escape metrics read `cell.start` events, so a folded or digested cell still counts:
     the number is about the call the model made, not about what the card kept.
@@ -47,6 +55,12 @@ VERBS = ("map", "read", "outline", "search", "grep", "guide", "recall", "write",
 MUTATING_VERBS = frozenset({"write", "edit", "splice", "apply", "delete", "mkdir", "commit"})
 # exec programs a typed verb already answers (grep -> search, cat -> read, ...).
 EXEC_DUPES = frozenset({"grep", "rg", "cat", "ls", "find", "sed", "mkdir", "rm"})
+# The kernel puts this on an exec result the first time a program repeats a typed verb.
+DUPE_NOTE = "repeats a typed verb"
+# A check/test run, matched on the command line a cell ran; the archived shape matched the
+# same strings inside the python cell's code.
+CHECK_COMMAND = "bun run typecheck"
+TEST_COMMAND = "bun test"
 
 
 def _events(state_dir: Path, task_id: str) -> list[dict]:
@@ -68,13 +82,34 @@ def load(state_dir: Path, task_id: str) -> tuple[dict, list[dict]]:
     return task, turns
 
 
-def _cells(state_dir: Path, task_id: str) -> list[dict]:
-    """The `cell.start` records: one per cell, in call order (its tool, code and args).
+def _tool_mix(cells: list[dict]) -> dict[str, int]:
+    """One count per `cell.start`, keyed by tool: sum(values) == len(cells) by construction."""
+    counts: dict[str, int] = {}
+    for cell in cells:
+        name = str(cell.get("tool") or "")
+        counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
 
-    These events are flat (no `data` wrapper), like every other kernel event.
-    """
-    return [event for event in _events(state_dir, task_id)
-            if event.get("kind") == "cell.start"]
+
+def _call_mix(turns: list[dict]) -> dict[str, int]:
+    """The archived shape: one `calls` entry per call, with no `cell.start` records."""
+    counts: dict[str, int] = {}
+    for turn in turns:
+        for call in turn.get("calls") or []:
+            name = str(call.get("name") or "")
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _commands(cell: dict) -> list[str]:
+    """Every command line one cell ran: a shell string, one argv, or each entry of `commands`."""
+    args = cell.get("args") or {}
+    lines = [] if args.get("shell") is None else [str(args["shell"])]
+    argvs = [args["argv"]] if args.get("argv") is not None else list(args.get("commands") or [])
+    for argv in argvs:
+        lines.append(argv if isinstance(argv, str) else " ".join(str(part) for part in argv or []))
+    return lines
 
 
 def _escape(cells: list[dict]) -> dict:
@@ -83,15 +118,10 @@ def _escape(cells: list[dict]) -> dict:
     for cell in cells:
         if cell.get("tool") != "exec":
             continue
-        args = cell.get("args") or {}
-        if args.get("shell") is not None:
+        if (cell.get("args") or {}).get("shell") is not None:
             shell += 1
-        if args.get("argv") is not None:
-            argvs = [args["argv"]]
-        else:
-            argvs = list(args.get("commands") or [])
-        for argv in argvs:
-            parts = argv.split() if isinstance(argv, str) else [str(item) for item in argv or []]
+        for line in _commands(cell):
+            parts = line.split()
             if not parts:
                 continue
             if parts[0] in EXEC_DUPES:
@@ -101,11 +131,21 @@ def _escape(cells: list[dict]) -> dict:
     return {"exec_verb_dupes": dupes, "python3_c": python3_c, "shell": shell}
 
 
+def _rejected(turns: list[dict]) -> int:
+    """Calls a typed verb refused, or a cell whose process exited non-zero."""
+    archived = sum(1 for turn in turns
+                   for call in turn.get("calls") or []
+                   if (call.get("observation") or {}).get("rejected")
+                   or (call.get("observation") or {}).get("exit") == "error")
+    return archived + sum(1 for turn in turns
+                          if (turn.get("observation") or {}).get("exit") == "error")
+
+
 def _first_mutation_turn(turns: list[dict], cells: list[dict]) -> int | None:
     """The 1-based turn that held the first mutating cell; None when nothing was changed."""
     index = 0
     for turn in turns:
-        for _ in turn.get("calls") or []:
+        for _ in turn.get("calls") or turn.get("tool_calls") or []:
             cell = cells[index] if index < len(cells) else {}
             index += 1
             if str(cell.get("tool") or "") in MUTATING_VERBS:
@@ -113,43 +153,133 @@ def _first_mutation_turn(turns: list[dict], cells: list[dict]) -> int | None:
     return None
 
 
+def _dupe_note(events: list[dict]) -> tuple[int | None, int | None]:
+    """The first turn whose exec result carried the typed-dupe note, and its event index."""
+    for index, event in enumerate(events):
+        if event.get("kind") != "turn":
+            continue
+        data = event.get("data") or {}
+        observation = data.get("observation") or {}
+        if str(observation.get("tool") or "") != "exec":
+            continue
+        result = observation.get("result")
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(result, dict):
+            continue
+        note = result.get("note")
+        notes = note if isinstance(note, list) else ([note] if note else [])
+        if any(DUPE_NOTE in str(item) for item in notes):
+            return int(data.get("turn") or 0), index
+    return None, None
+
+
+def _page_key(args: dict) -> str | None:
+    """The page a cell addresses: its path, else its pattern, normalized to one string."""
+    key = args.get("path", args.get("pattern"))
+    if isinstance(key, list):
+        return " ".join(str(part) for part in key)
+    return None if key is None else str(key)
+
+
+def _paged_followups(events: list[dict]) -> int:
+    """How often a read/map/search cell resumes the page the previous result left open."""
+    count = 0
+    pending: dict | None = None
+    previous: dict[str, str | None] = {}
+    for event in events:
+        if event.get("kind") == "cell.start":
+            tool = str(event.get("tool") or "")
+            if pending and tool == pending["tool"]:
+                args = event.get("args") or {}
+                cursor = args.get("start", args.get("offset"))
+                key = _page_key(args)
+                same_page = (pending["key"] == key if pending["key"]
+                             else previous.get(tool) == key)
+                if (cursor is not None and str(cursor) == str(pending["offset"]) and same_page):
+                    count += 1
+            previous[tool] = _page_key(event.get("args") or {})
+            continue
+        if event.get("kind") != "turn":
+            continue
+        data = event.get("data") or {}
+        observation = data.get("observation") or {}
+        result = observation.get("result")
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                result = None
+        if not isinstance(result, dict):
+            pending = None
+            continue
+        nxt = result.get("next")
+        offset = nxt.get("offset") if isinstance(nxt, dict) else None
+        pending = ({"tool": str(observation.get("tool") or ""), "offset": offset,
+                    "key": str(result.get("path") or "")}
+                   if offset is not None else None)
+    return count
+
+
 def summarize(state_dir: Path, task_id: str) -> dict:
     """The one-row metrics dict printed by `main()`; keys are the contract."""
     task, turns = load(state_dir, task_id)
-    cells = _cells(state_dir, task_id)
-    code = "\n".join(turn.get("code") or "" for turn in turns)
-    obs = "\n".join((turn.get("observation") or {}).get("stdout", "") + (turn.get("observation") or {}).get("stderr", "") for turn in turns)
-    verbs = {verb: len(re.findall(rf"\b{verb}\(", code)) for verb in VERBS}
-    writes = re.findall(r"write\(\s*['\"]([^'\"]+)", code)
-    edits = re.findall(r"edit\(\s*['\"]([^'\"]+)", code)
-    tool_mix: dict[str, int] = {}
-    rejected = 0
-    for turn in turns:
-        for call in turn.get("calls") or []:
-            name = str(call.get("name") or "")
-            if name:
-                tool_mix[name] = tool_mix.get(name, 0) + 1
-            if (call.get("observation") or {}).get("rejected") or (call.get("observation") or {}).get("exit") == "error":
-                rejected += 1
+    events = _events(state_dir, task_id)
+    records = [event for event in events if event.get("kind") == "cell.start"]
+    obs = "\n".join((turn.get("observation") or {}).get("stdout", "")
+                    + (turn.get("observation") or {}).get("stderr", "") for turn in turns)
+    if records:
+        # The TUI shape: one `cell.start` per call carries the tool and its args, so the counts
+        # are the truth. The regexes below are the archived shape's only record.
+        tools = _tool_mix(records)
+        verbs = {verb: tools.get(verb, 0) for verb in VERBS}
+        writes = [str((cell.get("args") or {}).get("path") or "")
+                  for cell in records if cell.get("tool") == "write"]
+        edits = tools.get("edit", 0)
+        commands = [line for cell in records for line in _commands(cell)]
+        checks = sum(1 for line in commands if CHECK_COMMAND in line)
+        tests = sum(1 for line in commands if TEST_COMMAND in line)
+    else:
+        code = "\n".join(turn.get("code") or "" for turn in turns)
+        tools = _call_mix(turns)
+        verbs = {verb: len(re.findall(rf"\b{verb}\(", code)) for verb in VERBS}
+        writes = re.findall(r"write\(\s*['\"]([^'\"]+)", code)
+        edits = len(re.findall(r"edit\(\s*['\"]([^'\"]+)", code))
+        checks = code.count(CHECK_COMMAND)
+        tests = code.count(TEST_COMMAND)
+    cells = len(records) or sum(tools.values())
+    # One fact one place: every call is exactly one cell, so the tool mix covers the count.
+    assert sum(tools.values()) == cells, (task_id, tools, cells)
+    note_turn, note_index = _dupe_note(events)
+    after_note = _escape([event for index, event in enumerate(events)
+                          if note_index is not None and index > note_index
+                          and event.get("kind") == "cell.start"])
     return {
         "id": task_id,
         "status": task.get("status"),
         "stop": task.get("stop"),
         "steps": len(turns),
-        "cells": len(cells),
+        "cells": cells,
         "untouched_src_writes": sum(1 for path in writes if path.startswith("src/")),
-        "edits": len(edits),
+        "edits": edits,
         "verbs": verbs,
-        "tool_mix": dict(sorted(tool_mix.items())),
-        "rejected": rejected,
+        "tools": tools,
+        "rejected": _rejected(turns),
         "restarts": obs.count("empty namespace"),
         "goal_unmet": obs.count("final_answer rejected") + obs.count("without a passing check"),
         "refused": obs.count("refused_truncation"),
-        "check_runs": len(re.findall(r"bun run typecheck", code)),
-        "test_runs": len(re.findall(r"bun test", code)),
-        **_escape(cells),
+        "check_runs": checks,
+        "test_runs": tests,
+        **_escape(records),
         "obs_chars": len(obs),
-        "first_mutation_turn": _first_mutation_turn(turns, cells),
+        "obs_chars_per_turn": round(len(obs) / len(turns)) if turns else 0,
+        "first_mutation_turn": _first_mutation_turn(turns, records),
+        "dupe_note_turn": note_turn,
+        "dupes_after_note": after_note["exec_verb_dupes"] if note_index is not None else None,
+        "paged_followups": _paged_followups(events),
         "usage": (json.loads((state_dir / "tasks" / f"{task_id}.json").read_text()).get("usage") or {}),
     }
 
@@ -205,11 +335,25 @@ def recent(state_root: Path | None = None, limit: int = 20) -> list[dict]:
     return rows[:max(1, int(limit))]
 
 
+def compare(state_dir: Path, task_ids: list[str]) -> int:
+    """The same one-row dict for two task ids, side by side with deltas: a reproducible A/B."""
+    rows = [summarize(state_dir, task_id) for task_id in task_ids]
+    keys = [key for key in rows[0] if key != "id"
+            and all(not isinstance(row.get(key), (dict, list)) for row in rows)]
+    print(f"{'key':22} " + " ".join(f"{row['id']:>20}" for row in rows) + "        delta")
+    for key in keys:
+        values = [row.get(key) for row in rows]
+        delta = (values[1] - values[0]
+                 if len(values) == 2 and all(isinstance(value, int) for value in values) else "")
+        print(f"{key:22} " + " ".join(f"{str(value):>20}" for value in values) + f"   {delta:>10}")
+    return 0
+
+
 def main() -> int:
-    """CLI: `--recent [N]` across workspaces, or `<state-dir> <task-id>...` summaries."""
+    """CLI: `--recent [N]`, `--compare <state-dir> A B`, or `<state-dir> <task-id>...`."""
     if len(sys.argv) < 2:
-        print("usage: python3 bench/task_journal.py <state-dir> <task-id>... | --recent [N]",
-              file=sys.stderr)
+        print("usage: python3 bench/task_journal.py <state-dir> <task-id>... | --compare "
+              "<state-dir> A B | --recent [N]", file=sys.stderr)
         return 2
     if sys.argv[1] == "--recent":
         limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
@@ -222,6 +366,11 @@ def main() -> int:
                   f"{str(task.get('status')):<9} {str(task.get('stop')):<10} "
                   f"{row['steps']:>3} steps {usage.get('total_tokens', 0):>9} tok  {prompt}")
         return 0
+    if sys.argv[1] == "--compare":
+        if len(sys.argv) < 4:
+            print("usage: python3 bench/task_journal.py --compare <state-dir> A B", file=sys.stderr)
+            return 2
+        return compare(Path(sys.argv[2]), sys.argv[3:5])
     state_dir = Path(sys.argv[1])
     for task_id in sys.argv[2:]:
         row = summarize(state_dir, task_id)
@@ -231,7 +380,10 @@ def main() -> int:
         print(f"   escape: exec-dupes={row['exec_verb_dupes']} python3-c={row['python3_c']} "
               f"shell={row['shell']} obs-chars={row['obs_chars']} "
               f"first-mutation-turn={row['first_mutation_turn']}")
-        print(f"   verbs={row['verbs']} tools={row.get('tool_mix')} rejected={row.get('rejected')}")
+        print(f"   causal: note-turn={row['dupe_note_turn']} dupes-after-note={row['dupes_after_note']} "
+              f"paged-followups={row['paged_followups']} obs-chars-per-turn={row['obs_chars_per_turn']}")
+        print(f"   verbs={row['verbs']}")
+        print(f"   tools={row['tools']} rejected={row.get('rejected')}")
     return 0
 
 

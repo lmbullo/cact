@@ -81,8 +81,37 @@ def run(check):
           str(tools.TOOL_NAMES))
 
 
+def _tui_events() -> list[dict]:
+    """A journal shaped like a real TUI trace: flat `cell.start` records plus `tool_calls` turns."""
+    def _turn(number, calls, tool, stdout, result):
+        return {"kind": "turn", "data": {"turn": number, "tool_calls": calls,
+                                         "observation": {"tool": tool, "stdout": stdout,
+                                                         "result": json.dumps(result)}}}
+
+    events = [
+        {"kind": "cell.start", "cell": 1, "tool": "read", "args": {"path": "a.py"}},
+        _turn(1, ["read"], "read", "abc",
+              {"path": "a.py", "offset": 1, "next": {"offset": 71, "unit": "line"}}),
+        {"kind": "cell.start", "cell": 2, "tool": "read",
+         "args": {"path": "a.py", "start": 71}},
+        _turn(2, ["read"], "read", "de", {"path": "a.py", "offset": 71, "next": None}),
+        {"kind": "cell.start", "cell": 3, "tool": "exec",
+         "args": {"argv": ["grep", "-rn", "x", "."]}},
+        _turn(3, ["exec"], "exec", "",
+              {"ok": True, "kind": "command",
+               "note": "`grep` repeats a typed verb; search(pattern, path=[...]) answers it."}),
+        {"kind": "cell.start", "cell": 4, "tool": "edit", "args": {"path": "src/a.ts"}},
+        {"kind": "cell.start", "cell": 5, "tool": "exec",
+         "args": {"commands": [["bun", "run", "typecheck"], ["bun", "test"]]}},
+        _turn(4, ["edit", "exec"], "exec", "f", {"ok": True, "kind": "commands"}),
+    ]
+    for seq, event in enumerate(events, 1):
+        event["seq"] = seq
+    return events
+
+
 def _journal_metrics(check) -> None:
-    """summarize() over a two-turn journal: the escape counts and the first mutating turn."""
+    """summarize() over an archived journal and a TUI-shaped one: counts, escapes, causal keys."""
     with tempfile.TemporaryDirectory() as tmp:
         state = Path(tmp)
         (state / "tasks").mkdir()
@@ -106,8 +135,23 @@ def _journal_metrics(check) -> None:
             "\n".join(json.dumps(event) for event in events) + "\n{not json\n",
             encoding="utf-8")
         row = task_journal.summarize(state, "t1")
+        tui = _tui_events()
+        (state / "tasks" / "t2.json").write_text(
+            json.dumps({"status": "done", "stop": "DONE"}), encoding="utf-8")
+        (state / "events" / "t2.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in tui) + "\n", encoding="utf-8")
+        tui_row = task_journal.summarize(state, "t2")
     check("task_journal: summarize reports the escape metrics and the first mutation",
           row["exec_verb_dupes"] == 1 and row["python3_c"] == 1 and row["shell"] == 1
           and row["obs_chars"] == 9 and row["first_mutation_turn"] == 2
           and row["steps"] == 2 and row["cells"] == 4
-          and {"tool_mix", "verbs", "usage", "rejected"} <= set(row), str(row)[:300])
+          and {"tools", "verbs", "usage", "rejected"} <= set(row), str(row)[:300])
+    check("task_journal: a TUI trace's counts come from cell.start, not turn.code",
+          tui_row["tools"] == {"edit": 1, "exec": 2, "read": 2}
+          and tui_row["verbs"]["exec"] == 2 and tui_row["verbs"]["read"] == 2
+          and tui_row["edits"] == 1 and tui_row["check_runs"] == 1 and tui_row["test_runs"] == 1
+          and sum(tui_row["tools"].values()) == tui_row["cells"] == 5, str(tui_row)[:300])
+    check("task_journal: the causal keys name the note turn, the dupes after it, and paging",
+          tui_row["dupe_note_turn"] == 3 and tui_row["dupes_after_note"] == 0
+          and tui_row["paged_followups"] == 1 and tui_row["obs_chars_per_turn"] > 0,
+          str(tui_row)[:300])
