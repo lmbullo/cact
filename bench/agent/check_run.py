@@ -10,6 +10,7 @@ ENTRY POINTS
     state: "passed" | "failed" | "unrunnable"
     .ok, .text(limit)   the model-facing rendering (unrunnable is called out explicitly)
   run_check(cmd, cwd, timeout=600.0) -> Check
+  from_output(cmd, exit_code, stdout, stderr, duration_ms) -> Check  an already-run command
   evaluate(goal) -> (ok, Check | None)
 
 INVARIANTS
@@ -119,6 +120,19 @@ def _failures(stdout: str, stderr: str, limit: int = 20) -> list[dict]:
     return hits
 
 
+def from_output(cmd: str, exit_code: int | None, stdout: str = "", stderr: str = "",
+                duration_ms: int = 0) -> Check:
+    """Classify a command someone else ran (bench/live.py --sandbox daytona) like run_check does."""
+    if exit_code is None:
+        return Check(cmd=cmd, state="unrunnable", duration_ms=duration_ms,
+                     stdout=stdout, stderr=stderr)
+    if exit_code == 0:
+        return Check(cmd=cmd, state="passed", exit_code=0, duration_ms=duration_ms,
+                     stdout=stdout, stderr=stderr)
+    return Check(cmd=cmd, state="failed", exit_code=exit_code, duration_ms=duration_ms,
+                 stdout=stdout, stderr=stderr, failures=_failures(stdout, stderr))
+
+
 def run_check(cmd: str, cwd: str, timeout: float = 600.0) -> Check:
     """Run `cmd` in `cwd` through bash and classify it; never raises."""
     started = time.perf_counter()
@@ -135,12 +149,7 @@ def run_check(cmd: str, cwd: str, timeout: float = 600.0) -> Check:
         return Check(cmd=cmd, state="unrunnable", duration_ms=int((time.perf_counter() - started) * 1000),
                      stderr=f"{type(exc).__name__}: {exc}")
     duration = int((time.perf_counter() - started) * 1000)
-    if proc.returncode == 0:
-        return Check(cmd=cmd, state="passed", exit_code=0, duration_ms=duration,
-                     stdout=proc.stdout or "", stderr=proc.stderr or "")
-    return Check(cmd=cmd, state="failed", exit_code=proc.returncode, duration_ms=duration,
-                 stdout=proc.stdout or "", stderr=proc.stderr or "",
-                 failures=_failures(proc.stdout or "", proc.stderr or ""))
+    return from_output(cmd, proc.returncode, proc.stdout or "", proc.stderr or "", duration)
 
 
 def evaluate(goal: Any) -> tuple[bool, Check | None]:

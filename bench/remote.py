@@ -10,9 +10,11 @@ WHAT IT IS
 ENTRY POINTS
   status() -> {sdk, key, hint}
   create(image=None, snapshot=None, env=None, auto_stop=30, auto_delete=120) -> Sandbox
-  Sandbox.code(src) / .run(argv_or_str, cwd, timeout) / .upload(bytes, path)
-    .download(path) / .upload_tree(src, dest) / .download_tree(src, dest) / .delete()
-    .id
+  create_snapshot(name=None, base_image=None, on_logs=None) -> {name, id, created}
+    the base box: python:3.12 + bun, reused by name on later runs
+  Sandbox.code(src) / .run(argv_or_str, cwd, env, timeout) / .upload(bytes, path)
+    .download(path) / .upload_tree(src, dest, exclude) / .download_tree(src, dest, exclude)
+    / .delete() / .id
   python3 -m bench.remote --check      offline: is the SDK installed and the key found
   python3 -m bench.remote --self-test  create, run, upload/download, delete (spends credit)
 
@@ -28,6 +30,7 @@ INVARIANTS
 WHERE TO CHANGE
   Key discovery / environment ... api_key()
   Sandbox sizing and lifetime ... create()
+  The reusable base snapshot .... create_snapshot(), SNAPSHOT_NAME / BUN_VERSION
   Transfers .................... upload_tree / download_tree
 """
 from __future__ import annotations
@@ -42,6 +45,8 @@ from typing import Any
 
 CONFIG_FILES = ("env", ".env")
 DEFAULT_IMAGE = "python:3.12"
+SNAPSHOT_NAME = "code-tui-py-bun"
+BUN_VERSION = "1.4.2"
 
 
 class RemoteError(RuntimeError):
@@ -147,26 +152,48 @@ class Sandbox:
         except Exception as exc:  # noqa: BLE001
             raise RemoteError(f"download of {path} failed: {exc}") from exc
 
-    def upload_tree(self, src: Path, dest: str) -> None:
-        """Tar `src` locally and unpack it at `dest` in the sandbox (one transfer, not N)."""
+    def upload_tree(self, src: Path, dest: str, exclude: Any = None) -> None:
+        """Tar `src` locally and unpack it at `dest` in the sandbox (one transfer, not N).
+
+        `exclude` names relative paths (`bench/archive`) or any path component
+        (`node_modules`); an excluded directory is skipped whole, never partially.
+        """
+        skip = tuple(str(part).strip("/") for part in (exclude or ()) if str(part).strip("/"))
+
+        def _skipped(rel: str) -> bool:
+            parts = rel.split("/")
+            return any(rel == name or rel.startswith(name + "/") or name in parts
+                       for name in skip)
+
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode="w:gz") as bundle:
             for item in sorted(Path(src).rglob("*")):
-                if "__pycache__" in item.parts or ".git" in item.parts:
+                rel = item.relative_to(src).as_posix()
+                if "__pycache__" in item.parts or ".git" in item.parts or _skipped(rel):
                     continue
-                bundle.add(item, arcname=str(item.relative_to(src)))
+                bundle.add(item, arcname=rel)
         result = self.run(["mkdir", "-p", dest], timeout=60)
         if not result["ok"]:
             raise RemoteError(f"mkdir {dest} failed: {result['output'][:200]}")
-        self.upload(buffer.getvalue(), f"{dest.rstrip('/')}/tree.tgz")
-        result = self.run(["tar", "xzf", f"{dest.rstrip('/')}/tree.tgz", "-C", dest], timeout=300)
+        # The tarball lives outside `dest`: a tree upload must not leave an artifact in it.
+        self.upload(buffer.getvalue(), "/tmp/bench-upload.tgz")
+        result = self.run(["tar", "xzf", "/tmp/bench-upload.tgz", "-C", dest], timeout=300)
         if not result["ok"]:
             raise RemoteError(f"untar at {dest} failed: {result['output'][:200]}")
 
-    def download_tree(self, src: str, dest: Path) -> None:
-        """Tar `src` in the sandbox and unpack it under `dest` locally."""
+    def download_tree(self, src: str, dest: Path, exclude: Any = None) -> None:
+        """Tar `src` in the sandbox and unpack it under `dest` locally.
+
+        `exclude` uses the same relative-path / path-component rules as upload_tree.
+        """
         archive = "/tmp/bench-download.tgz"
-        result = self.run(["tar", "czf", archive, "-C", src, "."], timeout=300)
+        command = ["tar", "czf", archive]
+        for name in (exclude or ()):
+            name = str(name).strip("/")
+            if name:
+                command.append(f"--exclude={name}")
+        command += ["-C", src, "."]
+        result = self.run(command, timeout=300)
         if not result["ok"]:
             raise RemoteError(f"tar of {src} failed: {result['output'][:200]}")
         payload = self.download(archive)
@@ -205,6 +232,48 @@ def create(image: str | None = None, snapshot: str | None = None, env: dict | No
     except Exception as exc:  # noqa: BLE001
         raise RemoteError(f"could not create a sandbox: {exc}") from exc
     return Sandbox(raw)
+
+
+def _client(daytona: Any) -> Any:
+    """One authenticated Daytona client; the key is read here, never stored on a sandbox."""
+    key = api_key()
+    if not key:
+        raise RemoteError("no DAYTONA_API_KEY: set it in the environment or ~/.config/code-tui/env")
+    return daytona.Daytona(daytona.DaytonaConfig(api_key=key))
+
+
+def create_snapshot(name: str | None = None, base_image: str | None = None,
+                    on_logs: Any = None) -> dict:
+    """Reuse the snapshot `name`, else build it from `base_image` with bun installed.
+
+    Returns `{name, id, created}`. The build runs the official bun installer at the pinned
+    `BUN_VERSION` and verifies both interpreters, so a later `create(snapshot=name)` needs no
+    install step. Building spends credit once; every later run finds the snapshot by name.
+    """
+    daytona = _sdk()
+    name = name or SNAPSHOT_NAME
+    client = _client(daytona)
+    try:
+        existing = client.snapshot.get(name)
+    except daytona.DaytonaNotFoundError:
+        existing = None
+    except Exception as exc:  # noqa: BLE001 - one error type for callers
+        raise RemoteError(f"could not look up snapshot {name}: {exc}") from exc
+    if existing is not None:
+        return {"name": name, "id": str(getattr(existing, "id", "") or ""), "created": False}
+    image = (daytona.Image.base(base_image or DEFAULT_IMAGE).run_commands(
+        "apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates"
+        " && rm -rf /var/lib/apt/lists/*",
+        f"curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s bun-v{BUN_VERSION}",
+        "python3 -c 'print(1)'",
+        "bun --version",
+    ).env({"PATH": "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin"}))
+    try:
+        created = client.snapshot.create(
+            daytona.CreateSnapshotParams(name=name, image=image), on_logs=on_logs)
+    except Exception as exc:  # noqa: BLE001
+        raise RemoteError(f"could not build snapshot {name}: {exc}") from exc
+    return {"name": name, "id": str(getattr(created, "id", "") or ""), "created": True}
 
 
 def main(argv: list[str] | None = None) -> int:
