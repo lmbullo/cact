@@ -44,6 +44,11 @@
  *    <json>` and is published in ServerInfo.checks; `cheap` entries become the agent's
  *    post-mutation health check and `scope` keeps a health run to specs whose paths changed.
  *    The goal runs the whole plan without a paths filter.
+ *  - Only this file and detect-checks.ts can go stale under a live pid: they are what the
+ *    detached process imported once. source-hash.ts fingerprints them at boot into
+ *    ServerInfo.source, and every /health and snapshot read re-hashes the same two files (at
+ *    most once every SOURCE_RECHECK_MS) for `stale` and `changed`. A missing file counts as
+ *    changed. Fixing it means a restart, so nothing here tries to reload.
  *
  * WHERE TO CHANGE
  *  Queueing, concurrency, cancellation ... startTask / pump / cancelTask
@@ -51,6 +56,7 @@
  *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
  *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
  *  Verification plan detection .......... detect-checks.ts, and ServerInfo.checks
+ *  The boot fingerprint / staleness ..... source-hash.ts, sourceStatus()
  *  Task shape ............................ tui/src/types.ts
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -69,6 +75,7 @@ import { join, resolve } from "node:path";
 import type { CheckSpec, ServerInfo, Snapshot, Task, TaskEvent, WorkerMessage } from "./types";
 import { foldTurn } from "./list-model";
 import { detectChecks } from "./detect-checks";
+import { bootSource, compareSource } from "./source-hash";
 
 const VERSION = "0.1.0";
 const ROOT = resolve(import.meta.dir, "..");
@@ -124,6 +131,11 @@ const python = process.env.CODE_TUI_PYTHON ?? "python3";
 
 const initialChecks = detectChecks(workspace);
 const initialKey = Boolean(process.env.DEEPSEEK_API_KEY);
+/** How often a read may re-hash the server's own source: two small files, but not per keystroke. */
+const SOURCE_RECHECK_MS = 2000;
+
+/** The code this process is running, taken once at boot; `hashes` is what `changed` compares to. */
+const boot = bootSource(ROOT);
 
 let server: any = null;
 let shuttingDown = false;
@@ -143,7 +155,28 @@ let info: ServerInfo = {
   python,
   check: initialChecks[0]?.cmd ?? "",
   checks: initialChecks,
+  source: boot.source,
 };
+
+/**
+ * Is the running code still the code on disk? Re-hashes the boot file list, throttled to one
+ * comparison every SOURCE_RECHECK_MS, and reports the paths that changed (a missing file counts).
+ * Read-time only: it is never persisted, and a restart is the only fix.
+ */
+let sourceCache: { at: number; stale: boolean; changed: string[] } = {
+  at: boot.source.hashedAt,
+  stale: false,
+  changed: [],
+};
+
+function sourceStatus(): { stale: boolean; changed: string[] } {
+  const now = Date.now();
+  if (now - sourceCache.at >= SOURCE_RECHECK_MS) {
+    const { stale, changed } = compareSource(ROOT, boot);
+    sourceCache = { at: now, stale, changed };
+  }
+  return { stale: sourceCache.stale, changed: sourceCache.changed };
+}
 
 function refreshChecks(): CheckSpec[] {
   const next = detectChecks(workspace);
@@ -223,7 +256,11 @@ function broadcast(message: unknown): void {
 function snapshot(): Snapshot {
   return {
     type: "snapshot",
-    server: { ...info, hasKey: Boolean(process.env.DEEPSEEK_API_KEY) },
+    server: {
+      ...info,
+      ...sourceStatus(),
+      hasKey: Boolean(process.env.DEEPSEEK_API_KEY),
+    },
     tasks: tasks.map((task) => ({ ...task })),
   };
 }
@@ -593,7 +630,12 @@ server = Bun.serve({
       return new Response("websocket upgrade failed", { status: 400 });
     }
     if (url.pathname === "/health") {
-      return json({ ok: true, ...info, hasKey: Boolean(process.env.DEEPSEEK_API_KEY) });
+      return json({
+        ok: true,
+        ...info,
+        ...sourceStatus(),
+        hasKey: Boolean(process.env.DEEPSEEK_API_KEY),
+      });
     }
     if (url.pathname === "/api/snapshot") return json(snapshot());
     if (url.pathname === "/api/tasks" && req.method === "POST") {
@@ -653,6 +695,7 @@ writeFileSync(serverFile, JSON.stringify(info, null, 2));
 console.log(`code-tui server ${VERSION} listening on 127.0.0.1:${server.port}`);
 console.log(`workspace ${workspace}`);
 console.log(`state     ${stateDir}`);
+console.log(`source    ${boot.source.hash} (${boot.source.files.join(", ")})`);
 
 const heartbeat = setInterval(() => broadcast({ type: "ping", ts: Date.now() }), 15000);
 

@@ -8,7 +8,7 @@
  *  (`#handle`, prompt, right-aligned steps/tokens/cache and wall time) and `EmptyState`.
  *
  * ENTRY POINTS
- *  TopBar({workspace, model, effort, running, total, connected, width})
+ *  TopBar({workspace, model, effort, running, total, connected, stale, width})
  *  Rule({width, note})                    the hairline above the prompt box
  *  SectionHeader({status, count})         `● running  1`
  *  TaskRow({task, selected, width, now, onSelect})  one task, one line, click or key selects
@@ -47,6 +47,10 @@ import type { Task, TaskStatus } from "./types";
 /**
  * The one-row masthead: who we are, where we are, and what the server is doing. The right
  * side is sacrificed first when the terminal narrows; the brand and workspace survive.
+ *
+ * The right-hand bits are `model · effort · N running · offline|idle`, then `stale` last, in
+ * the clay of `offline`, when the last snapshot said the server is running older code. It is a
+ * word in that same one row — the line is clipped, never wrapped.
  */
 export function TopBar(props: {
   workspace: string;
@@ -55,9 +59,11 @@ export function TopBar(props: {
   running: number;
   total: number;
   connected: boolean;
+  /** The last snapshot reported a server whose own source changed on disk since boot. */
+  stale?: boolean;
   width: number;
 }) {
-  const { workspace, model, effort, running, total, connected, width } = props;
+  const { workspace, model, effort, running, total, connected, stale = false, width } = props;
   const brand = "▌ code";
   const inner = Math.max(0, width - 2);
 
@@ -65,8 +71,14 @@ export function TopBar(props: {
   if (running > 0) bits.push(`${running} running`);
   if (!connected) bits.push("offline");
   else if (total === 0) bits.push("idle");
+  // `stale` has its own hue, so it is appended separately; `bits` stays the faint cluster.
+  const staleWord = stale ? "stale" : "";
   const right = bits.join(" · ");
-  const rightText = clip(right, inner);
+  const rightAll = staleWord ? (right ? `${right} · ${staleWord}` : staleWord) : right;
+  const rightText = clip(rightAll, inner);
+  // Only paint it clay when the clip kept it; a cut `stale` is not a signal, it is an ellipsis.
+  const staleShown = Boolean(staleWord) && rightText.endsWith(staleWord);
+  const faintText = staleShown ? rightText.slice(0, rightText.length - staleWord.length) : rightText;
 
   const room = inner - rightText.length - (rightText ? 2 : 0);
   const pathRoom = Math.max(0, room - brand.length - 2);
@@ -83,7 +95,8 @@ export function TopBar(props: {
         <span fg={C.text} attributes={TextAttributes.BOLD}>{"code"}</span>
         {pathText ? <span fg={C.faint}>{`  ${pathText}`}</span> : null}
         <span>{" ".repeat(gap)}</span>
-        <span fg={connected ? C.faint : C.red}>{rightText}</span>
+        <span fg={connected ? C.faint : C.red}>{faintText}</span>
+        {staleShown ? <span fg={C.red}>{staleWord}</span> : null}
       </text>
     </box>
   );

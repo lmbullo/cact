@@ -9,7 +9,8 @@
  *  payload emitted by python/worker.py.
  *
  * ENTRY POINTS
- *  Task, TaskStatus, TaskEvent, ServerInfo, CheckSpec, Snapshot, WsMessage, WorkerMessage
+ *  Task, TaskStatus, TaskEvent, ServerInfo, SourceFingerprint, CheckSpec, Snapshot, WsMessage,
+ *  WorkerMessage
  *
  * INVARIANTS
  *  - Types only: no runtime code, nothing to import at runtime. Changing a field here means
@@ -21,6 +22,9 @@
  *    The client derives every counter from them in list-model.taskUsage.
  *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
  *    source of truth for the message kinds.
+ *  - `ServerInfo.source` is the boot fingerprint of the two files the detached server imported
+ *    (source-hash.ts); `stale`/`changed` are measured on each read, never stored, so a reader can
+ *    tell a running process from the tree on disk.
  *  - `CheckSpec` mirrors `bench.agent.check_plan.CheckSpec`: {name, cmd, cheap, scope?}, where
  *    `scope` is a list of path prefixes. It is parsed in detect-checks.ts from
  *    CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
@@ -90,6 +94,20 @@ export type TaskEvent = {
   data?: Record<string, unknown>;
 };
 
+/**
+ * The server's own source at boot: the files the detached process imported once and the digest of
+ * their contents. Only `src/server.ts` and `src/detect-checks.ts` are in it — everything else is
+ * re-imported by a `code` launch or by a task's worker, so it cannot be stale under a live pid.
+ */
+export type SourceFingerprint = {
+  /** One digest over `files`, in order; the identity of the code this process is running. */
+  hash: string;
+  /** The relative paths the digest covers, so a reader can name the file that changed. */
+  files: string[];
+  /** When the boot fingerprint was taken (`Date.now()`). */
+  hashedAt: number;
+};
+
 /** server.json: how to reach this workspace's server and what it was started with. */
 export type ServerInfo = {
   workspace: string;
@@ -106,6 +124,15 @@ export type ServerInfo = {
   python: string;
   check: string;
   checks: CheckSpec[];
+  /** The code this process booted with; see source-hash.ts. */
+  source: SourceFingerprint;
+  /**
+   * Measured per read, never a boot value: the process's own files no longer match the tree, and
+   * which of them. `/health`, `/api/snapshot` and the WebSocket snapshot carry them; a restart is
+   * the only cure, so the board names `bin/code-stop` as the fix.
+   */
+  stale?: boolean;
+  changed?: string[];
 };
 
 /** One entry of the verification plan; mirrors bench.agent.check_plan.CheckSpec. */

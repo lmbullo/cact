@@ -84,8 +84,10 @@ timestamp half is already implied by the order. The full id stays in `tasks/<id>
 
 The masthead is the same on both screens: a `▌ code` brand, the workspace with `$HOME`
 shortened to `~`, then the model, effort and the running count on the right. It reads `offline`
-in red while the socket is down and `idle` when the board is empty. One blank row follows it, so
-the list starts with air rather than against a bar.
+in red while the socket is down, `idle` when the board is empty, and `stale` last in the same
+red when the last snapshot said this server is running older code than the tree (`source-hash.ts`:
+the two files the detached process imported at boot, `src/server.ts` and `src/detect-checks.ts`).
+One blank row follows it, so the list starts with air rather than against a bar.
 
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
@@ -101,6 +103,12 @@ the list starts with air rather than against a bar.
 ───────────────────────────────────────────────────────────────────────────────
  › task for /home/you/some/project…
 ```
+
+A server whose running code no longer matches the tree turns the same bar into
+`deepseek-flash · low · 1 running · offline · stale` — one more word in the same row, never a
+second one — and the hairline above the prompt gains the fix, `stale code · bin/code-stop`.
+Only a restart clears it, and `code` silently reuses a healthy `server.json`, so a fresh launch
+is exactly where the word has to appear.
 
 Grouping order: `running`, `queued`, `done`, `partial`, `failed`, `cancelled`. The `queued`
 state renders as the shorter word `queue`. `Ctrl-O` cycles the board arrangement in place:
@@ -311,6 +319,10 @@ the worker:
 `launcher.ts` also sets `CODE_TUI_URL`, `CODE_TUI_WORKSPACE` and `CODE_TUI_VERSION` in the
 client's environment; they are launcher outputs, not knobs.
 
+No knob is re-read by a running server: the environment, the check plan's defaults and the
+server's own `src/` are read at boot. An edited variable or an edited `src/server.ts` therefore
+needs `bin/code-stop` and a new `code`; the masthead reports the source case as `stale`.
+
 Key resolution, if you must run it: `~/.config/code-tui/env` (also `.env` in the launch
 directory) or an exported `DEEPSEEK_API_KEY`. The footer shows `no api key` until the key is
 available; a worker started without one fails immediately with a clear event.
@@ -360,6 +372,23 @@ The server binds `127.0.0.1` on a random port (written to `server.json`):
 Cancelling a queued task marks it `cancelled` immediately. Cancelling a running task sends
 `SIGTERM` to the worker, then `SIGKILL` after 5 seconds; the task ends `cancelled`.
 
+Every `ServerInfo` also carries the code the process booted with:
+
+```json
+"source": { "hash": "a7a8dba4d38442c9", "files": ["src/server.ts", "src/detect-checks.ts"],
+            "hashedAt": 1794104821079 },
+"stale": true,
+"changed": ["src/server.ts"]
+```
+
+`source` is written once at boot, beside `pid` and `startedAt`. `stale` and `changed` are measured
+on every `/health`, `/api/snapshot` and WebSocket-snapshot read by re-hashing those two files, at
+most once every 2 seconds, so they describe the running process and not the tree in general. Only
+`src/server.ts` and `src/detect-checks.ts` are covered: `client.tsx` is re-imported by every `code`
+launch and `bench/**` plus `python/worker.py` by every task's worker, so nothing else can be stale
+under a live pid. A missing file counts as changed. The cure is `bin/code-stop`, then `code`:
+there is no reload path, and a running server never re-imports itself.
+
 ## 9. Events and statuses
 
 Each task's journal is append-only JSONL with `seq`, `ts`, `kind`, and kind-specific fields.
@@ -396,8 +425,8 @@ The server binds `127.0.0.1` with no authentication. Do not expose the port.
 ```bash
 bun run typecheck   # tsc --noEmit
 bun test            # 0 fail over tests/: list, log, progress, prompt, views, selection,
-                    # order, auto-view, detect-checks, scroll, theme helpers, board and log
-                    # frames; React act(...) warnings are expected noise
+                    # order, auto-view, detect-checks, scroll, theme helpers, stale sources,
+                    # board and log frames; React act(...) warnings are expected noise
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character
@@ -409,6 +438,7 @@ the newest tasks (no server or key needed): `python3 ../bench/task_journal.py --
 | Symptom | Check |
 |---|---|
 | board stale / `reconnecting` | `cat <state-root>/workspaces/<hash>/server.log`; `Ctrl+R`; `server.json` for pid/port |
+| masthead `stale` | this server runs older code than the tree: `bin/code-stop`, then `bin/code`; `/health` lists the files in `changed` |
 | server dead | `bin/code-stop`, then `bin/code`; a stale `launch.lock` is cleared by the launcher |
 | `no api key` | `~/.config/code-tui/env` or `DEEPSEEK_API_KEY` in the server environment |
 | task `failed` at start | worker stderr in `events/<id>.jsonl` (`kind: "stderr"` / `"error"`) |

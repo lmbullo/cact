@@ -47,6 +47,10 @@
  *    or queues anything, and every interaction (`bumpActivity`) restarts its idle clock. The
  *    idle clock is keyed to the open task's id/status, not to its streaming counters, so a
  *    live task update cannot keep postponing (or trigger) the move.
+ *  - `server.stale` is read-only truth from the snapshot: the server re-hashes its own two files
+ *    and this screen only repeats it. The masthead says `stale` (one word, beside `offline`);
+ *    the hairline names the fix, `bin/code-stop`, because nothing in the client can reload a
+ *    detached process. There is no polling here: the snapshot on connect is enough.
  *
  * WHERE TO CHANGE
  *  A row's look, the rule or the log rows ... board-view.tsx / log-view.tsx
@@ -59,6 +63,7 @@
  *  The idle clock / targets ................. the auto-advance effect below,
  *                                            list-model.nextRunningTaskId
  *  Data contract ............................ types.ts
+ *  What `stale` means ...................... source-hash.ts, ServerInfo.source in server.ts
  */
 import {
   createCliRenderer,
@@ -597,6 +602,9 @@ export function App({
       : server && !server.hasKey
         ? "no api key"
         : "";
+  // The server is running code older than the tree: only a restart clears it, so the hairline
+  // names the command once. The masthead carries the word; this is the fix.
+  const staleNote = server?.stale ? "stale code · bin/code-stop" : "";
   const scrollNote =
     !showingLog && listRows.length > winSize
       ? `rows ${winStart + 1}–${winStart + winSize}/${listRows.length}`
@@ -604,7 +612,7 @@ export function App({
   // The arrangement is quiet chrome: it appears only while it differs from the default board,
   // so the hairline does not narrate the normal case.
   const orderNote = order === "status" ? "" : `order: ${orderLabel(order)}`;
-  const note = [statusNote, orderNote, scrollNote]
+  const note = [statusNote, staleNote, orderNote, scrollNote]
     .filter((part, index, all) => Boolean(part) && all.indexOf(part) === index)
     .join(" · ");
 
@@ -719,6 +727,7 @@ export function App({
         running={runningCount}
         total={ordered.length}
         connected={connected}
+        stale={server?.stale ?? false}
         width={width}
       />
       <box style={{ height: 1, flexShrink: 0 }} />
