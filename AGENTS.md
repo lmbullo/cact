@@ -41,11 +41,12 @@ An LLM coding agent in two halves, one language each:
 | `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the failure-mode evals (`bench/evals/`), archived legacy suites and results (`bench/archive/`) |
 | `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
 
-The agent is a model in a loop with a **persistent Python kernel**. The action space is 19 typed
+The agent is a model in a loop with a **persistent Python kernel**. The action space is 20 typed
 tools generated from one registry (`bench/agent/verbs.py`): `guide`, `skill`, `map`, `read`,
-`session_diff`, `checks`, `revert_check`, `status`, `search`, `recall`, `outline`, `edit`, `splice`,
-`write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `python` is the escape hatch for computation, not a
-verb. `run()` is a python-only helper, present in `repl`/`bare` modes and absent from typed modes.
+`session_diff`, `checks`, `revert_check`, `serve`, `status`, `search`, `recall`, `outline`, `edit`,
+`splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `python` is the escape hatch for
+computation, not a verb. `run()` is a python-only helper, present in `repl`/`bare` modes and absent
+from typed modes.
 
 No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install` in
 `tui/`.

@@ -10,7 +10,7 @@ WHAT IT IS
 ENTRY POINTS
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, allow_shell=None, supervise=True,
-         extra_verbs=None, extra_prelude="", check_commands=None)
+         extra_verbs=None, extra_prelude="", check_commands=None, env=None)
     .start()                            spawn the child (lazy: run()/call() start it)
     .run(code, check_cache=None, extra_obs=None)        one python cell -> Cell
     .call(tool, args, check_cache=None, extra_obs=None) one typed verb -> the same Cell pipeline
@@ -19,7 +19,9 @@ ENTRY POINTS
   The child's environment is the wire: KERNEL_PRELUDE, KERNEL_RUN_PRELUDE, KERNEL_HEADERS,
   KERNEL_VERBS, KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL,
   KERNEL_EXTRA_VERBS, KERNEL_EXTRA_PRELUDE (per-run experiment tools), and the plan as
-  KERNEL_CHECK_COMMANDS so an exec of a gate command can name checks().
+  KERNEL_CHECK_COMMANDS so an exec of a gate command can name checks(). `env=` adds keys to that
+  allowlist, for a check that points a child at a fixture CODE_TUI_STATE_ROOT, and can add but
+  never drop a wired key.
 
 INVARIANTS
   - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and restarted
@@ -86,7 +88,8 @@ class Kernel:
     def __init__(self, root: Path, timeout: float = CELL_TIMEOUT, writable: bool = False,
                  prelude: str = "off", allow_run: bool = False, allow_shell: bool | None = None,
                  supervise: bool = True, extra_verbs: dict | None = None,
-                 extra_prelude: str = "", check_commands: list | None = None) -> None:
+                 extra_prelude: str = "", check_commands: list | None = None,
+                 env: dict | None = None) -> None:
         self.root = Path(root).resolve()
         self.timeout = timeout
         self.writable = writable
@@ -97,6 +100,7 @@ class Kernel:
         self.extra_verbs = dict(extra_verbs or {})
         self.extra_prelude = str(extra_prelude or "")
         self.check_commands = list(check_commands or [])
+        self.env = {str(key): str(value) for key, value in (env or {}).items()}
         self.proc: subprocess.Popen | None = None
         self.orphan_journal: str | None = None
         self.obs_log: str | None = None
@@ -205,6 +209,7 @@ class Kernel:
                    if self.extra_verbs or self.extra_prelude else {}),
                 **({"KERNEL_CHECK_COMMANDS": json.dumps(self.check_commands)}
                    if self.check_commands else {}),
+                **self.env,
             },
         )
 

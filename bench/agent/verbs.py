@@ -146,6 +146,24 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    "serve": {
+        "function": "serve",
+        "summary": "Find, read, start or stop the TUI server for this workspace: the state root (CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then ~/.local/state/code-tui) and workspaces/<sha256(cwd)[:16]>, read from server.json plus /health and /api/snapshot. status returns {workspace, state_dir, server_json, pid, port, healthy, model, effort, concurrency, checks, stale, changed, queue:{running,queued}}; logs tails server.log; start spawns the same detached nohup bun src/server.ts the launcher does and polls /health; stop sends SIGTERM and waits for the pid to exit. action=status with no server.json is code `no_server`; start/stop refuse with `busy` while a task is running or when the pid is the server hosting this worker. status and logs never mutate.",
+        "mutates": False,
+        "requires_run": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["status", "logs", "start", "stop"],
+                           "description": "status (default) reports; logs tails server.log; start and stop change the process."},
+                "tail": {"type": "integer", "minimum": 1,
+                         "description": "Lines of server.log for action='logs' (default 40, capped at 400)."},
+                "timeout": {"type": "number", "minimum": 1,
+                            "description": "Seconds to wait for /health after start, or for the pid to exit after stop."},
+            },
+            "additionalProperties": False,
+        },
+    },
     "revert_check": {
         "function": "revert_check",
         "summary": "Answer 'does this test fail without the fix?': swap `paths` back to their HEAD content, run cmd, and always restore the working copy in a finally. Returns {broken_test, exit_with_original, exit_now, restored}; a test that also PASSES on the original code is broken_test=true and verifies nothing. Refuses unless the tree is clean outside paths (naming the other dirty paths), refuses an untracked path, and never stashes or checks out. Verify restored=true; a false one names the path that must be repaired by hand.",

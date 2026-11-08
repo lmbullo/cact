@@ -427,7 +427,7 @@ for line in sys.stdin:
                         out.write(str(value.get("stdout")))
                     if value.get("stderr"):
                         err.write(str(value.get("stderr")))
-                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "guides", "skill", "skills", "status", "obs") or str(value.get("kind") or "").startswith("git_"):
+                    if value.get("kind") in ("file", "files", "matches", "search_counts", "search_sections", "verbs", "diff", "outline", "outlines", "edits", "map", "maps", "recall", "guide", "guides", "skill", "skills", "status", "serve", "obs") or str(value.get("kind") or "").startswith("git_"):
                         out.write(str(value.get("text") or ""))
                     if value.get("hunk"):
                         out.write(str(value.get("hunk")))

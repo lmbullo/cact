@@ -3,13 +3,14 @@
 WHAT IT IS
   The source string injected into a child that may spawn programs: `exec_argv()` (the typed
   `exec` tool: argv, commands=[[...]], or an explicit shell string), `git_tool()` (the typed
-  `git` tool), `run()` where python-only modes are allowed, and the classifier that refuses a
-  mutation that would bypass the journal.
+  `git` tool), `serve()` (the typed `serve` tool: is the TUI server for this workspace up, on
+  which port, is it stale, how do I start or stop it), `run()` where python-only modes are
+  allowed, and the classifier that refuses a mutation that would bypass the journal.
 
 ENTRY POINTS
   RUN_PRELUDE   the child source (KERNEL_RUN_PRELUDE); present only when allow_run is on
-  In the namespace: exec_argv(), git_tool(), run() (only when KERNEL_SHELL=1), plus the
-  private gate: `_mutating_command`, `_HINT`, `_VERB_DUPE`, `_audit_spawn`, `_SpawnBlocked`.
+  In the namespace: exec_argv(), git_tool(), run() (only when KERNEL_SHELL=1), serve(), plus
+  the private gate: `_mutating_command`, `_HINT`, `_VERB_DUPE`, `_audit_spawn`, `_SpawnBlocked`.
 
 INVARIANTS
   - `exec` never parses a shell string for a program: a shell interpreter with `-c`/`-lc` in
@@ -38,23 +39,33 @@ INVARIANTS
     `git action='status'` names `status()`. Both are silent when the command is not in the plan
     (a test that runs is not a gate) and neither ever refuses. The plan arrives as
     KERNEL_CHECK_COMMANDS; the kernel only names it, never runs it.
+  - `serve()` is the one place that knows where the TUI server is. Its state dir is the
+    launcher's formula (CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then
+    ~/.local/state/code-tui, then workspaces/<sha256(resolved cwd)[:16]>), and `status`/`logs`
+    only read. `start`/`stop` refuse while a task is running in that state root and while the
+    pid is the server hosting this very worker: the answer could never arrive.
 
 WHERE TO CHANGE
   What exec/git refuse ......................... `_RUN_SHELL_MUTATORS`, `_RUN_GIT_MUTATORS`,
                                                  `_mutating_command`, `_HINT`, then RUN_NOTE
                                                  in repl.py and AGENTS.md §4 invariant 2
   The duplicate-verb note ..................... `_VERB_DUPE`, `_DUPE_OPAQUE`, `_typed_dupe`
-                                              (a path outside the workspace gets no note:
-                                              the typed verb would refuse it)
+                                               (a path outside the workspace gets no note:
+                                               the typed verb would refuse it)
   The plan-command / status notes ............ `_check_note`, `_status_note`,
-                                              KERNEL_CHECK_COMMANDS
+                                               KERNEL_CHECK_COMMANDS
   The spawn gate ............................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
   exec's argv/commands/shell shape ............. `exec_argv`
   The typed git actions ........................ `git_tool`
+  Find/start/stop the TUI server ............... `serve`, `_serve_facts`, `_serve_state`,
+                                               `_serve_start`, `_serve_stop`
+  The state-dir formula ........................ `_serve_state` — the same formula as
+                                               launcher.ts, server.ts and stop.ts
 """
 
 RUN_PRELUDE = r"""
-import json as _json, os as _ros, re as _re, signal as _rsig, subprocess as _rsp
+import hashlib as _rhash, io as _rio, json as _json, os as _ros, re as _re, shutil as _rshutil
+import signal as _rsig, subprocess as _rsp, time as _rtime
 _RUN_ROOT = _ros.getcwd()
 # exec()/run() children get their own session, so killing the kernel group does not reach them.
 # Journal each group leader here; the parent reaps leftovers when the kernel stops/restarts.
@@ -782,4 +793,305 @@ def git_tool(action, paths=None, message=None, limit=20, offset=0, max_chars=Non
     return _Result({"ok": ok, "kind": "git_action", "action": action,
                     "paths": paths, "sha": sha, "text": out, "stdout": out,
                     "stderr": err, "exit_code": code})
+
+
+# --- serve(): find, read, start and stop the TUI server for this workspace -----------------
+_SERVE_ACTS = ("status", "logs", "start", "stop")
+_SERVE_TIMEOUT = 2.0
+
+
+def _serve_state():
+    # The SAME formula launcher.ts, server.ts and stop.ts use: CODE_TUI_STATE_ROOT, else
+    # $XDG_STATE_HOME/code-tui, else ~/.local/state/code-tui, then workspaces/<hash>, where the
+    # hash is sha256 of the resolved workspace, first 16 hex. Change it in all four places or
+    # the pieces stop finding each other.
+    space = _ros.path.realpath(_RUN_ROOT)
+    root = _ros.environ.get("CODE_TUI_STATE_ROOT") or ""
+    if root.strip():
+        root = _ros.path.realpath(_ros.path.expanduser(root.strip()))
+    else:
+        base = _ros.environ.get("XDG_STATE_HOME") or ""
+        base = (_ros.path.expanduser(base.strip()) if base.strip()
+                else _ros.path.join(_ros.path.expanduser("~"), ".local", "state"))
+        root = _ros.path.join(base, "code-tui")
+    digest = _rhash.sha256(space.encode("utf-8")).hexdigest()[:16]
+    return space, _ros.path.join(root, "workspaces", digest)
+
+
+def _serve_get(url, timeout=None):
+    # A short one-shot GET. Refused, timed out or not-JSON all answer None, never an exception:
+    # "is it running" is a status question, so the answer is `healthy: false`.
+    import urllib.request as _urlreq
+    try:
+        with _urlreq.urlopen(url, timeout=float(timeout or _SERVE_TIMEOUT)) as resp:
+            value = _json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _serve_read_json(path):
+    try:
+        with _rio.open(path, encoding="utf-8", errors="replace") as fh:
+            value = _json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _serve_alive(pid):
+    if not pid:
+        return False
+    try:
+        _ros.kill(int(pid), 0)
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
+
+
+def _serve_ppid(pid):
+    try:
+        with _rio.open("/proc/%s/stat" % int(pid), encoding="utf-8", errors="replace") as fh:
+            return int(fh.read().rsplit(")", 1)[1].split()[1])
+    except Exception:
+        return 0
+
+
+def _serve_hosts_worker(pid):
+    # This worker, and every parent above it, includes the server that spawned it. SIGTERM to
+    # that pid kills the run mid-answer, so `start`/`stop` refuse it instead.
+    target = int(pid or 0)
+    cur, seen = _ros.getpid(), set()
+    while cur > 1 and cur not in seen:
+        if cur == target:
+            return True
+        seen.add(cur)
+        cur = _serve_ppid(cur)
+    return False
+
+
+def _serve_facts(workspace, state_dir, probe=True):
+    # One read of server.json, plus /health and /api/snapshot when `probe` is on, folded into
+    # what serve() reports. `logs` passes probe=False: tailing a file must not wait on HTTP.
+    server_file = _ros.path.join(state_dir, "server.json")
+    present = _ros.path.isfile(server_file)
+    info = (_serve_read_json(server_file) if present else None) or {}
+    try:
+        pid = int(info.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    try:
+        port = int(info.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    health = _serve_get("http://127.0.0.1:%s/health" % port) if (probe and port) else None
+    if health and str(health.get("workspace") or workspace) != workspace:
+        health = None  # a recycled port answering for another workspace is not this server
+    snap = _serve_get("http://127.0.0.1:%s/api/snapshot" % port) if (probe and port) else None
+    tasks = (snap or {}).get("tasks")
+    tasks = tasks if isinstance(tasks, list) else []
+    live = [item for item in tasks if isinstance(item, dict)]
+    source = health or info
+    specs = source.get("checks")
+    specs = specs if isinstance(specs, list) else []
+    changed = source.get("changed")
+    try:
+        concurrency = int(source.get("concurrency") or 0)
+    except (TypeError, ValueError):
+        concurrency = 0
+    return {
+        "workspace": workspace,
+        "state_dir": state_dir,
+        "server_json": present,
+        "pid": pid,
+        "port": port,
+        "alive": _serve_alive(pid),
+        "healthy": health is not None,
+        "model": str(source.get("model") or ""),
+        "effort": str(source.get("effort") or ""),
+        "concurrency": concurrency,
+        "checks": [str(item.get("name") or item.get("cmd") or "")
+                   for item in specs if isinstance(item, dict)],
+        "stale": bool(source.get("stale")),
+        "changed": [str(item) for item in (changed if isinstance(changed, list) else [])],
+        "queue": {"running": sum(1 for item in live if item.get("status") == "running"),
+                  "queued": sum(1 for item in live if item.get("status") == "queued")},
+    }
+
+
+def _serve_text(facts):
+    # The card a reader needs: where the state root is, whether it answers, and what it holds.
+    return "\n".join([
+        "code-tui server for %s" % facts["workspace"],
+        "  state   %s" % facts["state_dir"],
+        "  server  json=%s pid=%s alive=%s port=%s healthy=%s"
+        % (facts["server_json"], facts["pid"] or "-", facts["alive"],
+           facts["port"] or "-", facts["healthy"]),
+        "  model   %s effort=%s concurrency=%s"
+        % (facts["model"] or "-", facts["effort"] or "-", facts["concurrency"] or "-"),
+        "  checks  %s" % (", ".join(facts["checks"]) or "-"),
+        "  source  stale=%s changed=%s"
+        % (facts["stale"], ", ".join(facts["changed"]) or "-"),
+        "  queue   %s running, %s queued" % (facts["queue"]["running"], facts["queue"]["queued"]),
+    ])
+
+
+def _serve_result(facts, action, **extra):
+    out = dict(facts)
+    out.update({"ok": True, "kind": "serve", "action": action})
+    out.update(extra)
+    out.setdefault("text", _serve_text(facts))
+    return _Result(out)
+
+
+def _serve_refuse(action, facts, code, message, use, **extra):
+    out = dict(facts or {})
+    out.update({"ok": False, "kind": "serve", "action": action})
+    out.update(extra)
+    out["error"] = {"code": code, "message": message, "use": use}
+    return _Result(out)
+
+
+def _serve_log_tail(state_dir, lines=12):
+    try:
+        with _rio.open(_ros.path.join(state_dir, "server.log"), encoding="utf-8",
+                       errors="replace") as fh:
+            return fh.read().splitlines()[-max(1, int(lines)):]
+    except Exception:
+        return []
+
+
+def _serve_which_bun():
+    for name in ("bun",):
+        found = _rshutil.which(name)
+        if found:
+            return found
+    for path in (_ros.path.expanduser("~/.bun/bin/bun"), "/usr/local/bin/bun",
+                 "/opt/homebrew/bin/bun"):
+        if _ros.path.isfile(path) and _ros.access(path, _ros.X_OK):
+            return path
+    return ""
+
+
+def _serve_start(workspace, state_dir, facts, timeout):
+    # Exactly what launcher.ts::launchDetachedServer runs: a detached, session-leading
+    # `bun src/server.ts --workspace ... --state ...` whose output appends to server.log. The
+    # log is opened here instead of a shell `>>`, so no shell parses the command and the
+    # mutation gate has nothing to refuse.
+    tui = _ros.path.join(workspace, "tui")
+    entry = _ros.path.join(tui, "src", "server.ts")
+    bun = _serve_which_bun()
+    if not _ros.path.isfile(entry) or not bun:
+        return _serve_refuse(
+            "start", facts, "no_tui",
+            "cannot start: %s" % ("no bun on PATH" if not bun
+                                  else "no server entry at %s" % entry),
+            "start the TUI from a checkout of this repo (bin/code runs tui/src/launcher.ts)")
+    try:
+        _ros.makedirs(state_dir, exist_ok=True)
+    except OSError as exc:
+        return _serve_refuse("start", facts, "spawn_failed", str(exc),
+                             "check the state root in serve(action='status')")
+    log = _ros.path.join(state_dir, "server.log")
+    argv = ["nohup", bun, entry, "--workspace", workspace, "--state", state_dir]
+    try:
+        with _rio.open(log, "ab") as out:
+            proc = _rsp.Popen(argv, cwd=workspace, stdin=_rsp.DEVNULL, stdout=out,
+                              stderr=_rsp.STDOUT, start_new_session=True)
+    except OSError as exc:
+        return _serve_refuse("start", facts, "spawn_failed", str(exc),
+                             "run `code` in this workspace and read the log it prints")
+    _journal_orphan(proc.pid)
+    deadline = _rtime.time() + max(1.0, float(timeout or 12))
+    while _rtime.time() < deadline:
+        facts = _serve_facts(workspace, state_dir)
+        if facts["healthy"]:
+            break
+        _rtime.sleep(0.1)
+    tail = _serve_log_tail(state_dir)
+    text = _serve_text(facts)
+    if not facts["healthy"]:
+        text += "\n  log     %s\n%s" % (log, "\n".join("    " + line for line in tail) or "    (empty)")
+    return _serve_result(facts, "start", started=facts["healthy"], log=log,
+                         lines=tail, text=text)
+
+
+def _serve_stop(workspace, state_dir, facts, timeout):
+    pid = facts["pid"]
+    if not pid or not facts["alive"]:
+        return _serve_result(facts, "stop", stopped=False,
+                             text="no live server for %s (pid %s)\n%s"
+                                  % (workspace, pid or "-", _serve_text(facts)))
+    try:
+        _ros.kill(pid, _rsig.SIGTERM)
+    except OSError as exc:
+        return _serve_refuse("stop", facts, "not_running", str(exc),
+                             "serve(action='status') re-reads server.json")
+    deadline = _rtime.time() + max(1.0, float(timeout or 8))
+    while _rtime.time() < deadline and _serve_alive(pid):
+        _rtime.sleep(0.05)
+    after = _serve_facts(workspace, state_dir)
+    text = _serve_text(after)
+    if after["alive"]:
+        text += "\n  note    pid %s ignored SIGTERM; it is still running" % pid
+    return _serve_result(after, "stop", stopped=not after["alive"], stopped_pid=pid, text=text)
+
+
+def serve(action="status", tail=40, timeout=8):
+    # Typed `serve`: the one answer to "where is the TUI server for this workspace, is it
+    # answering, is it stale, and how do I start or stop it". status/logs never mutate.
+    act = str(action or "status").strip().lower()
+    if act not in _SERVE_ACTS:
+        return _serve_refuse(
+            act, {}, "unknown_action", "action must be status/logs/start/stop, not %r" % act,
+            "serve(action='status') answers where the server is; serve(action='logs', "
+            "tail=40) tails its log")
+    workspace, state_dir = _serve_state()
+    if act == "logs":
+        facts = _serve_facts(workspace, state_dir, probe=False)
+        log = _ros.path.join(state_dir, "server.log")
+        try:
+            with _rio.open(log, encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            return _serve_refuse("logs", facts, "no_log", "no server.log at %s" % log,
+                                 "serve(action='start') writes one; serve(action='status') "
+                                 "reports where the state dir is")
+        want = max(1, min(int(tail or 40), 400))
+        shown = lines[-want:]
+        return _serve_result(facts, "logs", path=log, lines=shown, tail=want,
+                             shown=len(shown), total=len(lines),
+                             text="\n".join(shown) or "(server.log is empty)")
+    facts = _serve_facts(workspace, state_dir)
+    if act == "status":
+        if not facts["server_json"]:
+            return _serve_refuse(
+                "status", facts, "no_server",
+                "no server.json in %s: no code-tui server has run for %s"
+                % (state_dir, workspace),
+                "serve(action='start') starts one with nohup bun src/server.ts; a server "
+                "started by `code` writes the same file")
+        return _serve_result(facts, "status")
+    if act == "stop" and not facts["server_json"]:
+        # stop with nothing published is the launcher's exit 0: there is no pid to signal.
+        return _serve_result(facts, "stop", stopped=False,
+                             text="no server.json in %s: nothing to stop\n%s"
+                                  % (state_dir, _serve_text(facts)))
+    busy = []
+    if facts["queue"]["running"]:
+        busy.append("%s task(s) running" % facts["queue"]["running"])
+    if _serve_hosts_worker(facts["pid"]):
+        busy.append("pid %s is the server hosting this worker" % facts["pid"])
+    if busy:
+        return _serve_refuse(
+            act, facts, "busy",
+            "serve(%r) refused: %s" % (act, "; ".join(busy)),
+            "wait for the task to finish (serve(action='status') shows the queue); a server "
+            "hosting this worker cannot be restarted from inside a run")
+    if act == "start":
+        if facts["healthy"]:
+            return _serve_result(facts, "start", started=False,
+                                 text="already up\n" + _serve_text(facts))
+        return _serve_start(workspace, state_dir, facts, timeout)
+    return _serve_stop(workspace, state_dir, facts, timeout)
 """

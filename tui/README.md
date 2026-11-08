@@ -502,13 +502,9 @@ the newest tasks (no server or key needed): `python3 ../bench/task_journal.py --
 | task `failed` with "server restarted" | expected: a `running` task does not survive a server restart |
 | checks never run | plan empty (`CODE_TUI_CHECK=`) or a scoped entry with no matching changed path |
 
-Health check without the TUI:
-
-```bash
-PORT=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["port"])' \
-  <state-root>/workspaces/<hash>/server.json)
-curl "http://127.0.0.1:$PORT/health"
-```
+Health without the TUI is the `serve` tool: `serve(action="status")` returns the state dir, pid,
+port, health, `stale`/`changed`, the check plan and the queue, and `serve(action="logs", tail=40)`
+tails `server.log` — no `server.json` parsing and no `curl` needed.
 
 `bin/code-stop` sends `SIGTERM` to the server for the current directory. Running and queued
 tasks are marked failed on shutdown; completed history remains.
