@@ -146,6 +146,25 @@ VERBS: dict[str, dict] = {
             "additionalProperties": False,
         },
     },
+    "revert_check": {
+        "function": "revert_check",
+        "summary": "Answer 'does this test fail without the fix?': swap `paths` back to their HEAD content, run cmd, and always restore the working copy in a finally. Returns {broken_test, exit_with_original, exit_now, restored}; a test that also PASSES on the original code is broken_test=true and verifies nothing. Refuses unless the tree is clean outside paths (naming the other dirty paths), refuses an untracked path, and never stashes or checks out. Verify restored=true; a false one names the path that must be repaired by hand.",
+        "mutates": True,
+        "requires_run": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "paths": {"type": "array", "items": {"type": "string"},
+                          "description": "The tracked paths the fix touches; they are swapped to HEAD and restored."},
+                "cmd": {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
+                        "description": "The test command: an argv list, or a shell string when shell syntax is needed."},
+                "timeout": {"type": "number", "minimum": 1,
+                            "description": "Seconds per run (default 120): the command runs twice."},
+            },
+            "required": ["paths", "cmd"],
+            "additionalProperties": False,
+        },
+    },
     "status": {
         "function": "status",
         "summary": "One call for tree state: branch, capped `git status --short`, ahead/behind when cheap, and the session journal's paths with add/del counts (never diff text). Read-only: it never journals and never mutates. Tree state is status().",

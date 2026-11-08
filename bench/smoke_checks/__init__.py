@@ -15,6 +15,7 @@ WHAT IT IS
     files.py     journalled file action space                             run(check, root, kernel)
     verbs.py     typed verbs through Kernel.call                          run(check, root, kernel)
     gates.py     process gates, recall, reaping, state card, finish        run(check, root, kernel)
+    revert.py    revert_check: HEAD swap and its restore proof                run(check)
     turns.py     the turn machine, offline                                run(check)
     repl.py      the fenced-block dialect                                 run(check)
     style.py     the tree is ruff-clean and every public name documented   run(check)

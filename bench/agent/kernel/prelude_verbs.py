@@ -13,6 +13,7 @@ ENTRY POINTS
   splice(path, start, end, text)         1-based inclusive line replacement (end is required)
   apply(patch)                           a unified diff, several files, one cell
   commit({path: text}, force=False)      several writes in one cell
+  revert_check(paths, cmd, timeout=120)  does this test fail without the fix? (HEAD swap, then restore)
 
 INVARIANTS
   - Every one of them commits through `_commit`; `edit` reports ambiguity instead of guessing
@@ -26,9 +27,15 @@ INVARIANTS
     is never the only answer.
   - `_snapshot()` must stay the LAST statement of the assembled PRELUDE: it records `_BASE`,
     which is what changes()/diff()/undo() compare against.
+  - `revert_check()` is the ONE verb whose writes bypass `_commit`: it puts HEAD content in
+    place, runs a command, and puts the working copy back in a `finally`, so the net effect is
+    zero and a journal row would make changes()/diff() report a change that is not there. It
+    refuses a dirty tree outside its own paths, never stashes and never checks out, and reports
+    `restored: false` with a loud message naming the path when the restore fails.
 
 WHERE TO CHANGE
   A mutation verb's semantics .......... the verb itself here
+  The revert-check swap/restore ........ revert_check, _revert_run, _revert_git, _revert_dirty
   The unified-diff parser .............. _parse_patch, _hunk_old, _hunk_new
   The verb catalog `verbs()` ........... verbs.VERBS (the registry) — this only renders it
 """
@@ -531,6 +538,239 @@ def commit(files, force=False):
                          path=str(path), detail=result)
         done.append({"path": result["path"], "adds": result["adds"], "dels": result["dels"]})
     return {"ok": True, "kind": "commit", "files": done}
+
+
+def _revert_bytes(path):
+    with _open(path, "rb") as fh:
+        return fh.read()
+
+
+def _revert_digest(data):
+    # One digest for the restore proof: the same function reads both sides, so a mismatch is
+    # never an encoding artefact.
+    return _hashlib.sha256(data).hexdigest()[:16]
+
+
+def _revert_git(argv):
+    # Read-only git, bytes out: `show HEAD:<path>` must not pass through a text codec, because a
+    # restore that decodes and re-encodes is not a restore. None when git could not run at all.
+    try:
+        return _sp.run(["git", "-c", "core.quotepath=false"] + argv, cwd=_ROOT,
+                       capture_output=True, timeout=30)
+    except (OSError, _sp.TimeoutExpired):
+        return None
+
+
+def _revert_dirty():
+    # Every TRACKED path git reports as different from HEAD; None when git itself failed. Untracked
+    # files are left out on purpose: a test run leaves build artifacts (`__pycache__/`, `.tmp`)
+    # that the HEAD swap cannot reach, so refusing on them would make the verb refuse after every
+    # run. `paths` itself is checked for trackedness separately. A rename `R  a -> b` names both
+    # sides, so the refusal names the path the caller did not pass.
+    proc = _revert_git(["status", "--porcelain=v1", "--untracked-files=no"])
+    if proc is None or proc.returncode != 0:
+        return None
+    out = []
+    for raw in proc.stdout.decode("utf-8", "replace").splitlines():
+        if len(raw) < 4:
+            continue
+        rest = raw[3:]
+        for part in (rest.split(" -> ") if " -> " in rest else [rest]):
+            name = part.strip().strip('"')
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
+def _revert_run(command, argv, shell, timeout):
+    # (exit_code, stdout, stderr, problem). A non-zero exit is the answer, not an error, so
+    # `problem` stays None for it; only a timeout or a refused/unstartable spawn sets one.
+    try:
+        proc = _sp.run(command if shell else list(argv), shell=shell, cwd=_ROOT,
+                       capture_output=True, text=True, errors="replace", timeout=float(timeout))
+    except _sp.TimeoutExpired:
+        return None, "", "", "timeout"
+    except Exception as exc:
+        return None, "", "%s: %s" % (type(exc).__name__, exc), "spawn_failed"
+    return proc.returncode, proc.stdout or "", proc.stderr or "", None
+
+
+def _revert_output(exit_now, out_now, err_now, exit_original, out_old, err_old):
+    # Both runs, tailed: the failing assertion is the answer, and a full test dump would spend the
+    # turn's context on one check.
+    blocks = []
+    for label, code, out, err in (("now", exit_now, out_now, err_now),
+                                  ("HEAD", exit_original, out_old, err_old)):
+        body = (str(out or "") + str(err or "")).strip()
+        if len(body) > 2000:
+            body = "...[+%d chars]\n" % (len(body) - 2000) + body[-2000:]
+        blocks.append("--- %s (exit %s)%s" % (label, code, ("\n" + body) if body else ""))
+    return "\n".join(blocks)
+
+
+def revert_check(paths, cmd, timeout=120):
+    # "Does this test fail without the fix?" Swap `paths` back to their HEAD content, run `cmd`,
+    # and ALWAYS put the working copy back. A test that also passes on the original code proves
+    # nothing about the change, so it comes back broken_test: true.
+    if isinstance(paths, str):
+        paths = _coerce_paths(paths)
+        if isinstance(paths, str):
+            paths = [paths]
+    if not isinstance(paths, (list, tuple)) or not paths:
+        return _fail("revert_check", "bad_arguments", "paths must be a non-empty list of paths",
+                     "revert_check(paths=['calc.py'], cmd=['python3', '-m', 'pytest', '-q'])")
+    shell = isinstance(cmd, str)
+    if shell:
+        argv, command = None, cmd.strip()
+    elif (isinstance(cmd, (list, tuple)) and cmd
+            and not any(isinstance(part, (list, tuple, dict, set)) for part in cmd)):
+        argv, command = [str(part) for part in cmd], " ".join(str(part) for part in cmd)
+    else:
+        return _fail("revert_check", "bad_arguments", "cmd must be an argv list or a shell string",
+                     "revert_check(paths=['calc.py'], cmd=['python3', '-m', 'pytest', '-q'])")
+    if not command:
+        return _fail("revert_check", "bad_arguments", "cmd is empty",
+                     "revert_check(paths=['calc.py'], cmd=['python3', '-m', 'pytest', '-q'])")
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        return _fail("revert_check", "bad_arguments", "timeout must be a number of seconds",
+                     "revert_check(paths=[...], cmd=[...], timeout=120)")
+    extend = globals().get("_CELL_EXTEND")
+    if callable(extend):
+        # Two runs of `timeout` plus two swaps. Without this the kernel kills the cell mid-test
+        # and the restore, which lives in this process, never runs.
+        extend(2.0 * timeout + 30)
+    # --- the one path set, resolved and constrained -------------------------------------
+    targets = []
+    for item in paths:
+        target, rel = _resolve(str(item))
+        if target is None:
+            return _outside("revert_check", str(item), "revert_check")
+        if rel not in [one[1] for one in targets]:
+            targets.append((target, rel))
+    mine = [rel for _, rel in targets]
+    for target, rel in targets:
+        if not _os.path.isfile(target):
+            return _fail("revert_check", "not_found",
+                         "%s is not a file in the working tree" % rel,
+                         "revert_check swaps a file's content; it cannot create one", path=rel)
+        proc = _revert_git(["ls-files", "--error-unmatch", "--", rel])
+        if proc is None:
+            return _fail("revert_check", "no_git", "git is not available here",
+                         "run revert_check in a git checkout", path=rel)
+        if proc.returncode != 0:
+            return _fail("revert_check", "untracked",
+                         "%s is untracked, so HEAD has no version to swap in" % rel,
+                         "commit it first (git add, then git commit); revert_check restores "
+                         "from HEAD", path=rel)
+    dirty = _revert_dirty()
+    if dirty is None:
+        return _fail("revert_check", "no_git", "git status failed in %s" % _ROOT,
+                     "run revert_check in a git checkout")
+    others = [item for item in dirty if item not in mine]
+    if others:
+        return _fail("revert_check", "dirty_tree",
+                     "the working tree is dirty outside paths: %s" % ", ".join(others[:6]),
+                     "commit or discard those paths first; revert_check touches only `paths` "
+                     "and never stashes", dirty=others[:20])
+    # --- the original content, and what the tree holds now -------------------------------
+    originals, current, changed = {}, {}, []
+    for target, rel in targets:
+        proc = _revert_git(["show", "HEAD:%s" % rel])
+        if proc is None or proc.returncode != 0:
+            return _fail("revert_check", "not_in_head", "HEAD has no version of %s" % rel,
+                         "commit the file once before swapping it", path=rel)
+        originals[rel] = proc.stdout
+        try:
+            current[rel] = _revert_bytes(target)
+        except OSError as exc:
+            return _fail("revert_check", "unreadable", str(exc),
+                         "read(path) names the failure", path=rel)
+        if originals[rel] != current[rel]:
+            changed.append(rel)
+    exit_now, out_now, err_now, problem = _revert_run(command, argv, shell, timeout)
+    if problem == "timeout":
+        return _fail("revert_check", "timeout",
+                     "the command did not finish in %ss" % timeout,
+                     "raise timeout= or narrow the command; nothing was swapped",
+                     command=command)
+    if problem:
+        return _fail("revert_check", "spawn_failed",
+                     "the command did not start: %s" % str(err_now).strip()[:200],
+                     "exec(argv=[...]) answers the same question without a swap; check the "
+                     "program name", command=command)
+    # --- swap, run the original, and put the working copy back no matter what ------------
+    exit_original, out_old, err_old, problem_old = None, "", "", None
+    failures, swapped = [], True
+    try:
+        for target, rel in targets:
+            with _open(target, "wb") as fh:
+                fh.write(originals[rel])
+        exit_original, out_old, err_old, problem_old = _revert_run(command, argv, shell, timeout)
+    except OSError as exc:
+        swapped = False
+        failures.append("swap: %s" % exc)
+    finally:
+        for target, rel in targets:
+            try:
+                with _open(target, "wb") as fh:
+                    fh.write(current[rel])
+            except OSError as exc:
+                failures.append("%s: %s" % (rel, exc))
+    digests, expected = {}, {}
+    for target, rel in targets:
+        expected[rel] = _revert_digest(current[rel])
+        try:
+            digests[rel] = _revert_digest(_revert_bytes(target))
+        except OSError:
+            digests[rel] = None
+    restored = all(digests[rel] == expected[rel] for rel in expected)
+    broken = exit_original == 0
+    stdout = _revert_output(exit_now, out_now, err_now, exit_original, out_old, err_old)
+    text = ("revert_check: broken_test=%s exit_now=%s exit_with_original=%s restored=%s"
+            % (broken, exit_now, exit_original, restored))
+    if not swapped:
+        # The HEAD content never landed, so `exit_with_original` measures nothing: that is a
+        # failed measurement, not a test that passes. The digest still proves the copy is intact.
+        return _fail("revert_check", "swap_failed",
+                     "could not put the HEAD content in place: %s" % "; ".join(failures),
+                     "make `paths` writable first; nothing was measured and the working copy "
+                     "is unchanged",
+                     broken_test=False, exit_with_original=None, exit_now=exit_now,
+                     restored=restored, digest=digests, expected_digest=expected, paths=mine,
+                     command=command, stdout=stdout, text=text)
+    if not restored:
+        lost = [rel for rel in expected if digests[rel] != expected[rel]]
+        return _fail("revert_check", "restore_failed",
+                     "RESTORE FAILED for %s: it still holds the HEAD content, not your working "
+                     "copy%s" % (", ".join(lost) or ", ".join(mine),
+                                 (" (%s)" % "; ".join(failures)) if failures else ""),
+                     "a human must see a failed restore: report it and stop. undo() restores the "
+                     "session-start copy of the path; check diff() before you continue",
+                     broken_test=broken, exit_with_original=exit_original, exit_now=exit_now,
+                     restored=False, digest=digests, expected_digest=expected, paths=mine,
+                     command=command, stdout=stdout, text=text)
+    note = []
+    if not changed:
+        note.append("every path already matches HEAD, so the swap changed nothing")
+    if broken:
+        note.append("the test passes on the original code too, so it does not verify the fix")
+    if exit_now not in (0, None) and not broken:
+        note.append("the test does not pass on the working tree either (exit_now=%s)" % exit_now)
+    if problem_old == "timeout":
+        note.append("the command hit the %ss timeout against the original" % timeout)
+    elif problem_old:
+        note.append("the command did not start against the original: %s"
+                    % str(err_old).strip()[:200])
+    result = {"ok": True, "kind": "revert_check", "broken_test": broken,
+              "exit_with_original": exit_original, "exit_now": exit_now,
+              "restored": True, "digest": digests, "expected_digest": expected,
+              "paths": mine, "changed": changed, "command": command,
+              "timeout_s": timeout, "stdout": stdout, "text": text}
+    if not failures and note:
+        result["note"] = "; ".join(note)
+    return result
 
 
 _snapshot()
