@@ -58,10 +58,12 @@ Invariants:
 ```
 workspaces/<sha256-of-workspace, first 16 hex>/
   server.json          pid, port, and the rest of ServerInfo
-  server.log           detached server log
+  server.log           detached server log; its first line is the JSON launch line
   launch.lock/         held while a launcher is starting the server
   tasks/<id>.json      task metadata
   events/<id>.jsonl    append-only event journal
+  logs/<id>.jsonl      machine-readable per-task log (see section 9): event records, raw
+                       worker stdout/stderr, the prompt, the run's usage and its errors
   prompts/<id>.txt     original prompt
   history.jsonl        last 50 tasks (prompt, summary, changed files, gates, deferred,
                        untested); newest 4 plus up to 6 open items are prepended to the
@@ -183,15 +185,15 @@ reminder; it never invents a fake section or an empty table.
 
 ## 4. Live run log
 
-`Enter` on an empty prompt opens the selected task's log: the task's whole prompt at the top,
-one row per tool call, one `↺` row when the loop rejected or staged a finish, and the agent's
-final summary in full at the end. The prompt and the summary are the bracket around the run —
-start and finish — and they are set in the same shape. Rows carry a dim elapsed-time gutter once
-the task has a start time, so a long run reads as a timeline.
+`Enter` on an empty prompt opens the selected task's log. Every row is machine-first: one dim
+elapsed gutter, then `key=value` fields and nothing else — no glyphs, no sentences, no decorative
+prose. The fields are the journal's own names, so a row can be pasted into a grep. The task's
+prompt opens the log as a wrapped body under a `kind=prompt` row, and the agent's final summary
+closes it as a wrapped body under a `kind=final` row.
 
 The run's state has exactly one source: the status line at the top, drawn from `Task.status`.
-The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no second status word on
-the summary block — so the screen cannot say `queue` and `queued` at once, and nothing can go on
+The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no status field on the
+closing row — so the screen cannot say `queue` and `queued` at once, and nothing can go on
 saying `queued` after the run has left that state. Lifecycle events stay in `events/<id>.jsonl`
 as journal history; they are not rendered.
 
@@ -200,32 +202,32 @@ as journal history; they are not rendered.
 
  ● running  #4f7c1        esc/enter: back · 3 steps · ↑421k ↓8.0k · 11s · $0.07 · 62% cache · ctx 421k/1.0M
 
-    0ms ▸ prompt  deepseek-flash · low
+  0ms kind=prompt chars=118 model=deepseek-flash effort=low
 
-     add a retry with exponential backoff and jitter to the fetch helper, and cover the
-     503 path with a test
+      add a retry with exponential backoff and jitter to the fetch helper, and cover the
+      503 path with a test
 
-   1.5s · read({"path":"src/client.tsx"})
-   3.0s · exec({"argv":["bun","test"]})
-   4.5s · 'a.py'
-   6.0s ↺ [finish] final_answer rejected: the project check still fails
+  1.5s kind=cell tool=read args={"path":"src/client.tsx"}
+  3.0s kind=cell tool=exec args={"argv":["bun","test"]}
+  4.5s kind=cell tool=code code='a.py'
+  6.0s kind=turn notice=[finish] final_answer rejected: the project check still fails
 
-   7.5s ▸ summary  3 cells
+  7.5s kind=final cells=3
 
-     Retry added to the fetch helper; the backoff path is covered by a test.
+      Retry added to the fetch helper; the backoff path is covered by a test.
 
-     changed
-     - src/fetch.ts: three attempts, exponential backoff, jitter
-     - tests/fetch.test.ts: a 503 then a success
+      changed
+      - src/fetch.ts: three attempts, exponential backoff, jitter
+      - tests/fetch.test.ts: a 503 then a success
 
-     verified
-     - bun test (19 tests)
+      verified
+      - bun test (19 tests)
 ───────────────────────────────────────────────────────────────────────────────────────────────────
  › task for /home/you/some/project…
 ```
 
 The log is the same screen with its content pane swapped: the masthead, the breath under it, a
-status line, the events, and the one hairline over the prompt. The status line carries the dot,
+status line, the rows, and the one hairline over the prompt. The status line carries the dot,
 the status word, the short handle, then how the run ended, then `esc/enter: back` and the live
 counters; the hint is never dropped and the counters disappear from the tail as the terminal
 narrows. It does not repeat the prompt — the log opens with that in full, right below.
@@ -234,8 +236,8 @@ Once the run has settled, the line also answers "how did this end?" at a glance,
 JSON and the journal alone: the stop reason (`Task.stop` — `DONE`, `TRUNCATED`, `LLM_FAILED`,
 `GOAL_UNMET`, ...), the error count when the task recorded any (`Task.errors`), and — when the
 last `check` event of the journal failed — the check's name with the first failing line of its
-output, clipped to whatever the line has left. A check that passed adds nothing. A queued or
-running task has no stop reason yet, so it prints none of this and its counters do not move.
+output. A running task has no stop reason yet, so it prints none of this and its counters do not
+move.
 
 ```
   ✓ done  #4f7c1  DONE   esc/enter: back · 7 steps · ↑12.4k ↓1.2k · 11s · <$0.01 · 62% cache
@@ -246,56 +248,42 @@ The failing check keeps a third of the row before the counters start filling it,
 give way (from the tail) rather than the verdict. At 60 columns the same line is
 `✖ failed  #9a2b0  GOAL_UNMET  typecheck: src… esc/enter: back`: still one row, still clipped.
 
-Those counters are the log's data row, and the only one. Left to right: turns taken, tokens in
-and out (`↑` prompt, `↓` completion, both summed over turns), the wall time, the run's price
-(the same `pricing.ts` figure the board row prints — cache hit, miss and output priced
-separately), the prompt-cache hit rate and the context window as `ctx <latest prompt>/<window>`
-— that last one is the size of the conversation the model had to carry, not a sum, so it is read
-from the newest turn. They are derived once, by `list-model.taskUsage`, from `Task.progress`
-while the run streams and from the final `steps`/`usage` after it; `list-model.foldTurn` is what
-server.ts folds each turn's provider usage into, and the closing context is kept on the task when
-`progress` is cleared. Nothing else on the log prints a counter — not a tool row, not the summary
-block — so a number can never appear twice or mean two things. As the line narrows the tail gives
-way in that order, so a price survives longer than the cache rate beside it.
+Those counters are the log's data row, and the only one: turns taken, tokens in and out (`↑`
+prompt, `↓` completion, both summed over turns), the wall time, the run's price, the prompt-cache
+hit rate and the context window as `ctx <latest prompt>/<window>`. They are derived once, by
+`list-model.taskUsage`, from `Task.progress` while the run streams and from the final
+`steps`/`usage` after it. No row in the body prints a counter, so a number cannot appear twice or
+mean two things.
 
-A row is one call, trimmed to one line and clipped to the terminal width with a trailing `…`.
-A typed call keeps its tool name and shows the JSON arguments: `read({"path":"a.py"})`,
-`exec({"argv":["bun","test"]})`; both are body ink, the tool name a shade quieter. A python cell
-shows the arguments of its first call, so `read('a.py')` reads as `· 'a.py'`; the cell index and
-counters are dropped and only the first line of a multi-line cell is kept.
+Row fields by kind (`src/log-view.tsx`, `EventView`):
 
-The log is monochrome by design: the gutter, the `·` bullet and the quiet rows use the quietest
-greys, the arguments use body ink, and nothing is bold. Colour appears only where it means
-something — amber for a rejected or staged finish, clay for an error, the closing marker's
-status colour. That is the difference between a log you scan and a log that glares.
+| kind | fields |
+|---|---|
+| `cell.start` | `kind=cell tool=<tool> args=<json>` for a typed call, `code=<first call's arguments>` for a python cell |
+| `turn` | `kind=turn notice=<the rejected or staged finish, one line>` and `lines=N` when it was several |
+| `final` | `kind=final cells=N`, then the summary body |
+| `error` | `kind=error text=<one line>` and `lines=N` when it was several |
+| `stderr` | `kind=stderr …` |
+| `log` | `kind=log …` |
+| anything else | `kind=<kind>` only; the payload is never dumped |
+| no rows yet | `kind=waiting status=queued|running` |
 
-The final event is the one block that grows: its head row (`▸ summary  3 cells`) is followed by
-one blank row and the agent's whole summary — paragraph breaks and bullets included —
-word-wrapped into an indented column by `theme.wrapText`. Nothing is clipped. Past
-`SUMMARY_MAX_LINES` (400) the rest is reported as `(+N lines)` rather than dropped. The head
-carries only what the status line cannot: the cell count. The stop reason, the error count, the
-failed check, the status word, the steps, the tokens, the price, the cache rate, the context
-window and the wall time all live up there; the closing marker only borrows the run's status
-colour.
+Truncation is per field, not per row: each value is clipped to the columns its own key leaves
+(`FIELD_CAP`, then what is left of the pane), so a 300-char argument can neither push its key nor
+a later field off the line, and `…` marks the cut. The two exceptions are the opening prompt and
+the final summary: they are wrapped whole by `theme.wrapText` into the shared `INDENT` column,
+never clipped, and past `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N more lines)`. The
+log opens and closes in that same column, so the start and the finish of a run line up.
 
-The log opens with the same block shape, upside: a head row (`0ms ▸ prompt`, the model in the
-quiet tail) and the prompt wrapped into the same four-column indent, so the start and the finish
-of a run line up under each other. The prompt is shown whole — a long one wraps instead of being
-clipped — and it keeps its bright body ink, while the summary sits a shade quieter: the reader's
-words, then the agent's. Before the first renderable event the prompt is the whole log, with
-`waiting for output…` beneath it; a finished task with nothing to show gets no such line, because
-that sentence only tells the truth while the task is queued or running.
-
-The status line's counters are the live values, formatted exactly as the board row formats them:
-same function, same numbers, one screen at a time.
+The log is monochrome by design: the gutter and the keys use the quietest greys, the values body
+ink, amber marks a rejected or staged finish, clay an error, and the closing row borrows the
+run's status colour. Nothing is bold. Colour appears only where it means something.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
-one exception: a turn carrying a `notice` (a rejected or staged `final_answer`, recorded by
-`bench/agent/tool_loop.py`) prints its first line and a `(+NL)` count — that is how the reason a
-finish did not take becomes visible. The full payload is still journalled and reaches the model.
-The log keeps up to 1000 events in memory, seeded from the journal (last 800) on open; the
-silent kinds are filtered at render time, so `waiting for output…` counts what is actually on
-screen rather than the journal's length.
+one exception: a turn carrying a `notice` — a rejected or staged `final_answer`, recorded by
+`bench/agent/tool_loop.py` — keeps its first line. The full payload is still in the journal and
+the machine log, and reaches the model. The log keeps up to 1000 events in memory, seeded from
+the journal (last 800) on open.
 
 `esc` (empty prompt) or `enter` (empty prompt) goes back; `Ctrl-K` cancels from either screen.
 There is only one prompt box, mounted once below whichever view is showing, so switching views
@@ -339,7 +327,7 @@ the worker:
 | `CODE_TUI_MODEL` | `deepseek-flash` | Model name |
 | `CODE_TUI_EFFORT` | `low` | `reasoning_effort` (`none` disables it) |
 | `CODE_TUI_EFFORT_POLICY` | `fixed` | `adaptive` sends the effort only after a surprising turn; `fixed` always sends `CODE_TUI_EFFORT` |
-| `CODE_TUI_PROFILE` | `m3-plan` | Measured arm: `m3-plan` (python cell, fixed low, staged finish) or `current` (inline finish, task tool) |
+| `CODE_TUI_PROFILE` | `fast-code` | Measured arm: `fast-code` (lean typed set + python cell, inline finish, green-plan stop); also `m3-plan`, `current`, `code-act` |
 | `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–8) |
 | `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
@@ -415,16 +403,26 @@ The server binds `127.0.0.1` on a random port (written to `server.json`):
 | Route | Meaning |
 |---|---|
 | `GET /` | Plain-text banner: version, workspace, state, port, model, key |
-| `GET /health` | `{ ok: true, ...ServerInfo, hasKey }` |
+| `GET /health` | `{ ok: true, ...ServerInfo, hasKey }`; `logsDir` is the per-task log directory |
 | `GET /api/snapshot` | `{ type: "snapshot", server, tasks }` |
-| `POST /api/tasks` | `{ prompt }` → `201 { task }`; empty or >20000 chars is `400` |
-| `GET /api/tasks/:id` | `{ task }` |
+| `POST /api/tasks` | `{ prompt }` → `201 { task }`; empty or >20000 chars is `400`. `task.log` is that task's JSONL |
+| `GET /api/tasks/:id` | `{ task }`, `log` included |
 | `GET /api/tasks/:id/events?limit=600` | `{ events }` from the journal (limit clamped to 2000) |
 | `POST /api/tasks/:id/cancel` | Request cancellation, `{ task }` |
 | `GET /ws` | WebSocket: a `snapshot` on open, then `task`, `event`, `ping` |
 
 Cancelling a queued task marks it `cancelled` immediately. Cancelling a running task sends
 `SIGTERM` to the worker, then `SIGKILL` after 5 seconds; the task ends `cancelled`.
+
+The detached server prints one JSON line when it starts, and nothing else at that point, so a
+launcher or an agent reads it without parsing prose:
+
+```json
+{"event":"listening","pid":14745,"port":39943,"profile":"fast-code","check":"python3 bench/smoke.py","log":"<state dir>/server.log"}
+```
+
+`log` is the server's own stdout/stderr file (the launcher redirects there; `--log` overrides it);
+the per-task JSONL directory is `logsDir` on `/health` and `log` on every task payload.
 
 Every `ServerInfo` also carries the code the process booted with:
 
@@ -466,6 +464,15 @@ from the newest `check` event without re-running anything. `turn` keeps its exis
 still reads every run. Payloads are capped before storage: strings at 16000 chars, arrays at 40
 items, nesting at depth 12 (`[depth]` marks the cut), so nested call arguments survive and one
 huge observation cannot bloat a journal.
+
+The server also writes each task's machine log at `logs/<id>.jsonl` — the same facts in one file
+an agent can read without a join. One JSON record per line, each with its own `ts`:
+`{kind:"prompt", text}` when the task is created, `{kind:"event", event}` for every journal
+event, `{kind:"stdout", text}` for every raw worker stdout line and `{kind:"stderr", text}` for
+every stderr line, `{kind:"usage", status, stop, steps, calls, llmCalls, errors, usage, wallMs}`
+from the final message, and `{kind:"error", text}` for a worker error. It is append-only and
+never rewritten. `Task.log` names the file and `ServerInfo.logsDir` its directory, so neither a
+reader nor a tool needs to know the state-dir formula.
 
 The worker reports `done` for `DONE`/`VERIFIED`, `partial` for `STEP_LIMIT`/`WALL_LIMIT` with a
 non-empty summary, and `failed` otherwise. The server keeps the same mapping and also treats a
@@ -509,7 +516,7 @@ the newest tasks (no server or key needed): `python3 ../bench/task_journal.py --
 | masthead `stale` | this server runs older code than the tree: `bin/code-stop`, then `bin/code`; `/health` lists the files in `changed` |
 | server dead | `bin/code-stop`, then `bin/code`; a stale `launch.lock` is cleared by the launcher |
 | `no api key` | `~/.config/code-tui/env` or `DEEPSEEK_API_KEY` in the server environment |
-| task `failed` at start | worker stderr in `events/<id>.jsonl` (`kind: "stderr"` / `"error"`) |
+| task `failed` at start | worker stderr in `events/<id>.jsonl` (`kind: "stderr"` / `"error"`), or the same records plus every raw stdout line in `logs/<id>.jsonl` |
 | task `failed` with "server restarted" | expected: a `running` task does not survive a server restart |
 | checks never run | plan empty (`CODE_TUI_CHECK=`) or a scoped entry with no matching changed path |
 

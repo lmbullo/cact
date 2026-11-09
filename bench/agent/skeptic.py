@@ -1,34 +1,31 @@
-"""skeptic: a second, read-only opinion that must falsify a finish before it is accepted.
+"""skeptic: a second, read-only opinion that must falsify a finish before acceptance.
 
 WHAT IT IS
-  The model is a poor judge of its own work: it stops when the visible evidence looks green.
-  `Skeptic.review()` spawns a read-only subagent with the task, the proposed answer, the
-  journal diff and the last check text, and asks one question: name a concrete way this is
-  incomplete. It must answer `PASS` or `FAIL: <reason>`. The parent turns a FAIL into a
-  repair instruction, so the model's own distrust becomes a verification gate rather than
-  another chat turn in the same context.
+  The model judges its own work poorly: it stops when visible evidence looks green.
+  Skeptic.review() spawns a read-only subagent with task, proposed answer, journal diff and last
+  check text, and asks one question: name a concrete way this is incomplete. Answer is `PASS` or
+  `FAIL: <reason>`. Parent turns FAIL into a repair instruction: distrust becomes a verification
+  gate, not another chat turn in the same context.
 
 ENTRY POINTS
   Skeptic(client, workspace, *, max_steps=6, max_total_tokens=60_000)
     .review(prompt, final, diff="", check_text="", changed=()) -> Verdict
-  Verdict.ok / .text / .usage   the gate decision and what the parent should say
+  Verdict.ok / .text / .usage   gate decision + what the parent should say
 
 INVARIANTS
-  - Read-only: it uses `Subagent`, so it can inspect files and the diff but cannot edit or
-    run the goal check. The deterministic `Verifier` remains the authority; the skeptic only
-    looks for a reason that authority is insufficient (wrong file, stale test, unhandled
-    case, a claim the diff does not support).
-  - One review per candidate: the loop caches the verdict by a digest of (final, diff,
-    changed), so a rejected finish does not re-bill the same review on the next turn.
-  - A malformed reply is conservative: no `PASS` means FAIL, with the raw text as the reason.
-    A provider failure is not a pass; it returns `ok=False` with a transport reason, and the
-    loop keeps the deterministic verdict.
-  - Usage is returned and added to the parent run, so the cost of distrust is visible.
+  read-only: Subagent can inspect files and the diff, cannot edit or run the goal check. The
+  deterministic Verifier stays the authority; the skeptic only looks for a reason it is
+  insufficient (wrong file, stale test, unhandled case, claim the diff does not support).
+  one review per candidate: loop caches the verdict by digest of (final, diff, changed); a
+  rejected finish does not re-bill the same review next turn.
+  malformed reply = conservative: no PASS -> FAIL, raw text as reason. Provider failure is not a
+  pass: ok=False + transport reason; loop keeps the deterministic verdict.
+  usage is returned and added to the parent run: the cost of distrust is visible.
 
 WHERE TO CHANGE
-  The review question .......... `_PROMPT`
-  The decision grammar ......... `_parse`
-  Child budgets ................ `Skeptic.__init__`
+  review question ..... _PROMPT
+  decision grammar .... _parse
+  child budgets ....... Skeptic.__init__
 """
 from __future__ import annotations
 

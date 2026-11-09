@@ -1,33 +1,29 @@
-"""prelude_setup: the namespace a kernel cell starts in, plus the path-matching helpers.
+"""prelude_setup: the namespace a kernel cell starts in + path-matching helpers.
 
 WHAT IT IS
-  Fragment 1/5 of `PRELUDE` (see prelude.py for how the pieces are joined). It defines what a
-  fresh cell can already see: the exec'd header index (`_HEADERS`, `guide`), `_ROOT`, the
-  per-cell and per-session read ledgers, the mutation flags, `.gitignore`/include matching
-  (`_ignore_patterns`, `_ignored`, `_glob_match`, `_include_match`, `_include_patterns`) and
-  `_coerce_paths`-free basics every later fragment uses.
+  Fragment 1/5 of PRELUDE (join: prelude.py). Defines what a fresh cell already sees: the
+  exec'd header index (_HEADERS, guide), _ROOT, per-cell and per-session read ledgers, mutation
+  flags, .gitignore/include matching (_ignore_patterns, _ignored, _glob_match, _include_match,
+  _include_patterns), and the basics every later fragment uses.
 
 ENTRY POINTS
   guide(query, path, limit, chars, offset, headers)   the one verb the header index adds
   _fail(kind, code, message, use, **extra)    the one error-dict builder every verb uses
-  _partial_failure(results)                   the aggregate error for a batch with bad paths
-  Inside the cell namespace: _ROOT, _READS_CELL, _READS_SESSION, _READ_MAX_CHARS,
-  _READ_MAX_LINES, _MUT, _JOURNAL, _SNAP, _JSEQ, _CELL_CHANGED, _SKIP_DIRS, _IGNORE
+  _partial_failure(results)                   aggregate error for a batch with bad paths
+  cell namespace: _ROOT, _READS_CELL, _READS_SESSION, _READ_MAX_CHARS, _READ_MAX_LINES, _MUT,
+  _JOURNAL, _SNAP, _JSEQ, _CELL_CHANGED, _SKIP_DIRS, _IGNORE
 
 INVARIANTS
-  - This fragment runs first, so it may only use the stdlib modules it imports itself.
-  - `_fail` is the one shape for a refusal: {ok:false, kind, error:{code,message,use}, path?}.
-    Every verb returns that, so the model never parses a second dialect; the driver adds the
-    live signature to it at the typed-call boundary.
-  - `guide()` is a thin wrapper over `_HEADERS["guide"]` and must stay read-only; the rest of
-    the prelude never calls it.
-  - path matching is shared by map/search/read: a change here changes which files those
-    three report, so keep the three consumers in mind.
+  runs first: may use only the stdlib modules it imports itself.
+  _fail = the one refusal shape: {ok:false, kind, error:{code,message,use}, path?}. Every verb
+  returns it; the driver adds the live signature at the typed-call boundary.
+  guide() = thin wrapper over _HEADERS["guide"], read-only; the rest of the prelude never calls it.
+  path matching shared by map/search/read: a change here changes which files those three report.
 
 WHERE TO CHANGE
-  Which files are skipped ................. _SKIP_DIRS, _ignore_patterns, _ignored
-  What `include=` matches ................. _glob_match, _include_match, _include_patterns
-  The read ledger defaults ................ _READ_MAX_CHARS, _READ_MAX_LINES
+  skipped files .......... _SKIP_DIRS, _ignore_patterns, _ignored
+  include= matching ...... _glob_match, _include_match, _include_patterns
+  read ledger defaults ... _READ_MAX_CHARS, _READ_MAX_LINES
 """
 from __future__ import annotations
 

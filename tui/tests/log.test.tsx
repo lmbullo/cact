@@ -20,10 +20,13 @@
  * INVARIANTS
  *  - Event fixtures mirror the `emit({...})` payloads of python/worker.py; a new kind added
  *    there without a case here means the panel can drop it silently.
- *  - Truncation is part of the contract for a row: a cell that prints 200 lines must not push
- *    the board off the frame, so the digest assertions are load-bearing. The two exceptions are
- *    the opening prompt and the final summary, which are wrapped, never clipped, and asserted
- *    whole.
+ *  - A row is machine-first: only `field=value` tokens (kind, tool, args, code, notice, text,
+ *    cells, lines) and one elapsed gutter. No glyphs, no prose, so a row can be grepped; the
+ *    tests read the same fields a reader would.
+ *  - Truncation is per field: a long argument is clipped inside its own value and never pushes
+ *    its key or a later field off the row, so the digest assertions are load-bearing. The two
+ *    exceptions are the opening prompt and the final summary, which are wrapped, never clipped,
+ *    and asserted whole.
  *  - Exactly one status word per log is the invariant: the header's. The same holds for the
  *    counters (steps, tokens in/out, cache rate, context window): the header prints them once
  *    and the closing block repeats none of them. How the run ended — the stop reason, the error
@@ -99,16 +102,18 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(logFrame).toContain("›");
   expect(logFrame).toContain("task for /tmp/ws");
 
-  // The log opens with the task's prompt as a block: `▸ prompt` head, then the prompt in the
-  // indented column (one box pad + four) that the final summary will also use.
-  expect(logFrame).toContain("▸ prompt");
+  // The log opens with the task's prompt as a block: a `kind=prompt chars=N` row, then the prompt
+  // in the indented column (one box pad + four) that the final summary will also use.
+  expect(logFrame).toContain("kind=prompt");
+  expect(logFrame).toContain("chars=8");
   const promptBody = logFrame.split("\n").find((line) => /^ {5}live job/.test(line))!;
   expect(promptBody).toMatch(/^ {5}live job/);
   const promptIndent = promptBody.length - promptBody.trimStart().length;
   // The prompt appears once: the header carries the state, not a clipped copy of the block.
   expect(logFrame.split("\n").filter((line) => line.includes("live job")).length).toBe(1);
   // With the prompt as the only content, the log says it is waiting for the first event.
-  expect(logFrame).toContain("waiting for output…");
+  expect(logFrame).toContain("kind=waiting");
+  expect(logFrame).toContain("status=running");
 
   // The live log keeps the board's prompt box: one hairline above it, the terminal's edge
   // below it, and the prompt anchored at the bottom of the screen.
@@ -130,14 +135,16 @@ test("live log renders one line per event and truncates long payloads", async ()
     await flush();
   };
 
-  // A short tool call reads as just its arguments on one row, with no verb and a quiet bullet.
+  // A short tool call reads as its fields on one row: kind, tool, and the cell's arguments.
   await push(1, { kind: "cell.start", cell: 1, code: "read('a.py')" });
   let frame = captureCharFrame();
   const cellLine = frame.split("\n").find((line) => line.includes("a.py"))!;
-  expect(cellLine).toContain("· 'a.py'");
+  expect(cellLine).toContain("kind=cell");
+  expect(cellLine).toContain("tool=code");
+  expect(cellLine).toContain("code='a.py'");
   expect(cellLine).not.toContain("read");
   // One row only: the next row is not a continuation of the code.
-  expect(cellLine.trimEnd().endsWith("a.py')") || cellLine.includes("'a.py'")).toBe(true);
+  expect(cellLine.trimEnd().endsWith("a.py'") || cellLine.includes("'a.py'")).toBe(true);
 
   // Tool calls are monochrome: the arguments use the dim ink, never a saturated accent.
   const callLine = captureSpans().lines.find((line) =>
@@ -149,11 +156,11 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xd3, 0x86, 0x9b]);
   expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xa9, 0xb6, 0x65]);
 
-  // A long tool call is truncated with an ellipsis instead of wrapping.
+  // A long tool call is truncated with an ellipsis inside its own field instead of wrapping.
   const longCode = `run(${JSON.stringify("x".repeat(400))})`;
   await push(2, { kind: "cell.start", cell: 2, code: longCode });
   frame = captureCharFrame();
-  const longLine = frame.split("\n").find((line) => line.includes("· \""))!;
+  const longLine = frame.split("\n").find((line) => line.includes("code=\""))!;
   expect(longLine).toContain("…");
   expect(longLine.length).toBeLessThanOrEqual(80);
   expect(frame).not.toContain("x".repeat(120));
@@ -161,9 +168,9 @@ test("live log renders one line per event and truncates long payloads", async ()
   // A multi-line cell still renders exactly one row.
   await push(3, { kind: "cell.start", cell: 3, code: "print(1)\nprint(2)\nprint(3)\nprint(4)" });
   frame = captureCharFrame();
-  const multi = frame.split("\n").filter((line) => line.trimStart().startsWith("· 1"));
+  const multi = frame.split("\n").filter((line) => line.includes("kind=cell") && line.includes("code=1"));
   expect(multi.length).toBe(1);
-  expect(multi[0]).toContain("· 1");
+  expect(multi[0]).toContain("code=1");
 
   // A turn is not rendered at all: no output, no line counts.
   const stdout = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
@@ -182,7 +189,8 @@ test("live log renders one line per event and truncates long payloads", async ()
   });
   frame = captureCharFrame();
   const noticeLine = frame.split("\n").find((line) => line.includes("final_answer rejected"))!;
-  expect(noticeLine).toContain("↺");
+  expect(noticeLine).toContain("kind=turn");
+  expect(noticeLine).toContain("notice=");
   expect(noticeLine).toContain("project check still fails");
 
   // The final event closes the log with the summary block. The header above already owns the
@@ -231,8 +239,8 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(header).not.toContain("83% cache");
   // One status word on the whole log: the header's.
   expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
-  const finalLine = finalRows.find((line) => line.includes("▸ summary"))!;
-  expect(finalLine).toContain("3 cells");
+  const finalLine = finalRows.find((line) => line.includes("kind=final"))!;
+  expect(finalLine).toContain("cells=3");
   // The stop reason moved up to the header: the closing block never repeats it.
   expect(finalLine).not.toContain("stop=");
   expect(finalLine).not.toContain("errors");
@@ -250,10 +258,10 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(shown).toBeGreaterThanOrEqual(300);
   expect(finalRows.every((line) => line.length <= 80)).toBe(true);
 
-  // An unknown event kind shows one word only: its payload is never dumped.
+  // An unknown event kind shows its kind field only: its payload is never dumped.
   await push(7, { kind: "observation", text: "z".repeat(300), data: { stdout: "w".repeat(300) } });
   frame = captureCharFrame();
-  expect(frame).toContain("? observation");
+  expect(frame).toContain("kind=observation");
   expect(frame).not.toContain("z".repeat(120));
   expect(frame).not.toContain("w".repeat(120));
 
@@ -286,7 +294,7 @@ test("a long prompt opens the log whole, wrapped instead of clipped", async () =
   await flush();
 
   const frame = captureCharFrame();
-  expect(frame).toContain("▸ prompt");
+  expect(frame).toContain("kind=prompt");
   // Every word of the prompt is on screen: it wraps, it is never ellipsized.
   const flat = frame.replace(/\s+/g, " ");
   for (const word of words) expect(flat).toContain(word);

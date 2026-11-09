@@ -1,36 +1,34 @@
 """subagent: a delegated, read-only agent with its own context and kernel.
 
 WHAT IT IS
-  The `delegate` tool: the parent sends one scoped question, a fresh child loop explores in a
-  separate kernel and returns a short answer plus its own token count. The parent's context
-  never sees the child's reads, which is the point: exploration is the part that makes a long
-  run expensive, and delegation turns it into one observation.
-  `Subagent` builds the child; `DELEGATE_TOOL` is the provider spec; `Skeptic` in skeptic.py
-  is a second use of the same machinery (a reviewer that must falsify a finish).
+  The `delegate` tool: parent sends one scoped question; a fresh child loop explores in a
+  separate kernel and returns a short answer + its own token count. The parent's context never
+  sees the child's reads: exploration is what makes a long run expensive; delegation makes it one
+  observation. Subagent builds the child; DELEGATE_TOOL = provider spec; Skeptic (skeptic.py) is
+  a second use of the same machinery (a reviewer that must falsify a finish).
 
 ENTRY POINTS
-  DELEGATE_TOOL                     the provider tool spec the parent exposes
+  DELEGATE_TOOL                     provider tool spec the parent exposes
   Subagent(client, budget, workspace, *, rules=None, tools=None)
     .run(task, prompt) -> SubagentResult   answer, stop, steps, usage, error
   SubagentResult.as_text()          the observation the parent receives
 
 INVARIANTS
-  - The child is read-only: `Kernel(writable=False)` under bwrap, and the tool list is
-    filtered to python + read/search/map/outline/recall. No mutation, no exec, no nested
-    `delegate`, so delegation cannot recurse or bypass the parent's journal.
-  - The child has its own budget (`max_steps`, `max_total_tokens`, `max_wall_s`) and its own
-    `Tally`. Its usage is returned, never silently dropped: the parent adds it to the run's
-    usage so cost accounting stays honest.
-  - A child failure is a normal observation (`ok: false`), not an exception into the parent;
-    the parent can retry with a narrower prompt.
-  - `stop` is the child's loop stop name. `answer` is the child's final or, when it hit a
-    budget, its last message, so a partial finding is still useful.
+  child read-only: Kernel(writable=False) under bwrap; tool list filtered to python +
+  read/search/map/outline/recall. No mutation, no exec, no nested delegate: no recursion, no
+  bypass of the parent's journal.
+  child own budget (max_steps, max_total_tokens, max_wall_s) + own Tally. Usage returned, never
+  dropped: the parent adds it to the run's usage.
+  child failure = normal observation (ok: false), never an exception into the parent; the parent
+  can retry with a narrower prompt.
+  stop = child's loop stop name. answer = child's final, or its last message when it hit a
+  budget: a partial finding stays useful.
 
 WHERE TO CHANGE
-  What the child may do ............ `_child_tools`, `_RULES`
-  Child budgets .................... `Subagent.__init__` defaults
-  The observation shape ............ SubagentResult.as_text
-  The delegate schema .............. DELEGATE_TOOL
+  child permissions ...... _child_tools, _RULES
+  child budgets .......... Subagent.__init__ defaults
+  observation shape ...... SubagentResult.as_text
+  delegate schema ........ DELEGATE_TOOL
 """
 from __future__ import annotations
 

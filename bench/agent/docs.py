@@ -1,37 +1,33 @@
-"""docs: fetch a documentation page and return clean text the model can actually read.
+"""docs: fetch one documentation page -> clean, bounded text for the model.
 
 WHAT IT IS
-  The `docs` tool. A coding agent that guesses an npm/pip/framework API from memory writes
-  plausible code that fails at the call site; `DocsClient.fetch(url)` fetches one http(s)
-  page, strips scripts/styles/navigation, keeps headings and code blocks, and returns a
-  compact text page with a hard character budget. It is a parent-side tool like `delegate`,
-  so it does not need network access inside the bwrap kernel and does not widen the shell
-  escape hatch.
+  The `docs` tool. A coding agent that guesses an npm/pip/framework API from memory writes code
+  that fails at the call site. DocsClient.fetch(url) fetches one http(s) page, strips
+  scripts/styles/navigation, keeps headings and code blocks, returns compact text under a hard
+  char budget. Parent-side like `delegate`: no network inside the bwrap kernel, no wider shell.
 
 ENTRY POINTS
-  DOCS_TOOL                         the provider tool spec
+  DOCS_TOOL                       provider tool spec
   DocsClient(cache_dir=None, *, timeout=20, max_bytes=2_000_000, cache=True)
-    .fetch(url, max_chars=12_000) -> dict   ok/kind/url/title/headings/text/chars/truncated
-  extract(html, url="") -> dict     the parser, exposed for tests
+    .fetch(url, max_chars=12_000) -> dict  ok/kind/url/title/headings/text/chars/truncated
+  extract(html, url="") -> dict   parser, exposed for tests
 
 INVARIANTS
-  - http(s) only. `file://`, `data:` and every other scheme are refused, so a task cannot use
-    the tool to read outside the workspace or probe a local file.
-  - The size cap is enforced before parsing; a huge page is truncated with `truncated=True`
-    rather than spending the context on an unbounded download.
-  - A failed fetch is a structured dict (`ok: false`, `error.code`), never an exception into
-    the loop; the model gets a reason and can try another URL or fall back to `search`.
-  - The disk cache is keyed by URL under `bench/.cache/docs/`; a cache hit costs no network.
-    `cache=False` is for a live eval that must observe a changing page.
-  - The parser is stdlib-only and tolerant: malformed HTML must not raise, and the result
-    always has a `text` field (possibly empty) so the model can tell "empty page" from
-    "fetch failed".
+  scheme = http(s) only: file://, data: and every other scheme refused; no local file read, no
+  workspace escape.
+  size cap enforced before parsing: huge page -> truncated=True, never an unbounded download.
+  fetch failure = structured dict (ok:false, error.code), never an exception into the loop; model
+  gets a reason and can try another URL or fall back to `search`.
+  cache = disk, keyed by URL under bench/.cache/docs/; hit costs no network. cache=False for a
+  live eval that must observe a changing page.
+  parser = stdlib-only, tolerant: malformed HTML must not raise; result always has `text`
+  (possibly "") so "empty page" != "fetch failed".
 
 WHERE TO CHANGE
-  What is stripped or kept ...... `_Page`, `extract`
-  The network policy ........... `DocsClient.fetch` (scheme, timeout, byte cap)
-  The cache location ........... CACHE_DIR
-  The provider schema .......... DOCS_TOOL
+  stripped/kept content ..... `_Page`, `extract`
+  network policy ............ `DocsClient.fetch` (scheme, timeout, byte cap)
+  cache location ............ CACHE_DIR
+  provider schema ........... DOCS_TOOL
 """
 from __future__ import annotations
 

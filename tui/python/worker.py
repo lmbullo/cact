@@ -1,10 +1,9 @@
-"""One task == one worker process == one agent loop. The seam between the TUI and bench/.
+"""worker: one task = one worker process = one agent loop; the TUI <-> bench/ seam.
 
 WHAT IT IS
-  Spawned by tui/src/server.ts for every task. It builds the loop through
-  `bench.agent.config.build` (mode from CODE_TUI_MODE, default `state`), runs the task
-  unattended, and streams every turn to the server as `@@TUI@@`-prefixed JSON lines on
-  stdout. Its exit code is the task verdict.
+  Spawned by tui/src/server.ts per task. Builds the loop through bench.agent.config.build
+  (mode from CODE_TUI_MODE, default `state`), runs unattended, streams every turn to the server
+  as @@TUI@@-prefixed JSON lines on stdout. Exit code = task verdict.
 
 ENTRY POINTS
   main()                       argv: --workspace, --prompt-file, --model, --effort,
@@ -13,56 +12,54 @@ ENTRY POINTS
   emit(payload)                one `@@TUI@@{json}` line on stdout (the only protocol channel)
   StreamingKernel(kernel)      Kernel that also emits `cell.start` before each cell
   EventTrace                   Trace-shaped adapter: turn records -> `turn` (+ `check`) events
-  state_dir(workspace)         ~/.local/state/code-tui/workspaces/<sha256(cwd)[:16]>
+  state_dir(workspace)         CODE_TUI_STATE, then CODE_TUI_STATE_ROOT, then $XDG_STATE_HOME
   history_brief / record_history   history.jsonl read (prompt prefix) and appended
 
 MESSAGE KINDS (consumed by server.ts::handleWorkerLine)
   cell.start {cell, tool, code|args} | cell.end {cell, tool, ok, verb_kind, code, page,
   chars, duration_ms, notes} | turn {turn, data} | check {ok, name, line} | log {text}
-  | error {text} | final {status, final, stop, steps, calls, llmCalls, errors, usage, economy, wallMs}
-  `check` is emitted right after the turn whose record carried a verdict; it is the one place
-  the failing line lives, so the log header can name a failed check without re-running it.
+  | error {text} | final {status, final, stop, steps, calls, llmCalls, errors, usage, economy,
+  wallMs}
+  check follows the turn whose record carried a verdict: the one place the failing line lives,
+  so the log header names a failed check without re-running it.
 
 INVARIANTS
-  - Rules = STATE_RULES (or TOOL_RULES when MODE != "state") + AUTONOMOUS, plus RUN_NOTE
-    when the process tools (`exec`/`git`/`run()`) are enabled. Production is always
-    unattended: no human answers questions; typed modes build the kernel with
-    `allow_shell=False`, so only repl has `run()`.
-  - `--checks` (JSON plan) wins over `--check` (one command); see bench/agent/check_plan.py.
-    One `check_plan.Verifier` owns the plan, so the goal re-runs it on every finish attempt and
-    `final_answer` is rejected until it passes; `goal_stops=False` means a failing check
-    never ends the run by itself. The same object decides the `cheap` health run (the
-    `[check]` card line): each spec's `scope` keeps it to the paths that changed, the whole
-    plan still runs on a finish, and the cache is injected into the kernel.
-  - A turn whose record carries `check` is followed by one `check` event: the verdict, the
-    plan entry's *name* (not its command line) and the first failing line of its output, read
-    from the Verifier's last `Check`. The journal is the only source; nothing is re-run for it.
-  - CODE_TUI_LEGACY_CHECK=1 makes the goal answer with a bare pass/fail (no Check text);
-    CODE_TUI_LEGACY_TIMEOUT=1 turns off the in-child cell alarm.
-  - Status mapping is fixed: DONE|VERIFIED -> done, STEP_LIMIT|WALL_LIMIT with a non-empty
-    summary -> partial, anything else -> failed. Exit 0 only for done.
-  - A missing DEEPSEEK_API_KEY or an empty prompt fails fast with NO_API_KEY/EMPTY_PROMPT
-    rather than burning a kernel.
-  - Fire-and-forget is the contract: `config.AUTONOMY` rejects a finish that asks a human,
-    `docs(url)` reads a documentation page parent-side (no kernel network), and
-    `CODE_TUI_SUBAGENTS`/`CODE_TUI_SKEPTIC`/`CODE_TUI_TOOLS` are opt-in experiment levers.
-    The check plan now includes the project's lint/format scripts, so a correct but dirty
-    tree is not done.
-  - A fire-and-forget task may be asked to commit. The worker supplies a default git identity
-    through GIT_AUTHOR_*/GIT_COMMITTER_* (CODE_TUI_GIT_NAME / CODE_TUI_GIT_EMAIL override),
-    and Kernel.start forwards those four variables to exec()/run() children. It never writes
-    the user's git config.
-  - history_brief is prepended to the prompt (state mode only) so the next task in the same
-    workspace knows what the previous ones changed and, capped newest-first, which deferred
-    and untested items they left open; record_history persists the structured handoff dict
-    (`summary/changed/gates/deferred/untested`) after a completed run even when the task
-    failed, because a failed attempt still moved files.
+  rules = STATE_RULES (TOOL_RULES when MODE != "state") + AUTONOMOUS + RUN_NOTE when process
+  tools (exec/git/run()) are enabled. Always unattended: no human answers. Typed modes build the
+  kernel with allow_shell=False; only repl has run().
+  --checks (JSON plan) wins over --check (one command); see bench/agent/check_plan.py. One
+  check_plan.Verifier owns the plan: the goal re-runs it on every finish attempt, final_answer
+  is rejected until it passes; goal_stops=False means a failing check never ends the run by
+  itself. Same object decides the `cheap` health run (the [check] card line): each spec's scope
+  keeps it to changed paths; the whole plan still runs on a finish; cache injected into the kernel.
+  a turn whose record carries `check` is followed by one `check` event: verdict, plan entry's
+  name (not its command line), first failing output line, read from the Verifier's last Check.
+  Journal = the only source; nothing re-runs for it.
+  CODE_TUI_LEGACY_CHECK=1 -> goal answers bare pass/fail (no Check text);
+  CODE_TUI_LEGACY_TIMEOUT=1 -> no in-child cell alarm.
+  status mapping fixed: DONE|VERIFIED -> done; STEP_LIMIT|WALL_LIMIT with non-empty summary ->
+  partial; anything else -> failed. Exit 0 only for done.
+  missing DEEPSEEK_API_KEY or empty prompt -> fail fast NO_API_KEY/EMPTY_PROMPT; no kernel spent.
+  fire-and-forget: config.AUTONOMY rejects a finish that asks a human; docs(url) reads a page
+  parent-side (no kernel network); CODE_TUI_SUBAGENTS / CODE_TUI_SKEPTIC / CODE_TUI_TOOLS are
+  opt-in experiment levers. The check plan includes the project's lint/format scripts: a correct
+  but dirty tree is not done.
+  a task may be asked to commit: worker supplies a default git identity via GIT_AUTHOR_* /
+  GIT_COMMITTER_* (CODE_TUI_GIT_NAME / CODE_TUI_GIT_EMAIL override); Kernel.start forwards those
+  four to exec()/run() children. Never writes the user's git config.
+  history_brief prepended to the prompt (state mode only): previous tasks in the workspace and,
+  capped newest-first, their deferred/untested items. record_history persists the structured
+  handoff dict (summary/changed/gates/deferred/untested) after a completed run even when the task
+  failed: a failed attempt still moved files.
+  stdout/stderr are not files here: the server writes <state>/logs/<task-id>.jsonl, one record per
+  raw worker line plus the parsed event, the prompt, the usage and the error; state_dir is where
+  that dir lives, so a task's memory and its log never disagree about the root.
 
 WHERE TO CHANGE
-  What the TUI sends the agent .... AUTONOMOUS, the rules assembly, budgets
-  What the board sees ............. emit payloads + the status mapping at the end of main()
-  Per-task limits ................. argparse defaults (CODE_TUI_MAX_* in server.ts feeds them)
-  Cross-task memory ............... history_brief / record_history
+  TUI -> agent payload ......... AUTONOMOUS, rules assembly, budgets
+  board-visible events ......... emit payloads + status mapping at the end of main()
+  per-task limits .............. argparse defaults (CODE_TUI_MAX_* in server.ts feeds them)
+  cross-task memory ............ history_brief / record_history
 """
 from __future__ import annotations
 
@@ -88,7 +85,6 @@ from bench.agent.llm import Client, LLMError  # noqa: E402
 from bench.agent.repl import REPL_RULES, RUN_NOTE  # noqa: E402
 from bench.agent import custom  # noqa: E402
 from bench.agent.docs import DocsClient  # noqa: E402
-from bench.agent.state_loop import STATE_RULES  # noqa: E402
 from bench.agent.subagent import Subagent  # noqa: E402
 from bench.agent.skeptic import Skeptic  # noqa: E402
 from bench.agent.tool_loop import TOOL_RULES  # noqa: E402
@@ -97,10 +93,15 @@ PREFIX = "@@TUI@@"
 
 
 def state_dir(workspace: Path) -> Path:
-    """The per-workspace state root: $XDG_STATE_HOME/code-tui/workspaces/<sha256(cwd)[:16]>."""
-    root = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
+    """The per-workspace state dir: CODE_TUI_STATE, else CODE_TUI_STATE_ROOT, else XDG."""
+    explicit = os.environ.get("CODE_TUI_STATE", "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    root = os.environ.get("CODE_TUI_STATE_ROOT", "").strip()
+    base = Path(root).expanduser() if root else Path(
+        os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")) / "code-tui"
     digest = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()[:16]
-    return root / "code-tui" / "workspaces" / digest
+    return base.resolve() / "workspaces" / digest
 
 
 def history_brief(workspace: Path, limit: int = 4, issues: int = 6) -> str:
@@ -297,16 +298,16 @@ class EventTrace:
             "reads": record.get("reads") or {},
             "runs": record.get("runs") or [],
             "cache": record.get("cache") or {},
-            # The provider's per-turn usage is what the TUI's live counters are made of:
-            # in/out tokens, the prompt cache split, and the window they have to fit in.
+            # per-turn provider usage -> TUI live counters: in/out tokens, prompt-cache
+            # split, context window.
             "usage": record.get("usage") or {},
             "window": config.CONTEXT_WINDOW,
             "check": record.get("check"),
             "notice": record.get("notice"),
         }
         self._emit_event({"kind": "turn", "turn": int(record.get("turn") or 0), "data": data})
-        # The verdict rides its own event: the header reads the *last* one, so a later pass
-        # clears an earlier failure instead of leaving it on screen.
+        # verdict = its own event; header reads the last one, so a later pass clears an
+        # earlier failure.
         check = record.get("check")
         if isinstance(check, dict):
             self._emit_event(check_payload(check, self._verifier))
@@ -351,8 +352,8 @@ def main() -> int:
         return 2
 
     allow_run = args.allow_run != "0"
-    # Fire-and-forget tasks can be asked to commit; a fresh workspace has no git identity.
-    # Supply one for the kernel's run() children without touching the user's git config.
+    # tasks may commit; a fresh workspace has no git identity. Supply one for the kernel's
+    # run() children; never write the user's git config.
     git_name = os.environ.get("CODE_TUI_GIT_NAME", "code-tui agent")
     git_mail = os.environ.get("CODE_TUI_GIT_EMAIL", "agent@code-tui.local")
     os.environ.setdefault("GIT_AUTHOR_NAME", git_name)
@@ -371,7 +372,7 @@ def main() -> int:
         max(10.0, args.max_wall),
         args.max_output,
     )
-    base_rules = (STATE_RULES if config.MODE == "state"
+    base_rules = (config.RULES if config.MODE == "state"
                   else TOOL_RULES if config.MODE == "tool" else REPL_RULES)
     rules = base_rules + AUTONOMOUS
     if allow_run:

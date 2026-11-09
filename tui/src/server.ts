@@ -7,12 +7,13 @@
  *
  * ENTRY POINTS
  *  Started by launcher.ts, stopped by stop.ts. It picks a free port, writes server.json
- *  (ServerInfo: port, pid, model, check plan, ...) into the state dir, and prints its
- *  listening line.
+ *  (ServerInfo: port, pid, model, check plan, logsDir, ...) into the state dir, and prints one
+ *  JSON launch line: `{event, pid, port, profile, check, log}` — `log` is this process's own
+ *  stdout/stderr file, `logsDir` is where the per-task machine logs live (see INVARIANTS).
  *  HTTP: GET  /                      plain-text banner
- *        GET  /health                ServerInfo + hasKey
+ *        GET  /health                ServerInfo + hasKey (incl. logsDir)
  *        GET  /api/snapshot          {server, tasks}
- *        POST /api/tasks             {prompt} -> 201 {task}
+ *        POST /api/tasks             {prompt} -> 201 {task} (task.log is its machine log)
  *        GET  /api/tasks/:id         {task}
  *        GET  /api/tasks/:id/events  ?limit=N (default 600)
  *        POST /api/tasks/:id/cancel  {task}
@@ -31,6 +32,12 @@
  *    without re-running it.
  *  - Journal format is append-only: tasks/<id>.json is rewritten atomically (tmp + rename),
  *    events/<id>.jsonl is appended. Never rewrite an event file; the client tails it.
+ *  - logs/<id>.jsonl is the machine-readable per-task log and the one file an agent reads: one
+ *    append-only JSONL at a stable path (Task.log, ServerInfo.logsDir), holding the journal
+ *    events (`{kind:"event", event}`), every raw worker stdout line (`{kind:"stdout"}`) and
+ *    stderr line (`{kind:"stderr"}`), the prompt that started the run, and the run's usage and
+ *    error records. Every line carries `ts`; nothing human-formatted is in it. The TUI log view
+ *    is a rendering of this same material, not a second source.
  *  - A `turn` message folds the provider's usage into `Task.progress` (turn number, in/out
  *    tokens, prompt cache split, latest context size, context window) and broadcasts the
  *    task, so the board moves while the task runs. The `final` message clears `progress`,
@@ -61,6 +68,8 @@
  *                                          through worker-events.ts::journalWorkerEvent
  *  HTTP/WebSocket surface ................ the Bun.serve fetch() block
  *  What is persisted and where ........... taskFile / eventFile / promptFile / saveTask
+ *  The machine log ....................... logsDir / logFile / appendLog, and every appendLog
+ *                                          call site (startTask, handleWorkerLine, appendEvent)
  *  Verification plan detection .......... detect-checks.ts, and ServerInfo.checks
  *  The boot fingerprint / staleness ..... source-hash.ts, sourceStatus()
  *  Task shape ............................ tui/src/types.ts
@@ -120,16 +129,18 @@ const stateDir = resolve(arg("--state", join(stateRoot, "workspaces", workspaceH
 const tasksDir = join(stateDir, "tasks");
 const eventsDir = join(stateDir, "events");
 const promptsDir = join(stateDir, "prompts");
+/** Where every task's machine-readable JSONL lives: `logs/<id>.jsonl`, the stable per-task path. */
+const logsDir = join(stateDir, "logs");
 const serverFile = join(stateDir, "server.json");
 
-for (const dir of [stateDir, tasksDir, eventsDir, promptsDir]) mkdirSync(dir, { recursive: true });
+for (const dir of [stateDir, tasksDir, eventsDir, promptsDir, logsDir]) mkdirSync(dir, { recursive: true });
 process.chdir(workspace);
 
 const model = process.env.CODE_TUI_MODEL ?? "deepseek-flash";
 const effort = process.env.CODE_TUI_EFFORT ?? "low";
-// The measured arm. `m3-plan` is python cell + fixed low effort + staged finish; the worker's
-// config.py owns the same default when it is launched directly.
-const profile = process.env.CODE_TUI_PROFILE ?? "m3-plan";
+// The measured arm. `fast-code` is the lean typed set plus the python cell, inline finish and
+// green-plan stop; the worker's config.py owns the same default when it is launched directly.
+const profile = process.env.CODE_TUI_PROFILE ?? "fast-code";
 process.env.CODE_TUI_PROFILE = profile;
 const concurrency = Math.max(1, Math.min(8, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1));
 const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 300) || 300);
@@ -141,6 +152,11 @@ const python = process.env.CODE_TUI_PYTHON ?? "python3";
 
 const initialChecks = detectChecks(workspace);
 const initialKey = Boolean(process.env.DEEPSEEK_API_KEY);
+/**
+ * This process's own stdout/stderr file. launcher.ts redirects there, so the default is the path
+ * it already uses; `--log` exists so a launcher that redirects elsewhere can say so in one place.
+ */
+const serverLog = resolve(arg("--log", join(stateDir, "server.log")));
 /** How often a read may re-hash the server's own source: two small files, but not per keystroke. */
 const SOURCE_RECHECK_MS = 2000;
 
@@ -166,6 +182,7 @@ let info: ServerInfo = {
   python,
   check: initialChecks[0]?.cmd ?? "",
   checks: initialChecks,
+  logsDir,
   source: boot.source,
 };
 
@@ -220,6 +237,20 @@ function promptFile(id: string): string {
   return join(promptsDir, `${id}.txt`);
 }
 
+/** The machine-readable per-task log: one append-only JSONL at a stable path under the state dir. */
+function logFile(id: string): string {
+  return join(logsDir, `${id}.jsonl`);
+}
+
+/** Append one record to the task's machine log; a failed write never breaks the run. */
+function appendLog(task: Task, record: Record<string, unknown>): void {
+  try {
+    appendFileSync(logFile(task.id), `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
+  } catch (error) {
+    console.error("log write failed", error);
+  }
+}
+
 function saveTask(task: Task): void {
   const file = taskFile(task.id);
   const tmp = `${file}.tmp`;
@@ -234,6 +265,8 @@ function appendEvent(task: Task, partial: Omit<TaskEvent, "seq" | "ts">): TaskEv
   } catch (error) {
     console.error("event write failed", error);
   }
+  // The machine log carries the event too, so one file answers "what happened" without a join.
+  appendLog(task, { kind: "event", event });
   broadcast({ type: "event", taskId: task.id, event });
   return event;
 }
@@ -303,6 +336,9 @@ async function readWorkerStream(stream: ReadableStream<Uint8Array>, onLine: (lin
 
 function handleWorkerLine(task: Task, raw: string): void {
   const line = raw.trimEnd();
+  // The raw stdout line first, with no interpretation: the machine log must hold the wire, not
+  // only what this server managed to parse out of it.
+  appendLog(task, { kind: "stdout", text: capString(line, 12000) as string });
   const message = parseWorkerLine(line);
   if (!message) {
     appendEvent(task, { kind: "log", text: capString(line, 3000) as string });
@@ -328,6 +364,7 @@ function handleWorkerLine(task: Task, raw: string): void {
     }
     case "error":
       task.error = String(capString(message.text, 8000));
+      appendLog(task, { kind: "error", text: task.error });
       appendEvent(task, { kind: "error", text: task.error });
       break;
     case "final":
@@ -345,6 +382,18 @@ function handleWorkerLine(task: Task, raw: string): void {
       task.window = task.progress?.window;
       task.progress = undefined;
       task.final = capString(message.final ?? "", 64000) as string;
+      // The run's numbers in one record, so an agent gets usage/errors without folding the turns.
+      appendLog(task, {
+        kind: "usage",
+        status: message.status,
+        stop: message.stop,
+        steps: message.steps,
+        calls: message.calls,
+        llmCalls: message.llmCalls,
+        errors: message.errors,
+        usage: message.usage,
+        wallMs: message.wallMs,
+      });
       appendEvent(task, {
         kind: "final",
         text: task.final,
@@ -447,6 +496,7 @@ function startTask(task: Task): void {
     const text = line.trim();
     if (!text) return;
     runtime.lastStderr = text.slice(-2000);
+    appendLog(task, { kind: "stderr", text: capString(text, 4000) as string });
     appendEvent(task, { kind: "stderr", text: capString(text, 4000) as string });
   };
 
@@ -515,11 +565,13 @@ function createTask(prompt: string): Task {
     createdAt: Date.now(),
     model,
     effort,
+    log: logFile(id),
   };
   writeFileSync(promptFile(id), prompt);
   tasks.push(task);
   taskById.set(id, task);
   saveTask(task);
+  appendLog(task, { kind: "prompt", text: capString(prompt, 4000) as string });
   appendEvent(task, { kind: "queued", text: "queued" });
   broadcast({ type: "task", task });
   pump();
@@ -565,6 +617,9 @@ function loadTasks(): void {
     try {
       const task = JSON.parse(readFileSync(join(tasksDir, file), "utf8")) as Task;
       if (!task.id || !task.prompt) continue;
+      // The path is derived, not stored history: a task file written by an older server still gets
+      // its machine log location, because the formula is the state dir's.
+      task.log = logFile(task.id);
       tasks.push(task);
       taskById.set(task.id, task);
     } catch (error) {
@@ -666,10 +721,18 @@ server = Bun.serve({
 
 info = { ...info, port: server.port };
 writeFileSync(serverFile, JSON.stringify(info, null, 2));
-console.log(`code-tui server ${VERSION} listening on 127.0.0.1:${server.port}`);
-console.log(`workspace ${workspace}`);
-console.log(`state     ${stateDir}`);
-console.log(`source    ${boot.source.hash} (${boot.source.files.join(", ")})`);
+// One machine-readable launch line: an agent reads pid/port/profile/check paths without parsing
+// prose, and `server.log` (this process's own output) is named so it never has to be guessed.
+console.log(
+  JSON.stringify({
+    event: "listening",
+    pid: info.pid,
+    port: info.port,
+    profile: info.profile,
+    check: info.check,
+    log: serverLog,
+  }),
+);
 
 const heartbeat = setInterval(() => broadcast({ type: "ping", ts: Date.now() }), 15000);
 

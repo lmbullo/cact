@@ -1,43 +1,40 @@
 """prelude_verbs: the remaining typed verbs and the start-up snapshot.
 
 WHAT IT IS
-  Fragment 5/5 of `PRELUDE` (see prelude.py): `verbs()` (the help catalog), the mutation verbs
-  `write`, `delete`, `mkdir`, `edit`, `edit_many`, `splice`, `apply` (unified diff parsing:
-  `_parse_patch`, `_patch_path`, `_hunk_old`, `_hunk_new`) and `commit({path: text})`. It ends
-  with the `_snapshot()` call that records the session-start tree.
+  Fragment 5/5 of PRELUDE (see prelude.py): verbs() (the help catalog), the mutation verbs
+  write, delete, mkdir, edit, edit_many, splice, apply (unified diff parsing: _parse_patch,
+  _patch_path, _hunk_old, _hunk_new) and commit({path: text}). Ends with the _snapshot() call
+  that records the session-start tree.
 
 ENTRY POINTS
   write(path, content, force=False)      replace a file (refuses any shorter body without force)
-  delete(path), mkdir(path)              the journalled removals/creations
-  edit(path, old, new, all=False)        one replacement; edit_many(edits=[...]) the atomic batch
-  splice(path, start, end, text)         1-based inclusive line replacement (end is required)
-  apply(patch)                           a unified diff, several files, one cell
+  delete(path), mkdir(path)              journalled removals/creations
+  edit(path, old, new, all=False)        one replacement; edit_many(edits=[...]) atomic batch
+  splice(path, start, end, text)         1-based inclusive line replacement (end required)
+  apply(patch)                           unified diff, several files, one cell
   commit({path: text}, force=False)      several writes in one cell
-  revert_check(paths, cmd, timeout=120)  does this test fail without the fix? (HEAD swap, then restore)
+  revert_check(paths, cmd, timeout=120)  does this test fail without the fix? (HEAD swap, restore)
 
 INVARIANTS
-  - Every one of them commits through `_commit`; `edit` reports ambiguity instead of guessing
-    and validates the whole batch before writing; `apply` fails on a context mismatch rather
-    than fuzzy-matching.
-  - `write()` refuses ANY shorter body without `force=True` (a prefix of the old file is just
-    the clearest case), and notes a body whose only line breaks are a literal backslash-n.
-  - `splice()` requires `end`: the old default (end=start) silently replaced a line for a
-    caller who meant to insert. Insertion is `end=start-1`.
-  - A failed `edit` carries the enclosing definition's lines from `outline()`, so `closest:`
-    is never the only answer.
-  - `_snapshot()` must stay the LAST statement of the assembled PRELUDE: it records `_BASE`,
-    which is what changes()/diff()/undo() compare against.
-  - `revert_check()` is the ONE verb whose writes bypass `_commit`: it puts HEAD content in
-    place, runs a command, and puts the working copy back in a `finally`, so the net effect is
-    zero and a journal row would make changes()/diff() report a change that is not there. It
-    refuses a dirty tree outside its own paths, never stashes and never checks out, and reports
-    `restored: false` with a loud message naming the path when the restore fails.
+  every verb commits through _commit. edit reports ambiguity instead of guessing and validates
+  the whole batch before writing. apply fails on a context mismatch, never fuzzy-matches.
+  write() refuses ANY shorter body without force=True (a prefix of the old file is the clearest
+  case) and notes a body whose only line breaks are a literal backslash-n.
+  splice() requires end: insertion is end=start-1; a missing end must not silently replace a line.
+  a failed edit carries the enclosing definition's lines from outline(); `closest:` is never the
+  only answer.
+  _snapshot() stays the LAST statement of the assembled PRELUDE: it records _BASE, what
+  changes()/diff()/undo() compare against.
+  revert_check() = the ONE verb whose writes bypass _commit: puts HEAD content in place, runs a
+  command, restores the working copy in a finally (net effect zero; a journal row would report a
+  change that is not there). Refuses a dirty tree outside its own paths; never stashes, never
+  checks out. On a failed restore: restored:false + loud message naming the path.
 
 WHERE TO CHANGE
-  A mutation verb's semantics .......... the verb itself here
-  The revert-check swap/restore ........ revert_check, _revert_run, _revert_git, _revert_dirty
-  The unified-diff parser .............. _parse_patch, _hunk_old, _hunk_new
-  The verb catalog `verbs()` ........... verbs.VERBS (the registry) — this only renders it
+  mutation verb semantics ....... the verb itself here
+  revert-check swap/restore ..... revert_check, _revert_run, _revert_git, _revert_dirty
+  unified-diff parser ........... _parse_patch, _hunk_old, _hunk_new
+  verb catalog verbs() .......... verbs.VERBS (the registry); this only renders it
 """
 from __future__ import annotations
 

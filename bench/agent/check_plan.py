@@ -1,66 +1,59 @@
-"""check_plan: an ordered plan of project commands and the one `Verifier` that owns it.
+"""check_plan: an ordered plan of project commands + the one Verifier that owns it.
 
 WHAT IT IS
-  `CheckSpec.parse(raw)` reads the plan from a command string or a JSON list of
-  `{name, cmd, cheap, scope}`; `run_plan(specs, cwd, paths)` runs it and returns the first
-  failure as a `Check` plus the per-command results (or `None` when no spec applied),
-  `run_specs` returns just the combined verdict, and a synthetic `passed` means every
-  command that ran passed. One command is check_run.run_check.
-
-  `Verifier` is the single owner of a verification plan: the specs, the cheap subset, the
-  `scope` filter, the 20s throttle window, the check cache handed to the kernel, and the
-  `Check` rendering. One object, two roles:
-    goal    `authoritative()` runs the whole plan on every finish attempt (tool_loop:
-            GOAL_UNMET); production keeps `goal_stops=False`.
-    health  `should_run(paths, now)` decides whether the cheap subset may run after a
-            mutating cell; `run(paths)` runs it and fills `last` + the cache, which is what
-            the `[check]` line of the state card renders.
+  CheckSpec.parse(raw) reads the plan from a command string or a JSON list of
+  {name, cmd, cheap, scope}. run_plan(specs, cwd, paths) -> (Check | None, {cmd: Check}): first
+  failure + per-command results (None when no spec applied). run_specs -> the combined verdict;
+  synthetic `passed` = every command that ran passed. One command = check_run.run_check.
+  Verifier = single owner of a verification plan: specs, cheap subset, scope filter, 20s
+  throttle window, kernel check cache, Check rendering. One object, two roles:
+    goal    authoritative() runs the whole plan on every finish attempt (tool_loop:
+            GOAL_UNMET); production keeps goal_stops=False.
+    health  should_run(paths, now) decides whether the cheap subset may run after a mutating
+            cell; run(paths) runs it, fills `last` + the cache: the `[check]` line of the
+            state card.
 
 ENTRY POINTS
   CheckSpec(name, cmd, cheap=False, scope=())  .parse(raw) -> list[CheckSpec]
                                                .applies(paths) filters by changed paths
   run_plan(specs, cwd, paths=None) -> (Check | None, {cmd: Check})
-  run_specs(specs, cwd, paths=None) -> Check | None   the combined verdict
+  run_specs(specs, cwd, paths=None) -> Check | None   combined verdict
   run_each(specs, cwd, paths=None, name=None, cache=None) -> list[dict]
-                                                   one {name, ok, exit, first_line} row per spec,
-                                                   reusing a cached green command
+                                                   one {name, ok, exit, first_line} row per
+                                                   spec, reusing a cached green command
   Verifier(specs=(), cwd="", *, check=None, window=HEALTH_WINDOW, legacy=False,
            cheap_enabled=True)
     .should_run(paths, now) -> bool   throttle + scope decision (reserves the window)
-    .run(paths) -> {cmd: Check}        cheap subset; sets `.last`, fills `.cache()`
+    .run(paths) -> {cmd: Check}        cheap subset; sets .last, fills .cache()
     .authoritative() -> (ok, Check | None)   whole plan, every finish attempt
     .cache() / .invalidate()           kernel injection / drop cache + last on mutation
-    .goal_value()                      Check | bool for ReplLoop's `evaluate`
+    .goal_value()                      Check | bool for ReplLoop's evaluate
 
 INVARIANTS
-  - Order is the contract: put the cheap, fast checks (smoke, typecheck) first so a broken
-    tree is reported before the slow suite runs. The first failure is returned and the rest
-    are skipped.
-  - `unrunnable` from check_run.py survives the plan: a command that cannot run is a broken
-    check, never a broken project.
-  - `scope` is a list of path prefixes; when a caller passes `paths` (the cheap run), a
-    spec runs only if one changed path is under its scope, so a docs-only edit does not
-    typecheck the TUI. `authoritative()` passes no paths, so the goal runs every spec.
-  - The cheap subset runs at most every `HEALTH_WINDOW` (20s); `should_run` both decides and
-    reserves the window, matching the old inline throttle.
-  - `invalidate()` drops the cache and `last` on a mutating cell; the throttle timestamp is
-    not reset, so a mutation inside the window clears the card without re-running.
-  - `check=` is the benchmark mode: a single callable that returns a `Check` (or a bool)
-    stands in for the plan, and its results are never injected as `check_cache` entries
-    (there is no command to key them by).
-  - `legacy=True` makes `authoritative()` answer `(ok, None)`, so the loop's rejection has a
-    bare pass/fail and no failure lines. Production keeps it off (CODE_TUI_LEGACY_CHECK).
-  - A plan is data, never a shell string. detect-checks.ts detects the default plan
-    (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts);
-    server.ts passes it to worker.py as `--checks <json>`, and bench/live.py forwards
-    `--checks` the same way.
+  order = contract: cheap, fast checks first (smoke, typecheck), so a broken tree is reported
+  before the slow suite. First failure returned; the rest skipped.
+  unrunnable (check_run.py) survives the plan: a command that cannot run is a broken check, never
+  a broken project.
+  scope = path prefixes. With `paths` (cheap run) a spec runs only if one changed path is under
+  its scope: a docs-only edit does not typecheck the TUI. authoritative() passes no paths: the
+  goal runs every spec.
+  cheap subset <= once per HEALTH_WINDOW (20s); should_run decides and reserves the window.
+  invalidate() drops the cache and `last` on a mutating cell; the throttle timestamp is not
+  reset: a mutation inside the window clears the card without re-running.
+  check= = benchmark mode: one callable returning a Check (or bool) stands in for the plan; its
+  results are never injected as check_cache entries (no command to key them by).
+  legacy=True -> authoritative() answers (ok, None): loop rejection has bare pass/fail, no
+  failure lines. Production keeps it off (CODE_TUI_LEGACY_CHECK).
+  plan = data, never a shell string. detect-checks.ts detects the default plan
+  (CODE_TUI_CHECKS, else CODE_TUI_CHECK, else bench/smoke.py + package.json scripts); server.ts
+  passes it to worker.py as `--checks <json>`; bench/live.py forwards `--checks` the same way.
 
 WHERE TO CHANGE
-  Plan parsing .................... CheckSpec.parse
-  Scope matching .................. CheckSpec.applies
-  How a plan runs and what it returns ... run_plan / run_specs / run_each
-  Throttle / cache / goal policy ... Verifier
-  The default plan for a workspace ...... tui/src/detect-checks.ts::detectChecks
+  plan parsing ........................ CheckSpec.parse
+  scope matching ...................... CheckSpec.applies
+  how a plan runs / returns ........... run_plan / run_specs / run_each
+  throttle / cache / goal policy ...... Verifier
+  default workspace plan .............. tui/src/detect-checks.ts::detectChecks
 """
 from __future__ import annotations
 

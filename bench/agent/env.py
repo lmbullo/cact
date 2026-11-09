@@ -1,35 +1,33 @@
-"""env: the deterministic environment card prepended to the first task message.
+"""env: deterministic environment card prepended to the first task message.
 
 WHAT IT IS
-  One cheap probe of the workspace the model is standing in: the resolved root, the git root
-  (or none), a capped top-level listing, and the task-mentioned paths that do not exist here
-  with the closest path that does. `render_environment` turns it into the compact
-  `[environment]` block `ToolLoop.run` puts before the task. It is deliberately not a tool:
-  the model should not spend a turn asking where it is.
+  One cheap workspace probe: resolved root, git root (or none), capped top-level listing, and
+  task-mentioned paths that do not exist here plus the closest path that does.
+  render_environment -> compact `[env]` block; ToolLoop.run puts it before the task. Not a tool:
+  the model must not spend a turn asking where it is.
 
 ENTRY POINTS
-  environment(root, task="") -> dict   root, git_root, top, task_paths
-  render_environment(env) -> str        the `[environment]` card, or "" when root is missing
+  environment(root, task="", checks=None) -> dict   root, git_root, top, files, checks, task_paths
+  render_environment(env) -> str        the `[env]` card, or "" when root is missing
   resolve_path(root, given) -> dict|None  None when the path exists; else {given, use|missing}
 
 INVARIANTS
-  - No mutation, no network, no model. The git probe is a short local `git rev-parse`; a
-    missing git, a timeout or a non-repository is `None`, not an error.
-  - `top` is capped and skips generated trees, so a workspace with `node_modules` does not
-    bury the real entries in the card.
-  - A task path is reported only when it is missing. For `tui/src/x.ts` in a workspace whose
-    root is the `tui` package, `use` is `src/x.ts`; that is the sentence that prevents the
-    symlink repair the environment mismatch used to provoke.
-  - A path that is not found by stripping leading components is `missing: true`; the card
-    does not invent a closest file it did not verify.
+  no mutation, no network, no model. git probe = short local `git rev-parse`; missing git,
+  timeout or non-repository -> None, never an error.
+  top/files/checks capped and skip generated trees, so node_modules does not bury real entries
+  or the gate plan.
+  a task path is reported only when missing: `tui/src/x.ts` under a workspace rooted at `tui`
+  -> use=`src/x.ts`; prevents the symlink repair the old mismatch provoked.
+  no unverified closest file: not found after stripping leading components -> missing=true.
 
 WHERE TO CHANGE
-  What the card says ...................... environment, render_environment
-  Which task paths are resolved ........... _PATH, resolve_path
-  The generated-tree skip list ............ _SKIP
+  card content ................ environment, render_environment
+  resolved task paths ......... _PATH, resolve_path
+  generated-tree skip list .... _SKIP
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -38,35 +36,44 @@ _SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"
          "target", ".cache", ".tmp", ".next", "coverage"}
 _PATH = re.compile(r"(?<![\w./-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+/?)")
 _TOP = 24
+_FILES = 32
 
 
-def environment(root: str | Path, task: str = "") -> dict:
-    """The root/git/top card plus the task paths that do not exist at this root."""
+def environment(root: str | Path, task: str = "", checks=None) -> dict:
+    """The root/git/top/files/checks card plus task paths that do not exist at this root."""
     base = Path(root).expanduser().resolve()
     return {
         "root": str(base),
         "git_root": _git_root(base),
         "top": _top(base),
+        "files": _files(base),
+        "checks": _checks(checks),
         "task_paths": _task_paths(base, task),
     }
 
 
 def render_environment(env: dict) -> str:
-    """The compact `[environment]` block; empty when the probe had no root."""
+    """The compact `[env]` block; empty when the probe had no root."""
     root = str(env.get("root") or "")
     if not root:
         return ""
-    lines = ["[environment]", "root: " + root]
+    lines = ["[env]", "root=" + root]
     git_root = env.get("git_root")
-    lines.append("git: " + (str(git_root) if git_root else "none"))
+    lines.append("git=" + (str(git_root) if git_root else "none"))
     top = env.get("top") or []
     if top:
-        lines.append("top: " + " ".join(top))
+        lines.append("top=" + " ".join(top))
+    files = env.get("files") or []
+    if files:
+        lines.append("files=" + " ".join(files))
+    checks = env.get("checks") or []
+    if checks:
+        lines.append("checks=" + "; ".join(f"{row['name']}={row['cmd']}" for row in checks))
     for row in env.get("task_paths") or []:
         if row.get("use"):
-            lines.append("task path %s -> not here; use %s" % (row["given"], row["use"]))
+            lines.append("path %s: use %s" % (row["given"], row["use"]))
         else:
-            lines.append("task path %s -> not found" % row["given"])
+            lines.append("path %s: missing" % row["given"])
     return "\n".join(lines)
 
 
@@ -109,6 +116,39 @@ def _git_root(root: Path) -> str | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def _files(root: Path) -> list[str]:
+    """A capped, sorted path list at depth <= 2, skipping generated and hidden trees."""
+    out: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        rel = here.relative_to(root)
+        dirnames[:] = sorted(name for name in dirnames
+                             if name not in _SKIP and not name.startswith("."))
+        if len(rel.parts) >= 2:
+            dirnames[:] = []
+        for name in sorted(filenames):
+            if name.startswith("."):
+                continue
+            path = (rel / name).as_posix() if rel.parts else name
+            out.append(path)
+            if len(out) >= _FILES:
+                return out
+    return out
+
+
+def _checks(checks) -> list[dict]:
+    """Normalize `[{name, cmd}]` or CheckSpec objects to at most eight plan rows."""
+    rows: list[dict] = []
+    for item in checks or ():
+        name = str(getattr(item, "name", "") or (item.get("name") if isinstance(item, dict) else "") or "")
+        cmd = str(getattr(item, "cmd", "") or (item.get("cmd") if isinstance(item, dict) else "") or "")
+        if name and cmd:
+            rows.append({"name": name, "cmd": cmd})
+        if len(rows) >= 8:
+            break
+    return rows
 
 
 def _top(root: Path) -> list[str]:

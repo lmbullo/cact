@@ -1,48 +1,43 @@
-"""Production defaults and the loop factory used by the TUI (tui/python/worker.py).
+"""config: production defaults and the loop factory used by the TUI (tui/python/worker.py).
 
 WHAT IT IS
-  The one place that decides which loop production runs and with which budgets.
-  `MODE` is read from `CODE_TUI_MODE` at import (`state` by default; also `tool`, `repl`).
+  Sole production construction site: which loop runs and with which budgets.
+  MODE = CODE_TUI_MODE read at import; default `state`; also `tool`, `repl`.
 
 ENTRY POINTS
   CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY / AUTONOMY ... constants
-  PROFILE / PROFILES / CODE_MODE / EFFORT / EFFORT_POLICY / INLINE_FINISH ... the chosen arm
-  budget(steps, wall_s, output=MAX_OUTPUT) -> Budget         clamped to MAX_OUTPUT
-  production_scope() -> Scope     the production capability set and output ceiling
+  PROFILE / PROFILES / CODE_MODE / EFFORT / EFFORT_POLICY / INLINE_FINISH / RULES ... the arm
+  budget(steps, wall_s, output=MAX_OUTPUT) -> Budget   clamped to MAX_OUTPUT
+  production_scope() -> Scope    production capability set + output ceiling
   build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
         goal_stops, mode=MODE, health=None, verifier=None, scope=None)
     -> StateLoop | ToolLoop | ReplLoop
 
 INVARIANTS
-  - `build` is the only construction site in production; the evals construct loops through
-    `bench/evals/loops.py::run_loop` because a case wires its own levers (skeptic, subagent,
-    docs, autonomy, budgets).
-  - Unknown `mode` falls through to ReplLoop, so a typo degrades to the simplest loop instead
-    of crashing a worker.
-  - Constants are TUI-facing. Eval and test defaults live in `loop.Budget` and each case.
-  - `PROFILE` selects a measured arm. `m3-plan` is the default (python cell, fixed low
-    effort, staged finish); `current` is the same with the inline finish. The individual
-    CODE_TUI_* flags override the profile, so a run is reproducible without a new build.
-  - `scope()` is the harness's capability limit, not a prompt: the loop filters the provider
-    tools from it and refuses a call outside it. `CODE_TUI_ALLOWED_TOOLS` narrows the set;
-    `CODE_TUI_ALLOW_EXEC=0` removes exec; `CODE_TUI_MAX_CALLS_PER_TURN` and
-    `CODE_TUI_MAX_TURN_TOKENS` cap one turn; `CODE_TUI_EFFORT_POLICY=adaptive` spends low
-    reasoning only after a surprise. ReplLoop has no scope slot.
-  - COMPACT_AT_TOKENS (85% of the 1M window) is what StateLoop compares the provider's real
-    prompt token count against; OBS_CHARS=0 means the state card decides, not a char cap.
-  - `verifier` (check_plan.Verifier) is the production wiring: it owns the goal, the cheap
-    subset, the throttle and the cache. `goal`/`health` stay accepted for callers that have
-    a bare callable. ReplLoop has no verifier slot, so `build` hands it `goal_value`.
+  build = only construction site in production; evals construct via
+  bench/evals/loops.py::run_loop (each case wires its own levers).
+  unknown mode -> ReplLoop: a typo degrades to the simplest loop, never crashes a worker.
+  constants = TUI-facing; eval/test defaults live in loop.Budget and each case.
+  PROFILE selects a measured arm: `fast-code` (default) = lean typed set + one code/python cell,
+  inline finish, green-plan stop; `m3-plan` = historical python-cell arm; `current` = m3-plan +
+  inline finish; `code-act` = code-only. CODE_TUI_* flags override the profile.
+  scope() = harness capability limit, not a prompt: loop filters provider tools from it and
+  refuses a call outside it. CODE_TUI_ALLOWED_TOOLS narrows; CODE_TUI_ALLOW_EXEC=0 drops exec;
+  CODE_TUI_MAX_CALLS_PER_TURN / CODE_TUI_MAX_TURN_TOKENS cap one turn;
+  CODE_TUI_EFFORT_POLICY=adaptive spends low reasoning only after a surprise.
+  COMPACT_AT_TOKENS (85% of 1M window) compared against the provider's real prompt token count;
+  OBS_CHARS=0 means the state card decides, not a char cap.
+  verifier (check_plan.Verifier) = production wiring: owns goal, cheap subset, throttle, cache;
+  goal/health remain for bare callables. ReplLoop has no verifier slot (build hands goal_value);
+  ReplLoop has no scope slot.
 
 WHERE TO CHANGE
-  Production loop selection ....... build + MODE
-  Production budgets ............... budget, MAX_OUTPUT
-  Production capabilities .......... production_scope() and its constants; agent/limits.py owns Scope
-  The measured arm ................ PROFILE / PROFILES; per-knob CODE_TUI_* flags override it
-  The orchestration cell .............. CODE_MODE (profile m3-plan keeps the python cell)
-  Compaction threshold ............. CONTEXT_WINDOW, COMPACT_AT, COMPACT_AT_TOKENS
-  The unattended gate .............. AUTONOMY (CODE_TUI_AUTONOMY=0 turns it off)
-  TUI observation/history policy ... OBS_CHARS, HISTORY (passed straight through to the loop)
+  production loop selection ...... build + MODE
+  production budgets ............ budget, MAX_OUTPUT
+  production capabilities ....... production_scope() + constants; agent/limits.py owns Scope
+  measured arm .................. PROFILE / PROFILES; per-knob CODE_TUI_* flags override
+  orchestration cell ............ CODE_MODE (fast-code keeps the python cell)
+  compaction threshold .......... CONTEXT_WINDOW, COMPACT_AT
 """
 from __future__ import annotations
 
@@ -54,7 +49,7 @@ from .limits import DEFAULT_TOOLS, Scope
 from .llm import Client
 from .loop import Budget
 from .repl import ReplLoop
-from .state_loop import StateLoop
+from .state_loop import STATE_RULES, StateLoop
 from .tool_loop import ToolLoop
 
 CONTEXT_WINDOW = 1_048_576
@@ -62,30 +57,38 @@ MAX_OUTPUT = 393_216
 COMPACT_AT = 0.85
 COMPACT_AT_TOKENS = int(CONTEXT_WINDOW * COMPACT_AT)
 OBS_CHARS = 0
-CARD_BUDGET = 6_000
+CARD_BUDGET = 5_000
 HISTORY = "action"
 
 MODE = os.environ.get("CODE_TUI_MODE", "state")
-# The measured best arm: python cell (not code mode), fixed low effort, the environment card
-# and durable plan, and the staged finish. `current` opts into the later inline finish; the
-# individual env flags override either profile.
-PROFILE = os.environ.get("CODE_TUI_PROFILE", "m3-plan")
+# Measured arm: python cell (not code mode), fixed low effort, env card + durable plan, staged
+# finish. `current` = inline finish. Individual env flags override either profile.
+PROFILE = os.environ.get("CODE_TUI_PROFILE", "fast-code")
+_FAST_TOOLS = ("read,edit,write,search,checks,exec,status,outline,page,apply,delete,mkdir,"
+               "splice,git,guide,skill,map")
 PROFILES = {
     "m3-plan": {"code_mode": False, "effort": "low", "effort_policy": "fixed",
                 "inline_finish": False, "task_tool": False},
     "current": {"code_mode": False, "effort": "low", "effort_policy": "fixed",
                 "inline_finish": True, "task_tool": True},
+    "code-act": {"code_mode": True, "effort": "low", "effort_policy": "fixed",
+                 "inline_finish": True, "task_tool": False,
+                 "allowed_tools": "code,read,edit,write,search,checks,exec,status,outline"},
+    "fast": {"code_mode": False, "effort": "low", "effort_policy": "fixed",
+             "inline_finish": True, "task_tool": False, "allowed_tools": _FAST_TOOLS},
+    "fast-code": {"code_mode": False, "effort": "low", "effort_policy": "fixed",
+                  "inline_finish": True, "task_tool": False,
+                  "allowed_tools": "code," + _FAST_TOOLS},
 }
-_ACTIVE = PROFILES.get(PROFILE, PROFILES["m3-plan"])
+_ACTIVE = PROFILES.get(PROFILE, PROFILES["fast-code"])
 CODE_MODE = os.environ.get("CODE_TUI_CODE_MODE",
                            "1" if _ACTIVE["code_mode"] else "0") == "1"
-# Fire-and-forget is the production contract: unattended, no human answer, no same-session
-# repair. The gate is on by default; a flag can turn it off for an interactive experiment.
+# Production contract = fire-and-forget: unattended, no human answer, no same-session repair.
+# Gate on by default; CODE_TUI_AUTONOMY=0 disables it for an interactive experiment.
 AUTONOMY = os.environ.get("CODE_TUI_AUTONOMY", "1") != "0"
 
-# The production capability set. These are ceilings, not targets: a turn may use less. The
-# adaptive effort policy is opt-in until a live run proves the provider's omitted-effort
-# default is not more expensive than `low`.
+# Production capability ceilings, not targets: a turn may use less. Adaptive effort policy is
+# opt-in until a live run shows the omitted-effort default is not more expensive than `low`.
 MAX_CALLS_PER_TURN = int(os.environ.get("CODE_TUI_MAX_CALLS_PER_TURN", "8"))
 MAX_TURN_TOKENS = int(os.environ.get("CODE_TUI_MAX_TURN_TOKENS", "8192"))
 MAX_REPORT_CHARS = int(os.environ.get("CODE_TUI_MAX_REPORT_CHARS", "4000"))
@@ -95,6 +98,7 @@ ALLOW_EXEC = os.environ.get("CODE_TUI_ALLOW_EXEC", "1") != "0"
 ALLOWED_TOOLS = os.environ.get("CODE_TUI_ALLOWED_TOOLS", "").strip()
 INLINE_FINISH = os.environ.get("CODE_TUI_INLINE_FINISH",
                                "1" if _ACTIVE["inline_finish"] else "0") != "0"
+RULES = STATE_RULES
 
 
 def budget(steps: int, wall_s: float, output: int = MAX_OUTPUT) -> Budget:
@@ -104,7 +108,8 @@ def budget(steps: int, wall_s: float, output: int = MAX_OUTPUT) -> Budget:
 
 def production_scope() -> Scope:
     """The production capability limit: allowed verbs, calls/turn, output/turn, effort policy."""
-    allowed = frozenset(part.strip() for part in ALLOWED_TOOLS.split(",") if part.strip())
+    raw = ALLOWED_TOOLS or str(_ACTIVE.get("allowed_tools") or "")
+    allowed = frozenset(part.strip() for part in raw.split(",") if part.strip())
     tools = frozenset(allowed or DEFAULT_TOOLS)
     if not _ACTIVE.get("task_tool", True):
         tools = tools - {"task"}

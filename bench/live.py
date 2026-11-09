@@ -32,7 +32,9 @@ INVARIANTS
     `VERBS` list), so this file doubles as the contract test for worker.py: if the worker
     changes its messages, this breaks first.
   - `--legacy` toggles the worker's legacy env flags (`CODE_TUI_LEGACY_TIMEOUT`,
-    `CODE_TUI_LEGACY_CHECK`) so old behaviour stays reproducible.
+    `CODE_TUI_LEGACY_CHECK`) so old behaviour stays reproducible. On Daytona, every
+    `CODE_TUI_*` override except host-path settings is forwarded to the worker, so a profile
+    or scope experiment is the same command locally and in the sandbox.
   - `--check` is a single command; `--checks` is a JSON plan (see bench/agent/check_plan.py)
     and wins when set. The worker treats the plan as its goal and runs the `cheap` subset
     after mutating cells.
@@ -77,7 +79,8 @@ DEFAULT_SNAPSHOT = "code-tui-py-bun"
 SANDBOXES = ("local", "daytona")
 # The harness is this repo minus the evidence archive and generated trees; the harness needs
 # its own source, `tui/python/worker.py`, and the gates, nothing else.
-HARNESS_EXCLUDE = ("bench/archive", "bench/.cache", "bench/.tmp", ".git", "node_modules")
+HARNESS_EXCLUDE = ("bench/archive", "bench/ws", "bench/.cache", "bench/.tmp", ".git",
+                   "node_modules")
 SANDBOX_HARNESS = "/work/harness"
 SANDBOX_WS = "/work/ws"
 SANDBOX_STATE = "/work/state"
@@ -204,6 +207,17 @@ def _sandbox_tree(base: Path) -> Path:
     return staging
 
 
+def _sandbox_env(base: dict) -> dict:
+    """`base` plus the caller's CODE_TUI_* overrides, minus host-path settings."""
+    local_only = {"CODE_TUI_DSNAPSHOT", "CODE_TUI_STATE_ROOT",
+                  "CODE_TUI_SERVER", "CODE_TUI_PYTHON"}
+    env = dict(base)
+    for name, value in os.environ.items():
+        if name.startswith("CODE_TUI_") and name not in local_only:
+            env[name] = value
+    return env
+
+
 def _daytona(args, base: Path) -> int:
     """Run the same case on a Daytona box, copy the artifacts home, delete the box."""
     from bench import remote  # lazy: `--sandbox local` never imports the SDK
@@ -263,7 +277,7 @@ def _daytona(args, base: Path) -> int:
             "--cell-timeout", str(args.cell_timeout), "--max-steps", str(args.max_steps),
             "--max-wall", str(args.max_wall),
         ]
-        env = dict(base_env)
+        env = _sandbox_env(base_env)
         env["DEEPSEEK_API_KEY"] = key
         env["XDG_STATE_HOME"] = SANDBOX_STATE
         if args.legacy in ("r1", "both"):

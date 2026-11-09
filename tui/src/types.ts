@@ -32,6 +32,10 @@
  *  - `CheckSpec` mirrors `bench.agent.check_plan.CheckSpec`: {name, cmd, cheap, scope?}, where
  *    `scope` is a list of path prefixes. It is parsed in detect-checks.ts from
  *    CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
+ *  - `ServerInfo.logsDir` and `Task.log` are the machine-readable per-task JSONL under the state
+ *    dir: `logs/<id>.jsonl`, holding journal `event` records, raw worker `stdout`/`stderr`, the
+ *    `prompt`, and the run's `usage` and `error` records. /health publishes the directory, a task
+ *    payload its own file, so an agent needs no path formula of its own.
  *
  * WHERE TO CHANGE
  *  The task shape ................. Task / TaskStatus
@@ -39,6 +43,7 @@
  *  A verification verdict ......... CheckState
  *  The detection plan ............ CheckSpec; detectChecks in detect-checks.ts
  *  A worker message .............. WorkerMessage + journalWorkerEvent in worker-events.ts
+ *  The machine log's record kinds .. server.ts::appendLog call sites
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 
@@ -84,6 +89,12 @@ export type Task = {
   model?: string;
   effort?: string;
   cancelRequested?: boolean;
+  /**
+   * The task's machine-readable log: `logs/<id>.jsonl` under the state dir, one JSONL record per
+   * line — `event`, raw `stdout`/`stderr`, `prompt`, `usage`, `error` — each with its own `ts`.
+   * Derivable from `ServerInfo.logsDir`; carried here so a reader of one task needs no join.
+   */
+  log?: string;
 };
 
 /** One verification run as the journal records it: the verdict, the check's name and the first
@@ -143,7 +154,7 @@ export type ServerInfo = {
   startedAt: number;
   model: string;
   effort: string;
-  /** The measured worker arm; `m3-plan` is the default. */
+  /** The measured worker arm; `fast-code` is the default. */
   profile: string;
   concurrency: number;
   allowRun: boolean;
@@ -151,6 +162,8 @@ export type ServerInfo = {
   python: string;
   check: string;
   checks: CheckSpec[];
+  /** The directory of the per-task machine logs: `logsDir/<id>.jsonl`, also `Task.log`. */
+  logsDir: string;
   /** The code this process booted with; see source-hash.ts. */
   source: SourceFingerprint;
   /**

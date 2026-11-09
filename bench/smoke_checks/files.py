@@ -56,6 +56,24 @@ def run(check, root, kernel):
           '"has_more": true' in (cell.result or "") and '"truncated": true' in (cell.result or ""),
           (cell.result or "")[:240])
 
+    cell = kernel.call("read", {"path": "longread.txt", "start": 1, "end": 5,
+                              "repeat": True})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: a bounded read page names its offset, next cursor and completeness",
+          page.get("shown") == 5 and page.get("total") == 600 and page.get("offset") == 1
+          and page.get("next") == {"start": 6} and page.get("unit") == "line"
+          and page.get("has_more") is True and page.get("truncated") is False
+          and page.get("complete") is True and not page.get("pointer"), str(page)[:280])
+    nxt = page["next"]["start"]
+    following = kernel.call("read", {"path": "longread.txt", "start": nxt,
+                                     "end": nxt + 4, "repeat": True})
+    next_page = (following.envelope or {}).get("page") or {}
+    check("kernel: replaying page.next reads the following window with no overlap",
+          next_page.get("offset") == nxt and next_page.get("next") == {"start": nxt + 5}
+          and next_page.get("complete") is True and next_page.get("truncated") is False
+          and following.stdout.lstrip().startswith("6|")
+          and "line 4 " not in following.stdout, str(next_page)[:280])
+
     cell = kernel.run("write('b.txt', 'one\\ntwo\\n')")
     check("kernel: write is journalled", cell.changed == ["b.txt"], str(cell.changed))
 

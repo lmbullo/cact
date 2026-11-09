@@ -1,48 +1,44 @@
-"""prelude_read: delivery — read(), grep(), search(), recall(), skill().
+"""prelude_read: delivery: read(), grep(), search(), recall(), skill().
 
 WHAT IT IS
-  Fragment 4/5 of `PRELUDE` (see prelude.py). The largest surface an agent uses:
-  `read()` (ranges, batching, section=, the repeated-read pointer), `grep()`/`search()` (regex
-  by default, merged context, locators above a char budget, count mode, section aggregation),
-  and `recall()` (the session-side search over `_OBS`), plus `skill()` (list or load one
-  project procedure from `.agent/skills/`). Plus the shared result builders
-  `_count_result`, `_grep_result`, `_section_bounds`, `_range_count`,
-  `_section_search_result`, `_coerce_paths`.
+  Fragment 4/5 of PRELUDE (see prelude.py). The largest agent surface:
+  read() (ranges, batching, section=, repeated-read pointer), grep()/search() (regex default,
+  merged context, locators above a char budget, count mode, section aggregation), recall()
+  (session search over _OBS), skill() (list or load one project procedure from .agent/skills/).
+  Shared result builders: _count_result, _grep_result, _section_bounds, _range_count,
+  _section_search_result, _coerce_paths.
 
 ENTRY POINTS
   read(path=None, start=None, end=None, raw=False, repeat=False, ranges=None, section=None)
   grep(pattern, path=".", max_results=None, regex=True, include=None, context=0, ...)
-  search(...)          the typed verb (same engine as grep)
-  recall(pattern, limit=10, context=100, offset=0) / recall_tool(...)   the typed session search
-  page(handle, offset=0, limit=8000, field="stdout")   a slice of one _OBS entry
+  search(...)          typed verb (same engine as grep)
+  recall(pattern, limit=10, context=100, offset=0) / recall_tool(...)   typed session search
+  page(handle, offset=0, limit=8000, field="stdout")   slice of one _OBS entry
   skill(name=None, root=".")   list .agent/skills/, or load one procedure
-  Inside: _int_arg, _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
+  inside: _int_arg, _READS_CELL/_READS_SESSION updates, _count_result, _grep_result
 
 INVARIANTS
-  - `read()` is a ledger, not a firehose: no range returns the whole file only while it fits
-    the line/char budget, else `next`/`has_more`. A contained range already delivered this
-    session (same digest) returns `already_read` plus the `_OBS[n]` pointer; `repeat=True`
-    re-delivers. `_commit` drops that file's entry.
-  - `start`/`end` are the only window arguments (the signature matches the provider schema):
-    a non-integer, `start < 1`, or `end < start` is `bad_arguments` at the boundary, never a
-    traceback from int(). `end` omitted is the default page (truncated when it cuts).
-  - A missing path is `ok:false`/`not_found`, never `ok:true`/`miss`: success means success.
-  - Every delivered range is recorded in `_READS_CELL`, which is what `Cell.reads` and the
-    card's coverage line report.
-  - Search text is exact (no clipping); context is merged so a line appears once; above
-    `max_chars` a broad result degrades to locators instead of a silent digest. The two search
-    counts are labelled: `hits` (matching lines) and `hit_ranges` (contiguous ranges).
-    `max_results=0` is every hit in one answer (mirroring `map(max_files=0)`), so a multi-path
-    alternation grep is one call; the default page stays 50 and `offset`/`next` still page.
-  - `recall()` reads `_OBS`, which survives a restart; it must not depend on live variables.
-    `limit` is its page size: `total` is every match and `next.offset` is the resume cursor.
+  read() = ledger, not firehose: no range -> whole file only while it fits the line/char budget,
+  else next/has_more. A contained range already delivered this session (same digest) ->
+  already_read + _OBS[n] pointer; repeat=True re-delivers; _commit drops that file's entry.
+  start/end = the only window args (signature matches the provider schema): non-integer,
+  start < 1 or end < start -> bad_arguments at the boundary, never an int() traceback. end
+  omitted = default page (truncated when it cuts).
+  missing path -> ok:false/not_found, never ok:true/miss: success means success.
+  every delivered range recorded in _READS_CELL: source of Cell.reads and the card coverage line.
+  search text exact (no clipping); context merged so a line appears once; above max_chars a broad
+  result degrades to locators, never a silent digest. Counts labelled: hits (matching lines) and
+  hit_ranges (contiguous ranges). max_results=0 = every hit in one answer (mirrors
+  map(max_files=0)); default page 50; offset/next page.
+  recall() reads _OBS (survives a restart); never depends on live variables. limit = page size;
+  total = every match; next.offset = resume cursor.
 
 WHERE TO CHANGE
-  The read budget or pointer ....... _READ_MAX_LINES, _READ_MAX_CHARS, read
-  The search result shape .......... _grep_result, _count_result, _section_search_result
-  The section aggregation .......... _section_bounds, _section_search_result
-  Batching ......................... _coerce_paths, read
-  Skill discovery/loading .......... skill
+  read budget / pointer ..... _READ_MAX_LINES, _READ_MAX_CHARS, read
+  search result shape ....... _grep_result, _count_result, _section_search_result
+  section aggregation ....... _section_bounds, _section_search_result
+  batching .................. _coerce_paths, read
+  skill discovery/loading ... skill
 """
 from __future__ import annotations
 

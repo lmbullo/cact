@@ -1,38 +1,35 @@
-"""Shared loop types: `Budget`, `RunResult` and usage accounting.
+"""loop: shared loop types: Budget, RunResult, usage accounting.
 
 WHAT IT IS
-  The vocabulary every loop returns. No loop lives here anymore: `tool_loop.ToolLoop` is the
-  production turn machine, `state_loop.StateLoop` extends it with state cards, and
-  `repl.ReplLoop` extends it with fenced-block reply parsing. The former JSON tool-calling
-  AgentLoop was removed: it had no production path and duplicated the kernel's file
-  semantics. `tools.py` now generates the provider specs from `verbs.VERBS`.
+  The vocabulary every loop returns. No loop lives here: tool_loop.ToolLoop = production turn
+  machine; state_loop.StateLoop = ToolLoop + state cards; repl.ReplLoop = ToolLoop + fenced-block
+  reply parsing. tools.py generates provider specs from verbs.VERBS.
 
 ENTRY POINTS
   Budget(max_steps, max_output_tokens, max_wall_s, max_total_tokens)
-  RunResult ... what run.py, worker.py and trace.py consume
-  _usage_add(acc, usage) ... sums provider usage, including cache hit/miss
+  RunResult    what run.py, worker.py and trace.py consume
+  _usage_add(acc, usage)    sums provider usage incl. cache hit/miss
 
 INVARIANTS
-  - This module holds shared types only. There is no loop here: ToolLoop is the turn
-    machine, StateLoop adds state cards, ReplLoop is the fenced-block alternate.
-  - The benchmark defaults below are overridden by eval flags and by config.budget for
-    production; do not tune production from here. The live caps are `max_steps`,
-    `max_wall_s`, `max_output_tokens` and `max_total_tokens` (0 = unlimited). Every cap is
-    read by a loop; a field no loop reads does not belong in Budget.
-  - `_usage_add` is additive and tolerates missing provider fields, including cache hits.
-  - `RunResult.error` is the provider/loop failure detail for a stop that has no final answer
-    (LLM_FAILED is the first user); an empty string means no separate detail.
-  - `RunResult.steps` is the number of turns, i.e. primary `client.complete` calls. `calls`
-    is the number of tool calls / kernel cells, a different axis. `llm_calls` is every model
-    request the loop made, including the budget-forced `_push`, so `llm_calls >= steps`.
-  - `RunResult.economy` is the `limits.TokenMeter` totals (completion, reasoning, emitted
-    content/argument chars); it describes what the model wrote, never an estimate.
-  - `RunResult.attestation` is the durable state at stop: plan, changed paths, checks,
-    evidence and open items. It is evidence, not a claim.
+  shared types only; no loop here.
+  benchmark defaults below overridden by eval flags and config.budget for production; do not
+  tune production from here. Live caps: max_steps, max_wall_s, max_output_tokens,
+  max_total_tokens (0 = unlimited). Every cap is read by a loop; a field no loop reads does not
+  belong in Budget.
+  _usage_add additive; tolerates missing provider fields incl. cache hits.
+  RunResult.error = provider/loop failure detail for a stop with no final answer (LLM_FAILED
+  first); empty string = no separate detail.
+  RunResult.steps = turns = primary client.complete calls. calls = tool calls / kernel cells
+  (different axis). llm_calls = every model request incl. budget-forced _push, so
+  llm_calls >= steps.
+  RunResult.economy = limits.TokenMeter totals (completion, reasoning, emitted content/argument
+  chars): what the model wrote, never an estimate.
+  RunResult.attestation = durable state at stop: plan, changed paths, checks, evidence, open
+  items. Evidence, not a claim.
 
 WHERE TO CHANGE
-  New stop/usage field ....... RunResult
-  Budget defaults (bench) .... Budget (production overrides via config.budget)
+  new stop/usage field ..... RunResult
+  bench budget defaults .... Budget (production overrides via config.budget)
 """
 from __future__ import annotations
 

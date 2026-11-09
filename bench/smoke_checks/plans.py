@@ -3,9 +3,10 @@
 WHAT IT IS
   The checks-engine contract: a spec's `scope` filters the cheap run, the plan short-circuits
   on the first failure, the goal re-runs the whole plan every attempt, the cache fills from a
-  run and drops on a mutation, and `--health off` disables the cheap subset. Then the read
-  coverage arithmetic (merge/gaps/covered/delivered_ranges) and `check_run.run_check`'s three
-  states: passed, failed, unrunnable.
+  run and drops on a mutation, and `--health off` disables the cheap subset. Then the post-plan
+  green gate (open/close, one finish cell, foreign-gate refusal), the read coverage arithmetic
+  (merge/gaps/covered/delivered_ranges) and `check_run.run_check`'s three states: passed,
+  failed, unrunnable.
 
 ENTRY POINTS
   run(check) -> Path   called by bench/smoke.py::main; returns the temp workspace the kernel
@@ -27,7 +28,9 @@ from __future__ import annotations
 
 import bench.agent.check_plan as check_plan
 import bench.agent.check_run as check_mod
+import bench.agent.green_gate as green_gate
 import bench.agent.state_loop as state_loop
+from bench.agent.stops import GREEN
 from bench.smoke_support import workspace
 
 
@@ -137,6 +140,60 @@ def run(check):
     check("state: a digested batch with no headers claims nothing",
           state_loop.delivered_ranges(batch_reads, "     1| a1\n     2| a2", True) == {},
           str(state_loop.delivered_ranges(batch_reads, "     1| a1\n     2| a2", True)))
+
+    # --- the post-plan green gate: one finish cell, no foreign gate ------------------------
+    class _Checks:
+        """The one field note_checks reads off a `checks` cell."""
+
+        def __init__(self, result):
+            self.result = result
+
+    gate = green_gate.GreenGate()
+    check("green: starts closed, so nothing is refused before a plan runs",
+          not gate.passed and gate.refusal("exec") is None
+          and gate.refusal("checks") is None and gate.suffix("checks") == "")
+    gate.note_checks(_Checks('{"ok": true, "rows": []}'))
+    check("green: a passing checks cell with no rows never opens the gate", not gate.passed)
+    gate.note_checks(_Checks('{"ok": true, "rows": [{"name": "lint", "ok": true}]}'))
+    check("green: a passing plan with a row opens the gate",
+          gate.passed and gate.cells == 0)
+    check("green: after the pass, exec and checks are GREEN refusals with the same text",
+          gate.refusal("exec") == (GREEN, green_gate.EXEC_REFUSAL)
+          and gate.refusal("checks") == (GREEN, green_gate.EXEC_REFUSAL))
+    check("green: a checks observation carries the pass line only after the pass",
+          gate.suffix("checks") == "\n" + green_gate.PASS_NOTE
+          and gate.suffix("exec") == "")
+    first = gate.refusal("code")
+    second = gate.refusal("code")
+    check("green: exactly one code cell may carry the finish",
+          first is None and second == (GREEN, green_gate.CELL_REFUSAL)
+          and gate.cells == 2)
+    gate.note_checks(_Checks('{"ok": true, "rows": [{"name": "test"}]}'))
+    check("green: a fresh passing checks resets the finish allowance",
+          gate.cells == 0 and gate.refusal("code") is None)
+    gate.invalidate()
+    check("green: a mutation closes the gate again", not gate.passed and gate.refusal("exec") is None)
+    gate.note_checks(_Checks("not json"))
+    check("green: an unparseable checks payload never opens the gate", not gate.passed)
+
+    lint = check_plan.CheckSpec.parse([{"name": "lint", "cmd": "python3 -m ruff check ."}])
+    check("green: the plan's own command is never foreign, even when it names ruff",
+          not green_gate.is_plan_command({"argv": ["ruff", "check"]}, lint)
+          and green_gate.is_plan_command({"argv": ["python3", "-m", "ruff", "check", "."]}, lint)
+          and not green_gate.is_foreign_gate({"shell": "python3 -m ruff check ."}, lint))
+    check("green: a lint/typecheck gate absent from the plan is foreign",
+          green_gate.is_foreign_gate({"argv": ["ruff", "check", "."]}, lint)
+          and green_gate.is_foreign_gate({"argv": ["bun", "run", "typecheck"]}, [])
+          and green_gate.is_foreign_gate({"commands": [["bun", "test"],
+                                                       ["npm", "run", "lint"]]}, lint)
+          and green_gate.is_foreign_gate({"shell": "cd tui && bun run typecheck"}, lint))
+    check("green: a non-gate command is not foreign",
+          not green_gate.is_foreign_gate({"argv": ["pytest", "-q"]}, lint)
+          and not green_gate.is_foreign_gate({"shell": "git status"}, lint))
+    check("green: exec_commands reads argv, every commands row and the shell field",
+          green_gate.exec_commands({"argv": ["a", "b"], "commands": [["c", "d"]],
+                                   "shell": "e f"}) == ["a b", "c d", "e f"]
+          and green_gate.exec_commands({"argv": "not-a-list"}) == [])
 
     # --- goal check ----------------------------------------------------------------------
     passed = check_mod.run_check("true", str(root))

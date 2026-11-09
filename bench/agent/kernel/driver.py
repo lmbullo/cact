@@ -1,46 +1,40 @@
-"""driver: DRIVER, the child loop that turns one request line into one `@@K@@` reply.
+"""driver: DRIVER, the child loop: one request line -> one @@K@@ reply.
 
 WHAT IT IS
-  A source string, not a module the parent imports for its functions: the child interpreter
-  runs `python3 -u -c DRIVER` (or the same under bwrap). Per request it either exec()s a
-  python cell or dispatches one typed verb from KERNEL_VERBS, in a namespace that survives
-  between requests, then emits exactly one `@@K@@` JSON line.
+  Source string, not a parent-imported module: the child runs `python3 -u -c DRIVER` (or the
+  same under bwrap). Per request: exec() one python cell or dispatch one KERNEL_VERBS typed verb
+  in a namespace that survives between requests; emit exactly one @@K@@ JSON line.
 
 ENTRY POINTS
-  DRIVER   the child source; `__PROTOCOL__` is replaced with the parent's PROTOCOL at import
-  The parent hands it two more sources through the environment, never through imports:
+  DRIVER   child source; `__PROTOCOL__` replaced with the parent's PROTOCOL at import
+  Parent -> child sources, env only, never imports:
     KERNEL_PRELUDE / KERNEL_PRELUDE_MODE   prelude.PRELUDE
     KERNEL_RUN_PRELUDE                     run_prelude.RUN_PRELUDE
     KERNEL_HEADERS                         prelude.HEADERS_SOURCE (exec'd into `_HEADERS`)
     KERNEL_VERBS                           json.dumps(verbs.VERBS) for dispatch and help()
 
 INVARIANTS
-  - The child's stdout is a protocol channel: every message is exactly one `@@K@@`-prefixed
-    JSON line. The cell's own stdout/stderr are redirected into buffers first, so a stray
-    print cannot corrupt the channel.
-  - Before dispatch the args are bound to the verb function's live signature
-    (`inspect.signature().bind(**args)`) and the declared scalar types (integer, number,
-    boolean, string, array-of-string) are coerced from the registry schema, recursively through
-    `properties` and `oneOf`/`anyOf`. A bad keyword, missing argument or bad scalar becomes
-    `kind: "bad_args"` with `error.code: "bad_arguments"`, the live signature, the offending
-    keyword and the valid keyword list, never a traceback. A verb returning `{"ok": false}`
-    is `rejected`, not `failed`.
-  - A verb that raises is caught per typed call and answered as
-    `{ok:false, kind:"tool_crashed", error:{code:"internal_error", ...}}`, so a tool bug
-    can never read as `ok:true` with a traceback beside it.
-  - stdin is read with one readline per request; the parent's request carries `timeout` and
-    `check_cache`. `final_answer()` raises `Final`, which is reported as `Cell.final`
-    unconditionally — the loop, not the child, decides what that means. A dict answer
-    travels in that same field; the parent renders it and keeps its structured handoff.
-  - `_OBS` entries are appended to KERNEL_OBS_LOG after each cell so recall() survives a
-    restart; the namespace itself does not survive one.
+  child stdout = protocol channel: exactly one @@K@@-prefixed JSON line per message. Cell
+  stdout/stderr redirected into buffers first; a stray print cannot corrupt the channel.
+  pre-dispatch: args bound to the verb's live signature (`inspect.signature().bind(**args)`);
+  declared scalar types (integer, number, boolean, string, array-of-string) coerced from the
+  registry schema, recursively through `properties` and `oneOf`/`anyOf`. Bad keyword / missing
+  argument / bad scalar -> kind:"bad_args", error.code:"bad_arguments", live signature,
+  offending keyword, valid keyword list; never a traceback. A verb returning {"ok": false} is
+  `rejected`, not `failed`.
+  verb raises -> per-call catch -> {ok:false, kind:"tool_crashed",
+  error:{code:"internal_error", ...}}; a tool bug never reads as ok:true with a traceback.
+  stdin: one readline per request; request carries `timeout` and `check_cache`. final_answer()
+  raises `Final`, reported as Cell.final unconditionally (the loop decides what it means). A dict
+  answer travels in the same field; the parent renders it and keeps the structured handoff.
+  _OBS entries appended to KERNEL_OBS_LOG after each cell: recall() survives a restart; the
+  namespace does not.
 
 WHERE TO CHANGE
-  What a request kind does ...................... the `kind == "call"` branch and the exec path
-  What a cell reports ........................... the final `emit({...})` payload (+
-                                                 protocol.py's CellReply, then bump PROTOCOL)
-  The bad_args answer ........................... `_bad_args` and the signature bind
-  The observation log ........................... KERNEL_OBS_LOG append near `emit`
+  request kind handling ......... the `kind == "call"` branch and the exec path
+  cell report payload ........... the final emit({...}) (+ protocol.py CellReply, then bump PROTOCOL)
+  bad_args answer ............... `_bad_args` and the signature bind
+  observation log ............... KERNEL_OBS_LOG append near `emit`
 """
 from __future__ import annotations
 

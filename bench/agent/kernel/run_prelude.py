@@ -1,66 +1,57 @@
-"""run_prelude: RUN_PRELUDE, the one process tool plus the mutation and spawn gates.
+"""run_prelude: RUN_PRELUDE, the one process tool + the mutation and spawn gates.
 
 WHAT IT IS
-  The source string injected into a child that may spawn programs: `exec_argv()` (the typed
-  `exec` tool: argv, commands=[[...]], or an explicit shell string), `git_tool()` (the typed
-  `git` tool), `serve()` (the typed `serve` tool: is the TUI server for this workspace up, on
-  which port, is it stale, how do I start or stop it), `run()` where python-only modes are
-  allowed, and the classifier that refuses a mutation that would bypass the journal.
+  Source string injected into a child that may spawn programs: exec_argv() (typed `exec`:
+  argv, commands=[[...]], or an explicit shell string), git_tool() (typed `git`), serve() (typed
+  `serve`: is the TUI server for this workspace up, port, stale?, start/stop), run() where
+  python-only modes are allowed, and the classifier that refuses a mutation bypassing the journal.
 
 ENTRY POINTS
-  RUN_PRELUDE   the child source (KERNEL_RUN_PRELUDE); present only when allow_run is on
-  In the namespace: exec_argv(), git_tool(), run() (only when KERNEL_SHELL=1), serve(), plus
-  the private gate: `_mutating_command`, `_HINT`, `_VERB_DUPE`, `_audit_spawn`, `_SpawnBlocked`.
+  RUN_PRELUDE   child source (KERNEL_RUN_PRELUDE); present only when allow_run is on
+  namespace: exec_argv(), git_tool(), run() (only when KERNEL_SHELL=1), serve(), plus private
+  gate: `_mutating_command`, `_HINT`, `_VERB_DUPE`, `_audit_spawn`, `_SpawnBlocked`.
 
 INVARIANTS
-  - `exec` never parses a shell string for a program: a shell interpreter with `-c`/`-lc` in
-    argv is refused as `shell_via_exec` and points at `exec(shell=<string>)`. Passing a bare
-    string as `argv` is the one exception: it is run once through `_run_shell` and the answer
-    carries a note, because "fail then retry with shell=" cost two turns for one command.
-  - Programs/verbs that change tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`,
-    `git checkout/reset/apply/...`, `>` redirection; a quoted `>` is an argument) are refused
-    as `kind: "wrong_call"` with a `use` hint, because they bypass the journal and would make
-    diff()/undo() lie. `git add/commit/push/fetch/init/clone` are allowed, as is a mutation
-    whose target is an absolute path under a scratch root (/tmp, /var/tmp, /dev/shm, $TMPDIR).
-  - Direct spawning (subprocess.Popen, os.system, os.exec*, os.posix_spawn, os.spawn) goes
-    through the same classifier via `sys.addaudithook`; a mutating spawn raises
-    `_SpawnBlocked`, which the driver turns into a `wrong_call`. Allowed spawns are listed in
-    `Cell.runs`. This is a correctness boundary, not a sandbox: a program can still write
-    files.
-  - Each program starts in a NEW session and its group leader is journalled to
-    KERNEL_ORPHAN_JOURNAL, so killing the kernel group cannot leak it (see process.py).
-  - `check_cache` answers a repeated command with `kind: "check_cached"` instead of spawning
-    it twice.
-  - A program that duplicates a typed verb (`grep`, `cat`, `ls`, `find`, `sed -i`, ...) runs
-    normally and carries ONE `note` naming the typed call (`_VERB_DUPE`); it is never refused,
-    and with a flag the typed verb cannot express (`_DUPE_OPAQUE`: `grep -o/-l/-v/-A/-B/-P`,
-    `sed` without `-i`) the note stays silent. One note per program per cell.
-  - A plan command run through exec carries ONE note naming `checks('<spec>')`, and
-    `git action='status'` names `status()`. Both are silent when the command is not in the plan
-    (a test that runs is not a gate) and neither ever refuses. The plan arrives as
-    KERNEL_CHECK_COMMANDS; the kernel only names it, never runs it.
-  - `serve()` is the one place that knows where the TUI server is. Its state dir is the
-    launcher's formula (CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then
-    ~/.local/state/code-tui, then workspaces/<sha256(resolved cwd)[:16]>), and `status`/`logs`
-    only read. `start`/`stop` refuse while a task is running in that state root and while the
-    pid is the server hosting this very worker: the answer could never arrive.
+  exec never parses a shell string for a program: a shell interpreter with -c/-lc in argv is
+  refused as `shell_via_exec` -> `exec(shell=<string>)`. A bare string as argv is the one
+  exception: run once through `_run_shell`, answer carries a note (fail-then-retry cost two turns).
+  mutation of tracked files (`tee`, `cp`, `mv`, `rm`, `sed -i`, `git checkout/reset/apply/...`,
+  `>` redirection; quoted `>` is an argument) -> kind:"wrong_call" + `use` hint: it bypasses the
+  journal and would make diff()/undo() lie. Allowed: git add/commit/push/fetch/init/clone, and a
+  mutation whose target is an absolute path under a scratch root (/tmp, /var/tmp, /dev/shm, $TMPDIR).
+  direct spawning (subprocess.Popen, os.system, os.exec*, os.posix_spawn, os.spawn) -> same
+  classifier via sys.addaudithook; a mutating spawn raises `_SpawnBlocked` -> driver turns it
+  into `wrong_call`. Allowed spawns listed in Cell.runs. Correctness boundary, not a sandbox: a
+  program can still write files.
+  each program: NEW session, group leader journalled to KERNEL_ORPHAN_JOURNAL; killing the kernel
+  group cannot leak it (see process.py).
+  check_cache answers a repeated command with kind:"check_cached" instead of spawning twice.
+  a program duplicating a typed verb (grep, cat, ls, find, sed -i, ...) runs normally + ONE `note`
+  naming the typed call (`_VERB_DUPE`); never refused. With a flag the typed verb cannot express
+  (`_DUPE_OPAQUE`: grep -o/-l/-v/-A/-B/-P, sed without -i) the note stays silent.
+  One note per program per cell.
+  a plan command run through exec carries ONE note naming checks('<spec>'); `git action='status'`
+  names status(). Both silent when the command is not in the plan (a test that runs is not a
+  gate); neither refuses. Plan arrives as KERNEL_CHECK_COMMANDS; the kernel only names it.
+  serve() = the one place that knows where the TUI server is. State dir formula: CODE_TUI_STATE_ROOT,
+  else $XDG_STATE_HOME/code-tui, else ~/.local/state/code-tui, else
+  workspaces/<sha256(resolved cwd)[:16]>. status/logs read only. start/stop refuse while a task
+  runs in that state root and while the pid is the server hosting this very worker (the answer
+  could never arrive).
 
 WHERE TO CHANGE
-  What exec/git refuse ......................... `_RUN_SHELL_MUTATORS`, `_RUN_GIT_MUTATORS`,
-                                                 `_mutating_command`, `_HINT`, then RUN_NOTE
-                                                 in repl.py and AGENTS.md §4 invariant 2
-  The duplicate-verb note ..................... `_VERB_DUPE`, `_DUPE_OPAQUE`, `_typed_dupe`
-                                               (a path outside the workspace gets no note:
-                                               the typed verb would refuse it)
-  The plan-command / status notes ............ `_check_note`, `_status_note`,
-                                               KERNEL_CHECK_COMMANDS
-  The spawn gate ............................... `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
-  exec's argv/commands/shell shape ............. `exec_argv`
-  The typed git actions ........................ `git_tool`
-  Find/start/stop the TUI server ............... `serve`, `_serve_facts`, `_serve_state`,
-                                               `_serve_start`, `_serve_stop`
-  The state-dir formula ........................ `_serve_state` — the same formula as
-                                               launcher.ts, server.ts and stop.ts
+  exec/git refusals ........... `_RUN_SHELL_MUTATORS`, `_RUN_GIT_MUTATORS`,
+                                `_mutating_command`, `_HINT`, then RUN_NOTE in repl.py and
+                                AGENTS.md §4 invariant 2
+  duplicate-verb note ......... `_VERB_DUPE`, `_DUPE_OPAQUE`, `_typed_dupe` (a path outside the
+                                workspace gets no note: the typed verb would refuse it)
+  plan-command/status notes ... `_check_note`, `_status_note`, KERNEL_CHECK_COMMANDS
+  spawn gate .................. `_audit_spawn`, `_gate_check`, `_SpawnBlocked`
+  exec argv/commands/shell .... `exec_argv`
+  typed git actions ........... `git_tool`
+  TUI server find/start/stop .. `serve`, `_serve_facts`, `_serve_state`, `_serve_start`,
+                                `_serve_stop`
+  state-dir formula ........... `_serve_state`: same formula as launcher.ts, server.ts, stop.ts
 """
 
 RUN_PRELUDE = r"""

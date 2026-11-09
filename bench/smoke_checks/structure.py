@@ -40,7 +40,6 @@ ALLOW = frozenset({
     "bench/task_journal.py",
     "bench/smoke_checks/verbs.py",
     "bench/agent/kernel/driver.py",
-    "bench/agent/state_loop.py",
     "tui/python/worker.py",
     "bench/agent/verbs.py",
     "bench/agent/kernel/prelude_journal.py",

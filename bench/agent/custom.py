@@ -1,36 +1,31 @@
-"""custom: per-run experiment tools from a JSON manifest, never a second tool catalog.
+"""custom: per-run experiment tools from a JSON manifest; never a second tool catalog.
 
 WHAT IT IS
-  A manifest is data: a list of tools, each with a name, a provider summary, a JSON schema
-  and python source that defines the function. `load()` validates the manifest; `verbs()`
-  turns it into the same registry shape `verbs.VERBS` uses; `specs()` turns it into provider
-  tool specs; `prelude()` concatenates the source the kernel execs into its namespace.
-  `Kernel(extra_verbs=..., extra_prelude=...)` ships all three to the child, and `ToolLoop`
-  merges the specs into its tool list, so a run can test an action without editing bench.
+  Manifest = data: list of tools {name, provider summary, JSON schema, python source defining
+  the function}. load() validates; verbs() -> registry shape of verbs.VERBS; specs() -> provider
+  specs; prelude() -> source the kernel execs. Kernel(extra_verbs=..., extra_prelude=...) ships
+  all three to the child; ToolLoop merges the specs, so a run can test an action without editing bench.
 
 ENTRY POINTS
-  load(path) -> list[CustomTool]     parse and validate a manifest file
-  verbs(tools) -> dict               {name: {function, summary, schema, mutates}}
-  specs(tools) -> list[dict]         provider tool specs
-  prelude(tools) -> str              the source the child execs
-  CustomTool                         .name .summary .schema .source
+  load(path) -> list[CustomTool]  parse + validate a manifest file
+  verbs(tools) -> dict            {name: {function, summary, schema, mutates}}
+  specs(tools) -> list[dict]      provider tool specs
+  prelude(tools) -> str           source the child execs
+  CustomTool                      .name .summary .schema .source
 
 INVARIANTS
-  - A custom name may not shadow a built-in verb, `python`, `delegate`, `final_answer`,
-    `help` or `skill`; a manifest that tries is rejected before a kernel starts. Experiments
-    add actions, they never weaken a gate or replace the journal.
-  - The source is executed in the kernel namespace, so it can use `_walk`, `read`, `_commit`
-    and the rest of the prelude. It must define exactly the named callable. A manifest that
-    does not is a load error, not a late `NameError` in a run.
-  - `mutates` is declared data, not inferred: the loop uses it only for rendering, while the
-    journal still decides what changed. A custom tool that writes should call `_commit`.
-  - Stdlib-only and no bench imports: this module is read by the parent and its source is
-    shipped to a child that cannot import `bench`.
+  name collision = reject before kernel start: built-in verb, `python`, `delegate`,
+  `final_answer`, `help`, `skill`. Experiments add actions; never weaken a gate or replace the journal.
+  source runs in the kernel namespace: may use _walk, read, _commit and the rest of the prelude;
+  must define exactly the named callable. Missing callable = load error, never a late NameError.
+  mutates = declared data, not inferred: used for rendering only; the journal still decides what
+  changed. A custom tool that writes calls _commit.
+  stdlib-only, no bench imports: parent reads it, source is shipped to a child that cannot import bench.
 
 WHERE TO CHANGE
-  Manifest fields ............... CustomTool, load
-  The reserved-name set ......... RESERVED
-  What the child receives ....... verbs, specs, prelude (then kernel/process.py's env block)
+  manifest fields ......... CustomTool, load
+  reserved names .......... RESERVED
+  child payload ........... verbs, specs, prelude, then kernel/process.py env block
 """
 from __future__ import annotations
 

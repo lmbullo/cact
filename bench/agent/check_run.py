@@ -1,34 +1,32 @@
-"""check_run: one project command -> one `Check`. The unit; the plan lives in check_plan.py.
+"""check_run: one project command -> one Check (the unit; the plan is check_plan.py).
 
 WHAT IT IS
-  `run_check(cmd, cwd)` runs a shell command (tsc, bun test, pytest, ...) and turns the
-  output into a `Check`. `evaluate(goal)` calls a goal callable and normalises the result,
-  so the loops never need to know whether a goal returns a bool or a Check.
+  run_check(cmd, cwd) -> Check: runs a shell command (tsc, bun test, pytest, ...), parses output.
+  evaluate(goal) -> (ok, Check | None): calls a goal callable; normalises bool vs Check for the loops.
 
 ENTRY POINTS
   Check(cmd, state, exit_code, duration_ms, stdout, stderr, failures)
-    state: "passed" | "failed" | "unrunnable"
-    .ok, .text(limit)   the model-facing rendering (unrunnable is called out explicitly)
+    state = "passed" | "failed" | "unrunnable"
+    .ok, .text(limit)  model-facing rendering; unrunnable is called out explicitly
   run_check(cmd, cwd, timeout=600.0) -> Check
-  from_output(cmd, exit_code, stdout, stderr, duration_ms) -> Check  an already-run command
+  from_output(cmd, exit_code, stdout, stderr, duration_ms) -> Check  already-run command
   evaluate(goal) -> (ok, Check | None)
 
 INVARIANTS
-  - "unrunnable" (broken command, timeout, crash) is NOT "failed": the text says the check
-    itself is broken so the model repairs the project instead of chasing a missing tool.
-    The TUI maps an unrunnable check to a failed task only via the loop, never here.
-  - `failures` is a bounded, de-duplicated list of {line, text} parsed by `_PATTERNS`
-    (bun `(fail)`, pytest `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines).
-  - A goal that raises becomes `unrunnable`, not an exception in the loop.
-  - Goals are callables, not command strings: tui/python/worker.py builds a
-    `check_plan.Verifier`, whose `authoritative()` runs the whole plan on every finish attempt.
-    Several commands (a cheap health subset plus the full suite) live in check_plan.py.
+  "unrunnable" != "failed": broken command, timeout or crash means the check itself is broken;
+  text says so, so the model repairs the project instead of chasing a missing tool.
+  TUI maps unrunnable -> failed task only in the loop, never here.
+  failures = bounded, de-duplicated [{line, text}] parsed by _PATTERNS: bun `(fail)`, pytest
+  `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines.
+  goal raises -> unrunnable; never an exception in the loop.
+  goals = callables, not command strings: tui/python/worker.py builds check_plan.Verifier, whose
+  authoritative() runs the whole plan on every finish attempt; multi-command plans live there.
 
 WHERE TO CHANGE
-  Recognise another test runner's failure lines ... _PATTERNS, _failures
-  Several checks / a cheap health subset ......... check_plan.py (CheckSpec, run_specs)
-  How a check is executed ........................ run_check (timeout, bash, cwd)
-  What the model is told on failure .............. Check.text
+  another runner's failure lines .. _PATTERNS, _failures
+  several checks / cheap subset ... check_plan.py (CheckSpec, run_specs)
+  check execution ................. run_check (timeout, bash, cwd)
+  model-facing failure text ....... Check.text
 """
 from __future__ import annotations
 

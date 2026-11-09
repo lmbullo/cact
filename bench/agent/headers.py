@@ -1,24 +1,17 @@
-"""The header index: every module's contract as data, one implementation for both halves.
+"""headers: the header index: every module's contract as data; one implementation, both halves.
 
 WHAT IT IS
-  No human reads this code, so every source module opens with a WHAT IT IS / ENTRY POINTS /
-  INVARIANTS / WHERE TO CHANGE header. This module turns those headers into structure so an
-  agent can ask "which module owns this?" instead of reading every source file:
-
+  Every source module opens with WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE.
+  This module turns those headers into structure, so "which module owns this?" is a query,
+  not a full-source read:
     index(root)     every source file as a row: path, language, lines, title, sections
-    guide(root, q)  ranked rows plus rendered text; also the `guide()` verb in a kernel cell
-    render(rows)     the text a model reads
-    problems(root)   rows whose header is missing a section (the gate)
-    SECTIONS         the four names, in order
-
-  Kernel cells cannot import `bench`: their cwd is a task workspace and their interpreter is
-  a bare `python3 -c`. `kernel/prelude.py` therefore ships *this file's source* to the child in
-  KERNEL_HEADERS, execs it into a private `_HEADERS` namespace, and exposes one verb,
-  `guide()`, so the verb and `python3 bench/guide.py` run identical code. Everything here is
-  stdlib-only (`_OPEN` pins builtins.open before the prelude replaces it), side-effect-free,
-  and resolves the tree from the current working directory when `root` is omitted — which is
-  why it works unchanged in both processes, and why it must never import `bench` or read
-  `__file__`.
+    guide(root, q)  ranked rows + rendered text; also the `guide()` kernel verb
+    render(rows)    the text a model reads
+    problems(root)  rows whose header is missing a section (the gate)
+    SECTIONS        the four names, in order
+  Kernel cells cannot import bench (cwd=task workspace, interpreter=bare `python3 -c`).
+  kernel/prelude.py ships this file's source as KERNEL_HEADERS, execs it into a private
+  _HEADERS namespace, exposes `guide()`; verb and `python3 bench/guide.py` run identical code.
 
 ENTRY POINTS
   python3 bench/guide.py [--query TEXT | --module PATH | --json | --check]
@@ -28,32 +21,27 @@ ENTRY POINTS
   render(rows, chars=20000) -> str
 
 INVARIANTS
-  - Read-only. It opens source files and returns dicts; no writes, no network, no imports of
-    `bench`, no state between calls. Calling it twice on the same tree is the same answer.
-  - A file is "documented" when its docstring / leading block comment carries at least one
-    section; `problems()` is stricter and demands all four. A half-written or unparsable
-    module yields an empty header, never an exception.
-  - `SKIP_DIRS` is the contract surface: `node_modules`, `__pycache__`, every fixture tree
-    (`fixtures`, `*_fixtures`, `*_hidden`), the generated/archived evidence (`bench/ws`,
-    `bench/traces`, `bench/archive`, `bench/.tmp`, `bench/.cache`), `dist`, `build`, plus any
-    dot-directory. Task workspaces, recorded evidence and the retired suites are inputs and
-    outputs, not code an agent maintains.
-  - `guide(query=...)` scores a term three times in path+title and once everywhere else,
-    sorts by score then path, and caps at `limit`. Deterministic: same tree, same order.
-  - `headers=N` inlines the full header of the top N hits in the same response, so "which
-    module owns this, and what is its contract" is one call, not a second `guide(path)`.
-  - A `path` that is not an indexed module is `ok:false`/`not_found` with the nearest paths
-    (with a list of paths, the ones that exist are rendered and the rest are noted);
-    a query that matches nothing stays `ok:true` with a note (a miss is an answer about the
-    index, and the note names the fallback).
-  - Rendering truncates each section at `chars` and always keeps the path line, so a card
-    never hides which module it is talking about.
+  read-only: opens source, returns dicts; no writes, no network, no bench import, no state
+  between calls. Same tree -> same answer.
+  documented = docstring / leading block comment with >=1 section; problems() demands all four.
+  Unparsable or half-written module -> empty header, never an exception.
+  SKIP_DIRS = contract surface: node_modules, __pycache__, fixture trees (fixtures, *_fixtures,
+  *_hidden), generated/archived evidence (bench/ws, bench/traces, bench/archive, bench/.tmp,
+  bench/.cache), dist, build, any dot-directory. Those are inputs/outputs, not maintained code.
+  guide(query) scoring: term x3 in path+title, x1 elsewhere; sort by score then path; cap at
+  limit. Deterministic.
+  headers=N inlines full headers of the top N hits: one call = owner + contract.
+  unknown path -> ok:false/not_found + nearest paths (list: existing ones rendered, rest noted);
+  no-match query -> ok:true + note (a miss is an answer about the index; the note names the fallback).
+  render truncates each section at chars, always keeps the path line.
+  _OPEN pins builtins.open at import: the kernel prelude's journaling open() runs after this
+  source and must not reroute a header read through the mutation journal.
 
 WHERE TO CHANGE
-  The header grammar (sections, delimiters) ... SECTIONS, _SECTION_RE, _QUOTES, split()
-  Which files are indexed ................ SKIP_DIRS, LANGUAGES, _walk()
-  Ranking, limits, truncation ............ guide(), render()
-  The CLI ............................... bench/guide.py
+  header grammar (sections, delimiters) ... SECTIONS, _SECTION_RE, _QUOTES, split()
+  indexed files .......................... SKIP_DIRS, LANGUAGES, _walk()
+  ranking, limits, truncation ............ guide(), render()
+  CLI .................................... bench/guide.py
 """
 from __future__ import annotations
 

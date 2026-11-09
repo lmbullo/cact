@@ -1,62 +1,53 @@
-"""kernel: the agent's action space and the subprocess that enforces it (package form).
+"""kernel: the action space and the subprocess that enforces it (package form).
 
 WHAT IT IS
-  The action space, split by lifecycle so a change lands in one small file:
-
-    protocol.py      PROTOCOL, MARKER and the wire shapes: CellRequest, CellReply,
-                     ExtendNotice, and `Cell` (the value every loop consumes)
-    driver.py        DRIVER: the source the child runs. One JSON request per line in ->
-                     exec() a python cell or dispatch one typed verb in the surviving
-                     namespace -> one `@@K@@` JSON line out.
-    prelude.py       HEADERS_SOURCE + the assembled PRELUDE string; the fragments below are
-                     its five areas, joined in order (setup -> journal -> index -> read ->
-                     verbs) into the one program the child execs:
+  Action space split by lifecycle; one change lands in one file:
+    protocol.py      PROTOCOL, MARKER, wire shapes: CellRequest, CellReply, ExtendNotice,
+                     Cell (the value every loop consumes)
+    driver.py        DRIVER: child source. One JSON request per line in -> exec() a python
+                     cell or dispatch one typed verb in the surviving namespace -> one `@@K@@`
+                     JSON line out.
+    prelude.py       HEADERS_SOURCE + assembled PRELUDE. Fragments joined in order
+                     setup -> journal -> index -> read -> verbs, one program the child execs:
                      prelude_setup.py    namespace, read ledgers, path matching
-                     prelude_journal.py  _commit, the write-through open(), snapshot/diff/undo
+                     prelude_journal.py  _commit, write-through open(), snapshot/diff/undo
                      prelude_index.py    _walk, map(), outline()
                      prelude_read.py     read(), grep()/search(), recall()
                      prelude_verbs.py    write/delete/mkdir/edit/splice/apply/commit
     run_prelude.py   RUN_PRELUDE: exec (argv/commands/shell), git, run() where allowed, the
-                     mutation gate, the shell_via_exec refusal and the spawn gate.
-    process.py       Kernel: spawn (plain or bwrap), supervise the per-cell deadline,
-                     restart on crash/hang/desync, reap exec/run process groups, and turn
-                     one reply into one `Cell`.
-
-  This file is the import surface only. It holds no logic, so there is exactly one place
-  for each fact: `from .kernel import Kernel, Cell` is the only way the loops import it.
+                     mutation gate, shell_via_exec refusal, spawn gate.
+    process.py       Kernel: spawn (plain or bwrap), per-cell deadline, restart on crash/hang/
+                     desync, reap exec/run process groups, reply -> Cell.
+  This file = import surface only, no logic. `from .kernel import Kernel, Cell` is the only
+  import path the loops use.
 
 ENTRY POINTS
-  from .kernel import Kernel, Cell, PROTOCOL      # the surface the loops and run.py use
+  from .kernel import Kernel, Cell, PROTOCOL      # surface for the loops and run.py
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, allow_shell=None, supervise=True)
     .start() / .run(code, check_cache=None) / .call(tool, args, check_cache=None) / .stop()
-  Re-exported constants: PROTOCOL, MARKER, MAX_CODE, MAX_OUTPUT, CELL_TIMEOUT
-  Re-exported sources:   DRIVER, PRELUDE, RUN_PRELUDE, HEADERS_SOURCE
-  Re-exported shapes:    CellRequest, CellReply, ExtendNotice, Cell
+  re-exported constants: PROTOCOL, MARKER, MAX_CODE, MAX_OUTPUT, CELL_TIMEOUT
+  re-exported sources:   DRIVER, PRELUDE, RUN_PRELUDE, HEADERS_SOURCE
+  re-exported shapes:    CellRequest, CellReply, ExtendNotice, Cell
 
 INVARIANTS
-  - The names and defaults re-exported here are the package's public surface. Moving a
-    symbol between submodules must not change what an importer sees; nothing outside the
-    package imports a submodule directly.
-  - Import direction is acyclic and one-way:
-    protocol <- driver <- prelude <- run_prelude, and process imports all four.
-    A submodule always imports its siblings (`from .protocol import PROTOCOL`), never this
-    package, so importing one piece for a test does not drag in the subprocess machinery.
-  - Every submodule carries the four header sections; `python3 bench/guide.py --check` gates
-    them and `guide(prelude|driver|protocol|kernel)` reaches the contract without reading a
-    1600-line source string.
-  - The split is layout, not behaviour: PROTOCOL stays the single version number, and the
-    child still receives DRIVER/PRELUDE/RUN_PRELUDE/HEADERS_SOURCE as source strings.
+  names/defaults re-exported here = package public surface. Moving a symbol between submodules
+  must not change what an importer sees; nothing outside the package imports a submodule directly.
+  import direction = acyclic, one-way: protocol <- driver <- prelude <- run_prelude; process
+  imports all four. A submodule imports siblings (`from .protocol import PROTOCOL`), never this
+  package, so one piece is testable without the subprocess machinery.
+  every submodule carries the four header sections; `python3 bench/guide.py --check` gates them.
+  split = layout only: PROTOCOL stays the single version number; the child still receives
+  DRIVER/PRELUDE/RUN_PRELUDE/HEADERS_SOURCE as source strings.
 
 WHERE TO CHANGE
-  The protocol version or a wire field ......... protocol.py (PROTOCOL, CellRequest,
-                                                 CellReply, Cell, `_cap`, `_json_result`)
-  How a cell runs in the child ................. driver.py (DRIVER)
-  A read/search/map/file verb or helper ........ prelude_read.py / prelude_index.py (then the
-                                                 matching rule text in tool_loop.TOOL_RULES /
-                                                 repl.REPL_RULES / state_loop.STATE_RULES)
-  exec / git / run, the mutation and spawn gate  run_prelude.py (RUN_PRELUDE)
-  Timeouts, restarts, orphan reaping, bwrap ..... process.py (Kernel)
+  protocol version / wire field .... protocol.py (PROTOCOL, CellRequest, CellReply, Cell,
+                                     _cap, _json_result)
+  cell execution in the child ...... driver.py (DRIVER)
+  read/search/map/file verb ........ prelude_read.py / prelude_index.py, then rule text in
+                                     tool_loop.TOOL_RULES / repl.REPL_RULES / state_loop.STATE_RULES
+  exec / git / run / mutation+spawn gate ... run_prelude.py (RUN_PRELUDE)
+  timeouts, restarts, orphan reaping, bwrap  process.py (Kernel)
 """
 from __future__ import annotations
 

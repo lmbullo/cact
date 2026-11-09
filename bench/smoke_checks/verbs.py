@@ -32,6 +32,7 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 
@@ -56,7 +57,7 @@ def run(check, root, kernel):
           str(cell.envelope)[:240])
     card, visible = state_loop.render_observation(cell, 1, 0, None, 600, {})
     check("state: a typed observation is rendered verbatim, not digested",
-          "[observe] read ok" in card and "[page]" in card and "[data]" in card
+          "[obs] read ok" in card and "[page]" in card and "[data]" in card
           and "[stdout]" not in card and visible.get("call_a.txt") == [[1, 1]],
           card[:240])
     cell = kernel.call("map", {"path": "call_a.txt"})
@@ -480,6 +481,21 @@ def run(check, root, kernel):
            "status()" in notes and "session journal" in notes
            and cell.envelope.get("kind") == "git_status", notes[:300])
 
+    kernel.run("mkdir('nested'); write('nested/inner.txt', 'x'); write('outer.txt', 'y')")
+    cell = kernel.call("status", {"cwd": "nested"})
+    data = (cell.envelope or {}).get("data") or {}
+    check("kernel: status from a nested workspace finds the enclosing repository",
+          cell.envelope.get("ok") is True and data.get("git") is True
+          and data.get("no_repo") is False and data.get("branch")
+          and int(data.get("changed_total") or 0) >= 2
+          and any(item.get("path") == "outer.txt" for item in data.get("changed") or [])
+          and not any(str(item.get("path")).startswith("../")
+                      for item in data.get("changed") or []),
+          json.dumps(data)[:400])
+    check("kernel: status from a nested workspace still reports the journal-wide count",
+          int(data.get("adds") or 0) >= 2 and "journal:" in cell.stdout,
+          (cell.stdout[-300:] + str(data.get("adds"))))
+
     # The plan is what the worker was started with; the kernel only has to name the typed call.
     with kernel_for(root, check_commands=[{"name": "probe", "cmd": "echo plan-ok"},
                                           {"name": "test", "cmd": "cd tui && bun test"}]) as plan_kernel:
@@ -521,6 +537,29 @@ def run(check, root, kernel):
            (cell.stdout + (cell.result or ""))[:240])
 
     # --- the boundary: registry coercion, a crashed verb, and data that must survive -----
+    cell = kernel.call("map", {"max_files": "2"})
+    page = (cell.envelope or {}).get("page") or {}
+    check("kernel: map(max_files='2') coerces the numeric scalar",
+          not cell.rejected and (cell.envelope or {}).get("ok") is True
+          and page.get("shown") == 2 and page.get("has_more") is True, str(page)[:240])
+    cell = kernel.call("read", {"path": "call_a.txt", "start": "2"})
+    check("kernel: read(start='2') coerces the numeric scalar",
+          not cell.rejected and (cell.envelope or {}).get("ok") is True
+          and " 2|" in cell.stdout, (cell.stdout + str(cell.result))[:240])
+    kernel.run("write('coerce.txt', 'one\\ntwo\\nthree\\n')")
+    cell = kernel.call("write", {"path": "coerce.txt", "content": "z", "force": "false"})
+    check("kernel: write(force='false') coerces the boolean and still refuses a short body",
+          cell.rejected and "shorter_write" in str(cell.result)
+          and (root / "coerce.txt").read_text() == "one\ntwo\nthree\n",
+          str(cell.result)[:240])
+    cell = kernel.call("write", {"path": "coerce.txt", "content": "z", "force": "on"})
+    check("kernel: write(force='on') coerces the boolean and replaces the file",
+          not cell.rejected and (root / "coerce.txt").read_text() == "z",
+          str(cell.result)[:240])
+    cell = kernel.call("read", {"path": "call_a.txt", "repeat": "false"})
+    check("kernel: read(repeat='false') is a boolean, not a truthy string",
+          not cell.rejected and (cell.envelope or {}).get("ok") is True,
+          str(cell.result)[:240])
     cell = kernel.call("map", {"max_files": "x"})
     result = str(cell.result)
     check("kernel: map(max_files='x') is bad_arguments with a signature, no traceback",

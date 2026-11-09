@@ -1,48 +1,44 @@
-"""process: Kernel, the parent-side subprocess supervisor and its one Cell pipeline.
+"""process: Kernel, parent-side subprocess supervisor + its one Cell pipeline.
 
 WHAT IT IS
-  `Kernel` spawns the child (plain `python3 -u -c DRIVER`, or the same under bwrap with a
-  read-only `/`), supervises the per-cell deadline, restarts it when it dies, hangs or
-  desynchronises, reaps the process groups that exec()/run() started, and returns a `Cell`.
-  `Kernel.run(code)` and `Kernel.call(tool, args)` are two requests through the one
-  `_execute` pipeline, so a python cell and a typed verb share journal, coverage and replay.
+  Kernel spawns the child (plain `python3 -u -c DRIVER`, or the same under bwrap with a
+  read-only `/`), supervises the per-cell deadline, restarts on death/hang/desync, reaps the
+  process groups exec()/run() started, returns a Cell. Kernel.run(code) and Kernel.call(tool,
+  args) = two requests through one _execute pipeline, so a python cell and a typed verb share
+  journal, coverage and replay.
 
 ENTRY POINTS
   Kernel(root, timeout=15.0, writable=False, prelude="off"|"all"|"mut",
          allow_run=False, allow_shell=None, supervise=True,
          extra_verbs=None, extra_prelude="", check_commands=None, env=None)
     .start()                            spawn the child (lazy: run()/call() start it)
-    .run(code, check_cache=None, extra_obs=None)        one python cell -> Cell
-    .call(tool, args, check_cache=None, extra_obs=None) one typed verb -> the same Cell pipeline
-                                                `extra_obs` seeds the child's `_OBS` first
+    .run(code, check_cache=None, extra_obs=None)         one python cell -> Cell
+    .call(tool, args, check_cache=None, extra_obs=None)  one typed verb -> same Cell pipeline;
+                                                         extra_obs seeds the child's _OBS first
     .stop()                             SIGKILL the group, reap orphans, drop the obs log
-  The child's environment is the wire: KERNEL_PRELUDE, KERNEL_RUN_PRELUDE, KERNEL_HEADERS,
-  KERNEL_VERBS, KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL,
-  KERNEL_EXTRA_VERBS, KERNEL_EXTRA_PRELUDE (per-run experiment tools), and the plan as
-  KERNEL_CHECK_COMMANDS so an exec of a gate command can name checks(). `env=` adds keys to that
-  allowlist, for a check that points a child at a fixture CODE_TUI_STATE_ROOT, and can add but
-  never drop a wired key.
+  child env = wire: KERNEL_PRELUDE, KERNEL_RUN_PRELUDE, KERNEL_HEADERS, KERNEL_VERBS,
+  KERNEL_SHELL, KERNEL_SUPERVISE, KERNEL_OBS_LOG, KERNEL_ORPHAN_JOURNAL, KERNEL_EXTRA_VERBS,
+  KERNEL_EXTRA_PRELUDE for per-run experiment tools; KERNEL_CHECK_COMMANDS = the plan, so an
+  exec of a gate command can name checks(). env= adds keys to that allowlist (e.g. a fixture
+  CODE_TUI_STATE_ROOT); it can add, never drop a wired key.
 
 INVARIANTS
-  - A cell that overruns `timeout`, dies, or emits a non-`@@K@@` line is killed and restarted
-    with an EMPTY namespace, and the model is told so. Never pretend state survived.
-    `supervise=False` disables the in-child alarm (legacy behaviour).
-  - The observation log is the one thing that survives: it is appended to KERNEL_OBS_LOG and
-    reloaded by the new child, so recall() works after a crash. `stop()` deletes it;
-    `_restart()` keeps it.
-  - exec()/run() children run in their own session, so `_kill_group()` cannot reach them.
-    `_reap_orphans()` reads the journal and kills those groups identity-checked (pid + /proc
-    start id) before a new child starts. Removing it leaks a test server, browser or build.
-  - The protocol is versioned: the first message of a cell is compared with PROTOCOL; a
-    mismatch restarts the child and returns an error Cell rather than misreading a stale one.
-  - `run()` refuses code over MAX_CODE characters instead of letting the child choke.
+  cell over timeout, dead child, or non-@@K@@ line -> kill + restart with EMPTY namespace; the
+  model is told. Never pretend state survived. supervise=False disables the in-child alarm.
+  observation log = the only survivor: appended to KERNEL_OBS_LOG, reloaded by the new child, so
+  recall() works after a crash. stop() deletes it; _restart() keeps it.
+  exec()/run() children own their session: _kill_group() cannot reach them. _reap_orphans() reads
+  the journal and kills those groups identity-checked (pid + /proc start id) before a new child
+  starts. Removing it leaks a test server, browser or build.
+  protocol versioned: first message of a cell compared with PROTOCOL; mismatch -> restart +
+  error Cell, never a misread stale reply.
+  run() refuses code over MAX_CODE characters; the child never chokes on it.
 
 WHERE TO CHANGE
-  Timeout/crash handling ....................... `_execute`, `_restart`, `_kill_group`,
-                                                 `_reap_orphans`
-  The sandbox (plain vs bwrap) ................. `_argv`, `start`
-  What the child is told ....................... the `env=` block in `start`
-  What a request carries ....................... protocol.CellRequest / `run` / `call`
+  timeout/crash handling ...... _execute, _restart, _kill_group, _reap_orphans
+  sandbox (plain vs bwrap) .... _argv, start
+  child env .................. the env= block in start
+  request shape .............. protocol.CellRequest / run / call
 """
 from __future__ import annotations
 

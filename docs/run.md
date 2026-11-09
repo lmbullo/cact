@@ -89,9 +89,10 @@ key. The key list is the contract in `bench/task_journal.py`.
 `tui/python/worker.py`, records `<tag>.events.jsonl`, `<tag>.prompt.txt`,
 `<tag>.summary.json`, runs the check and diffs the tree. `--sandbox local` (the default) is
 that path unchanged. `--sandbox daytona` runs the same worker case in a sandbox and writes the
-same local artifacts: `/work/harness` is this repo minus `bench/archive`, `bench/.cache`,
-`bench/.tmp`, `.git` and `node_modules`; `/work/ws` is the frozen base; the key is passed only
-in the worker's exec `env=`. The sandbox is deleted in a `finally` (the final JSON line reports
+same local artifacts: `/work/harness` is this repo minus `bench/archive`, `bench/ws`,
+`bench/.cache`, `bench/.tmp`, `.git` and `node_modules`; `/work/ws` is the frozen base; the
+worker inherits every `CODE_TUI_*` override except host-path settings, and the key is passed
+only in the worker's exec `env=`. The sandbox is deleted in a `finally` (the final JSON line reports
 its id, wall time and `deleted: true`), so only the snapshot survives. The snapshot is named by
 `CODE_TUI_DSNAPSHOT`, default `code-tui-py-bun`, built once from `python:3.12` with bun at the
 pinned `remote.BUN_VERSION`, then reused by name on later runs. Without the `daytona` SDK or

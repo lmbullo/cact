@@ -1,35 +1,32 @@
-"""The agent package: kernel, loops, model client, checks, traces.
+"""agent: package map: kernel, loops, model client, checks, traces.
 
 WHAT IT IS
-  The importable agent. `kernel/` is the action space and the child process; the loops
-  turn model replies into cells and cells into observations; `config.py` is what production
-  builds. Read in this order: kernel/ -> tool_loop.py -> state_loop.py -> config.py.
+  Import root. kernel/ = action space + child process; loops = reply->cell->observation;
+  config.py = production construction. Read order: kernel/ -> tool_loop.py -> state_loop.py
+  -> config.py.
 
 ENTRY POINTS
-  Kernel / Cell .................... kernel/ (`run` for a python cell, `call` for a typed verb);
-                                     protocol.py has the wire shapes, process.py the supervisor
-  Verb registry / tool specs ....... verbs.py (schema + summary + function), tools.py (specs)
-  guide() / the header index ....... headers.py (also shipped to a kernel cell as a verb)
-  ToolLoop / StateLoop / ReplLoop .. the loop modules; config.build() picks one
-  Client, LLMError ................. llm.py
-  Check, run_check, evaluate ....... check_run.py; plans in check_plan.py
-  Budget, RunResult, _usage_add .... loop.py
-  Trace, render .................... trace.py
+  kernel/ ....................... Kernel/Cell (`run` python cell, `call` typed verb);
+                                  protocol.py = wire shapes, process.py = supervisor
+  verbs.py / tools.py ........... verb registry (schema + summary + function) / provider specs
+  headers.py .................... guide() + header index; shipped to a kernel cell as a verb
+  ToolLoop/StateLoop/ReplLoop ... loop modules; config.build() selects one
+  Client, LLMError .............. llm.py
+  Check, run_check, evaluate .... check_run.py; plans in check_plan.py
+  Budget, RunResult, _usage_add . loop.py
+  Trace, render ................. trace.py
 
 INVARIANTS
-  - No import side effects: nothing here touches the network or the filesystem at import
-    time. `bench/agent/config.py` reads env vars only when imported.
-  - `loop.py` holds shared dataclasses only; it must not grow a loop again.
-  - `headers.py` is stdlib-only, `__file__`-free and read-only, because `kernel/prelude.py`
-    ships its *source* to the child interpreter as KERNEL_HEADERS. Anything it imports or
-    touches must exist in a bare `python3 -c` with cwd set to a task workspace.
+  import side effects = none: no network, no filesystem. config.py reads env vars on import.
+  loop.py = shared dataclasses only; never a loop.
+  headers.py = stdlib-only, __file__-free, read-only: kernel/prelude.py ships its source to the
+  child as KERNEL_HEADERS; it must run in bare `python3 -c` with cwd=task workspace.
 
 WHERE TO CHANGE
-  Action space or a helper ......... kernel/prelude.py (PRELUDE) or kernel/run_prelude.py
-                                     (RUN_PRELUDE); kernel/process.py is the supervisor
-  Finish protocol or stop reason ... tool_loop.py (a reply dialect overrides `_reply`, see repl.py)
-  Production defaults .............. config.py
-  A new module header or section ... that module's docstring; `python3 bench/guide.py --check`
-                                     and bench/smoke.py fail when it is incomplete
-
+  action space / helper ......... kernel/prelude.py (PRELUDE) or kernel/run_prelude.py
+                                  (RUN_PRELUDE); kernel/process.py = supervisor
+  finish protocol / stop reason . finish_flow.py / stops.py (tool_loop.py re-exports them)
+  production defaults ........... config.py
+  module header / section ....... that module's docstring; gates: `python3 bench/guide.py
+                                  --check`, `python3 bench/smoke.py`
 """

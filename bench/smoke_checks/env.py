@@ -31,7 +31,8 @@ def run(check):
     (root / "tests").mkdir()
     (root / "node_modules").mkdir()
 
-    data = env.environment(root, "add tui/src/x.ts and tui/tests/")
+    data = env.environment(root, "add tui/src/x.ts and tui/tests/",
+                           checks=[{"name": "test", "cmd": "python3 -m unittest"}])
     check("env: the root and top listing skip generated trees",
           data["root"] == str(root.resolve()) and "src/" in data["top"]
           and "node_modules/" not in data["top"], str(data["top"]))
@@ -44,4 +45,7 @@ def run(check):
           env.resolve_path(root, "nope/x.ts") == {"given": "nope/x.ts", "missing": True})
     text = env.render_environment(data)
     check("env: the card names the root and the replacement path",
-          "[environment]" in text and "use src/x.ts" in text, text[:240])
+          "[env]" in text and "use src/x.ts" in text, text[:240])
+    check("env: the card carries the file map and the check plan",
+          "files=" in text and "src/x.ts" in text and "checks=test=python3 -m unittest" in text,
+          text[:400])

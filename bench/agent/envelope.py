@@ -1,28 +1,23 @@
-"""The typed observation envelope: one shape for every verb result.
+"""envelope: the typed observation envelope: one shape for every verb result.
 
 WHAT IT IS
-  A typed verb answers with data, not with a terminal transcript. `normalize(tool, value)`
-  turns whatever a PRELUDE helper returned into the one dict a loop, a trace and another
-  agent can read without guessing:
-
+  A typed verb answers with data, not a terminal transcript. normalize(tool, value) turns any
+  PRELUDE helper return into the one dict a loop, trace or another agent can read:
     ok       bool
-    op       the verb name
+    op       verb name
     kind     the helper's own kind (file/matches/map/git_diff/...)
-    data     small, tool-specific fields (path, count, occurrences, ...)
+    data     small tool-specific fields (path, count, occurrences, ...)
     page     {shown, total, offset, next, unit, has_more, truncated, complete} or None
-    handle   the `_OBS[n]` address of the full delivered text, or None
-    notes    human-readable notes as a list (never the only copy of a fact)
+    handle   `_OBS[n]` address of the full delivered text, or None
+    notes    list of notes (never the only copy of a fact)
     error    {code, message, use} when ok is false
-
-  `page` is the only paging contract. `shown` is a count (or the inclusive [a, b] range the
-  helper already reports), `offset` is the cursor of the FIRST unit this response delivered,
-  `next` is the cursor to resume at, `unit` names what the cursor counts
-  (line/char/hit/file/entry/module), `has_more` says the file/result continues, and
-  `truncated`/`complete` are one pair: a built-in default page limit cut output the caller did
-  not ask to have cut (`truncated: true`, `complete: false`), or the request was served
-  (`truncated: false`, `complete: true`) even when `has_more` is true. A helper may keep extra
-  top-level keys for python callers; the envelope does not repeat them, so a model never sees
-  the same fact twice.
+  page = the only paging contract. shown = count (or inclusive [a, b] range the helper already
+  reports); offset = cursor of the FIRST unit this response delivered; next = resume cursor;
+  unit = what the cursor counts (line/char/hit/file/entry/module); has_more = file/result
+  continues; truncated/complete = one pair: a built-in default page limit cut output the caller
+  did not ask to have cut (truncated:true, complete:false), or the request was served
+  (truncated:false, complete:true) even when has_more is true. A helper may keep extra top-level
+  keys for python callers; the envelope does not repeat them: no fact twice.
 
 ENTRY POINTS
   normalize(tool, value, handle=None) -> dict
@@ -30,27 +25,26 @@ ENTRY POINTS
   UNITS / BULK
 
 INVARIANTS
-  - Stdlib-only and side-effect-free: the parent imports it; the kernel child does not.
-  - It never invents a page. `page_of` returns None when the helper returned no paging
-    fields; a caller must not treat None as "complete".
-  - Bulk payloads (`text`, `stdout`, `stderr`, `matches`, `files`, `entries`, `items`,
-    `modules`, `hunk`) stay out of the envelope. Their delivery is stdout; their address is
-    the handle. That keeps the structured half small and makes duplication impossible.
-  - An empty payload (`{}`) from a named tool is `ok:false`/`internal_error`, never a
-    success: a missing result means the verb crashed or never answered.
-  - `complete == not truncated`, everywhere. `has_more` is separate and always means the
-    underlying file/result continues; it never implies a failed request. A helper reports
-    `truncated` only when a built-in default (page size, max_chars) cut the output; an
-    explicit window (read `end`, `max_files`, `max_entries`, `max_results`, `max_chars`) is
-    served, so it is complete with `has_more` true.
-  - `offset` is never the next cursor: it is the start of what this response delivered
-    (0-based index for map/guide/outline/search, the first line for read, the first char for
-    git). `next` is the only resume cursor.
+  stdlib-only, side-effect-free: parent imports it; the kernel child does not.
+  never invents a page: page_of -> None when the helper returned no paging fields; a caller
+  must not treat None as "complete".
+  bulk payloads (text, stdout, stderr, matches, files, entries, items, modules, hunk) stay out
+  of the envelope: delivery = stdout, address = handle. Keeps the structured half small and
+  duplication impossible.
+  empty payload ({}) from a named tool -> ok:false/internal_error, never success: a missing
+  result means the verb crashed or never answered.
+  complete == not truncated everywhere. has_more separate, always means the underlying
+  file/result continues; never implies a failed request. A helper reports truncated only when a
+  built-in default (page size, max_chars) cut output; an explicit window (read end, max_files,
+  max_entries, max_results, max_chars) is served: complete with has_more true.
+  offset is never the next cursor: start of what this response delivered (0-based index for
+  map/guide/outline/search, first line for read, first char for git). next = the only resume
+  cursor.
 
 WHERE TO CHANGE
-  A new paging field ................. `page_of` and the helper that returns it
-  What the model sees structurally ... `normalize`'s `data` filter
-  The rendered card ................... `bench/agent/state_loop.py`
+  new paging field ............. page_of + the helper that returns it
+  model-visible structure ...... normalize's data filter
+  rendered card ................ bench/agent/state_card.py
 """
 from __future__ import annotations
 
@@ -148,12 +142,12 @@ def page_of(kind, value):
     if pointer:
         shown = 0
     has_more = bool(value.get("has_more") or nxt is not None)
-    # One pair, everywhere: `truncated` says a default limit cut output the caller asked for;
-    # `complete` is exactly its inverse. `has_more` never changes either one.
+    # One pair everywhere: `truncated` = a default limit cut output the caller did not ask to
+    # cut; `complete` = its inverse. `has_more` changes neither.
     truncated = bool(value.get("truncated"))
     complete = not truncated
-    # `next` is a replayable argument object, not a bare number whose unit the caller has to
-    # remember: read is line-based, every other pager is offset-based.
+    # `next` = replayable argument object, not a bare number: read is line-based; every other
+    # pager is offset-based.
     if nxt is None:
         next_arg = None
     elif kind_name in ("file", "files"):
@@ -176,8 +170,8 @@ def normalize(tool, value, handle=None):
         return {"ok": True, "op": str(tool), "kind": str(tool), "data": {},
                 "page": None, "handle": handle, "notes": [], "error": None}
     if not value:
-        # An empty payload for a named tool is a missing result, never a success: the driver
-        # may have crashed before it could answer, and `{}` used to normalize to ok:true.
+        # Empty payload for a named tool = missing result, never success: the driver may have
+        # crashed before answering.
         return {"ok": False, "op": str(tool), "kind": str(tool) + "_failed",
                 "error": {"code": "internal_error",
                           "message": "no result from %s" % tool,

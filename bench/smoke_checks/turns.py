@@ -48,7 +48,7 @@ def run(check):
     check("turn: the stop vocabulary is fixed",
           set(tool_loop.STOPS) == {"DONE", "VERIFIED", "STEP_LIMIT", "WALL_LIMIT", "STAGED",
                                    "GOAL_UNMET", "TRUNCATED", "BAD_ARGS", "LLM_FAILED",
-                                   "TOKEN_LIMIT", "SKEPTIC_UNMET", "NEEDS_INPUT"},
+                                   "TOKEN_LIMIT", "SKEPTIC_UNMET", "NEEDS_INPUT", "GREEN"},
           str(tool_loop.STOPS))
     check("turn: a turn outcome defaults to continuing",
           not tool_loop.TurnOutcome().end and tool_loop.TurnOutcome().stop is None)
@@ -106,9 +106,10 @@ def run(check):
           plan_message[:240])
 
     state_card, _ = state_loop.render_observation(
-        _cell(), 1, plan=["[phase] act", "[plan]", "1. [ ] read the contract"])
+        _cell(), 1, plan=["p=act", "[plan] 1:- read the contract"])
     check("state: the card renders the durable phase and plan lines",
-          "[phase] act" in state_card and "[plan]" in state_card, state_card[:200])
+          "p=act" in state_card and "[plan] 1:- read the contract" in state_card,
+          state_card[:200])
 
     typed_read = Cell(stdout="     1| alpha\n", stderr="",
                       result='{"ok": true, "kind": "file"}', final=None, duration_ms=1,

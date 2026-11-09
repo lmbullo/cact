@@ -1,10 +1,9 @@
 """records: the small dataclasses one turn machine passes around.
 
 WHAT IT IS
-  The four values `tool_loop.ToolLoop` owns per run: `FinishState` (the staged/accepted
-  answer), `CallRecord` (one tool call), `TurnOutcome` (what a turn decided) and `Tally`
-  (the counters). They are independent of the loop's imports, so a test can construct them
-  without a client or a kernel.
+  Four per-run values owned by tool_loop.ToolLoop: FinishState (staged/accepted answer),
+  CallRecord (one tool call), TurnOutcome (what a turn decided), Tally (counters). Independent of
+  the loop's imports: a test can construct them without a client or kernel.
 
 ENTRY POINTS
   FinishState()  .stage(v) / .accept(v) / .clear() / .staged / .terminal
@@ -13,14 +12,14 @@ ENTRY POINTS
   Tally()  steps, calls, errors, repeats, llm_calls
 
 INVARIANTS
-  - `FinishState.accepted` is the one terminal predicate; `staged` is not terminal.
-  - `CallRecord.as_dict` is the trace shape; adding a field here adds it to every trace.
-  - These types hold data only: no client, kernel, file or clock.
+  FinishState.accepted = the one terminal predicate; staged is not terminal.
+  CallRecord.as_dict = the trace shape; a field here reaches every trace.
+  data only: no client, kernel, file or clock.
 
 WHERE TO CHANGE
-  The finish protocol ................. FinishState
-  The trace record shape .............. CallRecord.as_dict
-  The turn outcome or counters ........ TurnOutcome, Tally
+  finish protocol ........ FinishState
+  trace record shape ..... CallRecord.as_dict
+  turn outcome/counters .. TurnOutcome, Tally
 """
 from __future__ import annotations
 

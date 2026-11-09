@@ -1,41 +1,41 @@
-"""handoff: the structured finish answer and the compact block it renders to.
+"""handoff: structured finish answer + the compact block it renders to.
 
 WHAT IT IS
-  `final_answer(value)` accepts either the old plain string or a dict:
-  `{summary, changed, gates, deferred, untested}`. This module owns the one rendering and
-  normalization used by both halves:
-    fields(value)   the normalized dict (empty for a plain string), with every field clipped
-    render(value)   a short block: summary first, one line per non-empty section
-    split(value)    `(rendered_text, fields)`, the pair a Cell carries
+  final_answer(value) accepts a plain string or a dict {summary, changed, gates, deferred,
+  untested}. One rendering + normalization for both halves:
+    fields(value)   normalized dict (empty for a plain string), every field clipped
+    render(value)   short block: summary first, one line per non-empty section
+    split(value)    (rendered_text, fields), the pair a Cell carries
 
 ENTRY POINTS
-  render(value)   str       the text a caller sees, unchanged when value is already a string
-  fields(value)   dict      summary/changed/gates/deferred/untested, clipped to fixed limits
-  split(value)    tuple     `(render(value), fields(value))` for Cell.from_reply
+  render(value)   str    caller-facing text; a string value passes through unchanged
+  fields(value)   dict   summary/changed/gates/deferred/untested, clipped to fixed limits
+  split(value)    tuple  (render(value), fields(value)) for Cell.from_reply
 
 INVARIANTS
-  - A plain string is never reformatted or validated: existing callers stay byte-identical.
-  - Nothing is dropped silently: `changed` is capped at 12 paths and says `+N more`; every
-    other list is capped too and the omitted count is named in the line.
-  - The block is bounded (summary 600 chars, each item 160, each section line 700) because it
-    is also the TUI's final card and the next task's `[workspace history]` source.
+  plain string input = never reformatted, never validated; existing callers stay byte-identical.
+  nothing dropped silently: changed capped at 12 paths + `+N more`; every list capped, omitted
+  count named in the line.
+  block bounded: summary 600 chars, item 160, section line 700. Same text is the TUI final card
+  and the next task's `[workspace history]` source.
 
 WHERE TO CHANGE
-  A new field in the dict ............... FIELDS, fields(), render()
-  A cap or a clip width ................. SUMMARY_CHARS / ITEM_CHARS / CHANGED_CAP / LINE_CHARS
-  The kernel's `final_answer` ........... kernel/driver.py (it passes a dict through untouched)
+  new dict field ......... FIELDS, fields(), render()
+  cap / clip width ....... SUMMARY_CHARS / ITEM_CHARS / CHANGED_CAP / LINE_CHARS
+  kernel final_answer .... kernel/driver.py (passes a dict through untouched)
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 FIELDS = ("summary", "changed", "gates", "deferred", "untested")
-SUMMARY_CHARS = 600
-ITEM_CHARS = 160
-CHANGED_CAP = 12
+SUMMARY_CHARS = 480
+ITEM_CHARS = 120
+CHANGED_CAP = 10
 GATE_CAP = 8
 LIST_CAP = 6
-LINE_CHARS = 700
+LINE_CHARS = 500
 
 
 def _text(value: Any, limit: int = ITEM_CHARS) -> str:
@@ -58,20 +58,44 @@ def _items(value: Any) -> list[str]:
 
 
 def _gates(value: Any) -> list[dict]:
-    """The `gates` field as `{name, ok, exit}` dicts, tolerating a string or a bare list."""
+    """The `gates` field as `{name, ok, exit}` dicts, tolerating `cmd`/`result` rows."""
     if not isinstance(value, (list, tuple)):
         return []
     gates = []
     for item in value:
         if isinstance(item, dict):
-            gates.append({
-                "name": _text(item.get("name"), 60),
-                "ok": bool(item.get("ok")),
-                "exit": item.get("exit"),
-            })
+            name = item.get("name") or item.get("cmd") or item.get("command")
+            exit_code = item.get("exit", item.get("code"))
+            result = " ".join(str(item.get("result") or item.get("status") or "").split())
+            ok = item.get("ok")
+            if ok is None:
+                ok = _gate_ok(exit_code, result)
+            gates.append({"name": _text(name, 60), "ok": bool(ok), "exit": exit_code})
         else:
-            gates.append({"name": _text(item, 60), "ok": False, "exit": None})
+            text = _text(item, 60)
+            lowered = text.lower()
+            gates.append({"name": text,
+                          "ok": not any(word in lowered for word in ("fail", "error")),
+                          "exit": None})
     return gates
+
+
+def _gate_ok(exit_code: Any, result: str) -> bool:
+    """A gate row is ok only when its exit is 0 or its result has no nonzero failure."""
+    if exit_code is not None:
+        return str(exit_code).strip() in ("0", "")
+    lowered = result.lower()
+    match = re.search(r"exit(?: code)?[ =:]?(\d+)", lowered)
+    if match:
+        return match.group(1) == "0"
+    match = re.search(r"(\d+)\s+failed", lowered)
+    if match:
+        return int(match.group(1)) == 0
+    if re.search(r"\b0\s+fail", lowered):
+        return True
+    good = any(mark in lowered for mark in ("pass", "ok", "green", "success"))
+    bad = any(mark in lowered for mark in ("fail", "error", "traceback"))
+    return good and not bad
 
 
 def fields(value: Any) -> dict:
@@ -116,9 +140,9 @@ def render(value: Any) -> str:
     data = fields(value)
     lines = [data["summary"]] if data["summary"] else []
     for line in (
-        _line("changed", data["changed"], CHANGED_CAP),
+        _line("chg", data["changed"], CHANGED_CAP),
         _gate_line(data["gates"]),
-        _line("deferred", data["deferred"], LIST_CAP),
+        _line("defer", data["deferred"], LIST_CAP),
         _line("untested", data["untested"], LIST_CAP),
     ):
         if line:

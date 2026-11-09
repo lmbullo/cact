@@ -21,7 +21,7 @@ INVARIANTS
 WHERE TO CHANGE
   A gate or hint ......................... kernel/run_prelude.py `_mutating_command` / `_HINT`
   Orphan reaping ......................... kernel/process.py `_reap_orphans`
-  The state card ......................... bench/agent/state_loop.py `_observe` / `_compact`
+  The state card ......................... bench/agent/state_card.py `render_observation`
   final_answer ........................... kernel/driver.py
 """
 from __future__ import annotations
@@ -174,7 +174,7 @@ def run(check, root, kernel):
           and ranges[0][0] == 1 and ranges[-1][1] == 900,
           f"{ranges} covered={state_loop.covered(ranges or [])}")
     check("state: the digested card still names the ranges and the handle",
-          "[read] huge.txt" in card and "unread:" in card, card[:160])
+          "[read] huge.txt" in card and " unread " in card, card[:160])
     raw_text = "\n".join(f"row {n}" for n in range(1, 401))
     raw_cell = Cell(stdout=raw_text, stderr="", result=None, final=None, duration_ms=1,
                     reads={"raw.txt": {"ranges": [[1, 2]], "total": 2}})
@@ -214,11 +214,11 @@ def run(check, root, kernel):
     cell = kernel.run("final_answer(%s)" % answer)
     rendered = cell.final or ""
     check("handoff: a dict final_answer renders every section",
-          all(part in rendered for part in ("all sections", "changed:", "gates: smoke ok(0)",
-                                            "deferred: next: wire it", "untested: edge case")),
+          all(part in rendered for part in ("all sections", "chg:", "gates: smoke ok(0)",
+                                            "defer: next: wire it", "untested: edge case")),
           rendered)
-    check("handoff: a 20-path changed list caps at 12 and names the rest",
-          "f11.py" in rendered and "f12.py" not in rendered and "+8 more" in rendered
+    check("handoff: a 20-path changed list caps at 10 and names the rest",
+          "f9.py" in rendered and "f10.py" not in rendered and "+10 more" in rendered
           and cell.handoff.get("changed") and len(cell.handoff["changed"]) == 20,
           rendered)
 

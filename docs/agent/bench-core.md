@@ -1,0 +1,27 @@
+# bench-core
+generated_by=bench/agent/pages.py
+source_headers=bench/agent/headers.py
+source_symbols=bench/index.py
+subsystem=bench-core
+page=docs/agent/bench-core.md
+modules=10
+module=bench/__init__.py symbols=-
+entry=python3 bench/eval.py [--live]       the evals: loop contracts offline, failures live | python3 bench/live.py ...            one end-to-end task through tui/python/worker.py | python3 bench/smoke.py               offline contract check | bench/evals/runner.py                the registry, execution modes and result rows | bench/evals/loops.py, live.py       the two case lists | bench/guide.py                       the contract index: which module owns what
+module=bench/eval.py symbols=-
+entry=python3 bench/eval.py --list                 every case, its kind and its failure tag | python3 bench/eval.py                        the offline loop pass | python3 bench/eval.py --tasks L04_bad_args   one case | python3 bench/eval.py --live                 the live failure-mode suite | python3 -m bench.eval ...                    package mode
+module=bench/guide.py symbols=main
+entry=python3 bench/guide.py                     the index: one line per module | python3 bench/guide.py --query checks      ranked modules that own "checks", with their headers | python3 bench/guide.py --module bench/agent/check_plan.py  one module's full header | python3 bench/guide.py --json [--query Q]  the same data as JSON, for a program | python3 bench/guide.py --limit N           cap the rows for --query (default 6) | python3 bench/guide.py --check             exit 1 if a header is missing a section | main(argv=None) -> exit code; the flags are mutually exclusive except --json
+module=bench/index.py symbols=build,symbols,main
+entry=python3 bench/index.py [--root .] [--write | --check | --json] | build(root=".") -> dict          {"root": ..., "modules": [...]} | symbols(path, source) -> list[dict]   public classes/functions/methods, with ranges
+module=bench/live.py symbols=load_key,main
+entry=python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt "..." \ | --check "bun run typecheck" [--checks '[{"name":"smoke","cmd":"...","cheap":true}]'] | [--legacy r1|r3|both] [--sandbox local|daytona] | load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env} | _daytona(args, base)  the sandbox path: snapshot, upload, worker, check, download, delete | _summary(args, events, final, wall, run, check)  the one summary both paths write | `--sandbox daytona` uses the snapshot named by `CODE_TUI_DSNAPSHOT` (default | `code-tui-py-bun`), built once from `python:3.12` + bun (bench/remote.py::create_snapshot) | and reused by name afterwards. The key is passed only in the worker's exec `env=`, never to | `create(env=...)` and never to a file. | The base must already exist: `bench/ws/` is gitignored, so build it first with | `python3 -m bench.snapshot freeze tui bench/ws/tui-base` or point --base at the archived | `bench/archive/results/ws/tui-base`.
+module=bench/remote.py symbols=RemoteError,api_key,status,Sandbox,Sandbox.id,Sandbox.code,Sandbox.run,Sandbox.upload,Sandbox.download,Sandbox.upload_tree,Sandbox.download_tree,Sandbox.delete,create,create_snapshot,main
+entry=status() -> {sdk, key, hint} | create(image=None, snapshot=None, env=None, auto_stop=30, auto_delete=120) -> Sandbox | create_snapshot(name=None, base_image=None, on_logs=None) -> {name, id, created} | the base box: python:3.12 + bun, reused by name on later runs | Sandbox.code(src) / .run(argv_or_str, cwd, env, timeout) / .upload(bytes, path) | .download(path) / .upload_tree(src, dest, exclude) / .download_tree(src, dest, exclude) | / .delete() / .id | python3 -m bench.remote --check      offline: is the SDK installed and the key found | python3 -m bench.remote --self-test  create, run, upload/download, delete (spends credit)
+module=bench/smoke.py symbols=main
+entry=python3 bench/smoke.py   the only entry point; `main()` returns the exit code | bench/smoke_support.py   check(), summary(), workspace(), kernel_for() and the fakes | bench/smoke_checks/*.py  one `run(...)` per area; the runner decides the order
+module=bench/smoke_support.py symbols=check,summary,workspace,kernel_for,FakeClient,FakeClient.complete,FakeKernel,FakeKernel.run,FakeKernel.call
+entry=from bench.smoke_support import check, kernel_for, _reply, _call, _cell, _run_loop | python3 bench/smoke.py   the only entry point; it imports this module
+module=bench/snapshot.py symbols=manifest,clone,changed,main
+entry=python3 -m bench.snapshot freeze SRC DST     clone, then write DST.manifest.json | python3 -m bench.snapshot clone  SRC DST     copy only (no manifest) | python3 -m bench.snapshot diff   DST         added/modified/deleted vs DST.manifest.json | manifest(root, write=True) -> dict           {"root": ..., "files": {rel: sha256[:16]}} | clone(src, dst)                              copy, ignoring generated dirs, symlinking node_modules | changed(run) -> {"added", "modified", "deleted"}
+module=bench/task_journal.py symbols=load,summarize,recent,compare,main
+entry=python3 bench/task_journal.py <state-dir> <task-id> | python3 bench/task_journal.py --compare <state-dir> <task-a> <task-b>  the two rows + deltas | python3 bench/task_journal.py --recent [N]  every workspace's latest tasks, newest first | load(state_dir, task_id) -> (task, turns) | summarize(state_dir, task_id) -> dict | compare(state_dir, task_ids) -> int | recent(state_root, limit) -> list[dict]

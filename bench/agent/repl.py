@@ -1,50 +1,45 @@
-"""ReplLoop: one fenced ```python block per reply (`--mode repl`), plus the rules text
-shared with the tool loops.
+"""repl: ReplLoop: one fenced ```python block per reply (`--mode repl`) + shared rules text.
 
 WHAT IT IS
-  The fenced-block alternate to ToolLoop's tool calls: the model writes code, the code runs
-  as a kernel cell, and stdout/stderr/result come back as an `[observation]`. It subclasses
-  `ToolLoop` and reuses that turn machine: budget stops (STEP_LIMIT/WALL_LIMIT), usage
-  accounting, goal rejection (GOAL_UNMET), goal_stops (VERIFIED), trace records and the
-  RunResult. This module owns only the repl dialect:
-    - reply parsing: one fenced block / ANSWER line (reply.compile_reply)
-    - the observation transcript (`observation`, also ToolLoop's default) and `history`
-    - the finish switches: stop="call" (final_answer in the cell) or stop="var" (the
-      ANSWER variable); a printing cell is UNREVIEWED, a non-action reply is PROTOCOL
-  `_reply` is the single seam: ToolLoop.run calls it with the model's reply, and this class
-  turns that reply into an Action, a kernel cell and a TurnOutcome.
+  Fenced-block alternate to ToolLoop tool calls: model writes code, code runs as a kernel cell,
+  stdout/stderr/result return as an `[observation]`. Subclasses ToolLoop and reuses that turn
+  machine: budget stops (STEP_LIMIT/WALL_LIMIT), usage accounting, goal rejection (GOAL_UNMET),
+  goal_stops (VERIFIED), trace records, RunResult. This module owns only the repl dialect:
+    reply parsing: one fenced block / ANSWER line (reply.compile_reply)
+    observation transcript (`observation`, also ToolLoop's default) + history
+    finish switches: stop="call" (final_answer in the cell) or stop="var" (the ANSWER variable);
+    a printing cell is UNREVIEWED; a non-action reply is PROTOCOL
+  _reply = the single seam: ToolLoop.run calls it with the model's reply; this class turns it
+  into an Action, a kernel cell, a TurnOutcome.
 
 ENTRY POINTS
-  REPL_RULES / BARE_RULES .... system prompts (BARE_RULES is the minimal variant)
-  RUN_NOTE / RUN_NOTE_MUT .... appended when run() is enabled; the "shell mutates bypass
-                               the journal" contract the model must obey
-  observation(cell, cap) ..... one cell -> the text the model sees (the ToolLoop default)
-  history_entry(action) ...... a parsed action -> the line kept in the transcript
+  REPL_RULES / BARE_RULES .... system prompts (BARE_RULES = minimal variant)
+  RUN_NOTE / RUN_NOTE_MUT .... appended when run() is enabled: the "shell mutations bypass the
+                               journal" contract
+  observation(cell, cap) ..... one cell -> model-visible text (ToolLoop default)
+  history_entry(action) ...... parsed action -> transcript line
   ReplLoop(client, kernel, budget, rules, stop="call"|"var",
            history="full"|"obs"|"drop"|"action", obs_chars, goal, goal_label, goal_stops,
            wrap_up_at)
-    .run(...)   inherited from tool_loop.ToolLoop
-    ._reply(...)  reply -> Action -> cell -> TurnOutcome (the repl seam)
+    .run(...)    inherited from tool_loop.ToolLoop
+    ._reply(...) reply -> Action -> cell -> TurnOutcome (the repl seam)
 
 INVARIANTS
-  - A reply with neither a python block nor an ANSWER line does not end the task: it comes
-    back as PROTOCOL with a note, and the loop continues.
-  - `final_answer` in a printing cell is UNREVIEWED: the output is shown and the answer is
-    not accepted. With a goal, both ANSWER and final_answer are rejected until it passes
-    (GOAL_UNMET).
-  - `history` decides what stays in the transcript: the full reply, just the action, or
-    nothing. Large observations are capped by `obs_chars` with an `_OBS` handle.
-  - `wrap_up_at` sends a "start wrapping up" nudge at that fraction of the step budget; the
-    base ToolLoop owns the timing, this class only supplies the fenced-answer wording.
-  - Budget, usage, goal gating and the trace summary are ToolLoop's; this module only
-    supplies the repl wording (`BUDGET_NOTE`, `CHECK_NOUN`, `REJECT_*_TAIL`) and the
-    per-turn wraparound reminders in `_before_turn`.
+  reply with neither python block nor ANSWER line -> PROTOCOL + note; run continues.
+  final_answer in a printing cell -> UNREVIEWED: output shown, answer not accepted. With a goal,
+  both ANSWER and final_answer are rejected until it passes (GOAL_UNMET).
+  history decides transcript retention: full reply, action only, or nothing. Large observations
+  capped by obs_chars with an _OBS handle.
+  wrap_up_at = fraction of step budget for the "start wrapping up" nudge; ToolLoop owns timing;
+  this class supplies the fenced-answer wording.
+  budget, usage, goal gating, trace summary = ToolLoop's; this module supplies repl wording
+  (BUDGET_NOTE, CHECK_NOUN, REJECT_*_TAIL) and per-turn reminders in _before_turn.
 
 WHERE TO CHANGE
-  What counts as an action ......... reply.py (compile_reply), not here
-  Observation format ............... `observation` (also the ToolLoop default)
-  REPL finish semantics ............ `_reply` (UNREVIEWED / PROTOCOL / the answer paths)
-  Budget, usage, goal gating ....... tool_loop.ToolLoop (`run`, `_push`, `_reject`)
+  what counts as an action ..... reply.py (compile_reply), not here
+  observation format ........... `observation` (also ToolLoop default)
+  REPL finish semantics ........ `_reply` (UNREVIEWED / PROTOCOL / answer paths)
+  budget, usage, goal gating ... tool_loop.ToolLoop (run, _push, _reject)
 """
 from __future__ import annotations
 

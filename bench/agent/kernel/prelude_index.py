@@ -1,33 +1,31 @@
-"""prelude_index: listing files and structure — map() and outline().
+"""prelude_index: file listing and structure: map() and outline().
 
 WHAT IT IS
-  Fragment 3/5 of `PRELUDE` (see prelude.py). `_walk` (gitignore-aware traversal), `map()`
-  (files with line counts, paging, include filters), and `outline()` with its parsers: Markdown
-  heading subtrees, Python defs/classes/methods, TS/JS definitions, and HTML sections/headings
-  including ones inside JS template literals.
+  Fragment 3/5 of PRELUDE (see prelude.py). _walk (gitignore-aware traversal), map() (files with
+  line counts, paging, include filters), outline() with its parsers: Markdown heading subtrees,
+  Python defs/classes/methods, TS/JS definitions, HTML sections/headings incl. inside JS
+  template literals.
 
 ENTRY POINTS
-  map(path=".", max_files=None, include=None, offset=0)      files, paged (max_files=0: all rows)
-  outline(path, max_entries=None, keys=False)                 structure with subtree ranges
-  Inside: _walk, _outline_doc, _outline_html
+  map(path=".", max_files=None, include=None, offset=0)   files, paged (max_files=0: all rows)
+  outline(path, max_entries=None, keys=False)             structure with subtree ranges
+  inside: _walk, _outline_doc, _outline_html
 
 INVARIANTS
-  - `_walk` applies SKIP_DIRS, the root `.gitignore` and the include patterns: map, search and
-    read all list through it, so generated trees never pollute a repo map.
-  - `map` pages with `shown`/`next`/`has_more`; `max_files=0` means every row plus the
-    `dirs_matched` summary, so a 700-file tree is one call instead of seven. `outline`
-    reports 1-based inclusive ranges, and a Markdown heading owns its whole subtree.
-  - Both report `offset` as the start of what they delivered (0 on the first page) and
-    `truncated` only when the default page size cut the list; an explicit `max_files`/
-    `max_entries` is a served window (`complete:true`, `has_more:true`).
-  - A missing path is `ok:false`/`not_found`; in a path list it is `partial_failure` and the
-    good files' rows are still delivered.
-  - Both are read-only and never open a file through the journalled `open()`.
+  _walk applies SKIP_DIRS, root .gitignore and include patterns: map/search/read all list through
+  it, so generated trees never pollute a repo map.
+  map pages with shown/next/has_more; max_files=0 = every row + dirs_matched summary (a 700-file
+  tree is one call). outline reports 1-based inclusive ranges; a Markdown heading owns its subtree.
+  both report offset = start of what they delivered (0 on first page); truncated only when the
+  default page size cut the list; explicit max_files/max_entries = served window
+  (complete:true, has_more:true).
+  missing path -> ok:false/not_found; in a path list -> partial_failure, good files still delivered.
+  read-only; never opens a file through the journalled open().
 
 WHERE TO CHANGE
-  Which files are listed .................. _walk, map
-  The outline grammar for one language ..... _outline_doc / _outline_html
-  Paging limits ........................... map, outline
+  listed files ................... _walk, map
+  one language's outline grammar . _outline_doc / _outline_html
+  paging limits .................. map, outline
 """
 from __future__ import annotations
 

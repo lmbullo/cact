@@ -1,27 +1,25 @@
-"""Trace: the JSONL run journal, and a human/agent-readable rendering of it.
+"""trace: the JSONL run journal + a readable rendering.
 
 WHAT IT IS
-  One JSON object per line: one record per turn, plus a final `{"summary": true, ...}` record.
-  `Trace(path)` is the optional journal the archived CLI and the smoke tests pass to
-  `loop.run(...)`; the evals record a `CaseResult` row instead. `render()` turns one file back
-  into text.
+  One JSON object per line: one record per turn + a final {"summary": true, ...} record.
+  Trace(path) = the optional journal the archived CLI and smoke tests pass to loop.run(...);
+  evals record a CaseResult row instead. render() turns one file back into text.
 
 ENTRY POINTS
   Trace(path) -> .write(record) / .close()
-  render(path, reasoning_chars, env_chars) -> str   `err`/`call`/`get`/`text` lines, then the
+  render(path, reasoning_chars, env_chars) -> str   err/call/get/text lines, then the
                                                     `== stop=... steps=...` summary
 
 INVARIANTS
-  - The file is opened with "w": a trace is a new run, never appended to. The archived traces
-    under `bench/archive/results/traces/` are committed evidence — add new runs, never rewrite
-    old ones.
-  - Records are written and flushed per turn, so a killed run still leaves readable evidence.
-  - `worker.py` substitutes its own `EventTrace` with the same `write/close` interface; keep
-    that duck type intact.
+  file opened "w": a trace is a new run, never appended. Archived traces under
+  bench/archive/results/traces/ are committed evidence: add new runs, never rewrite old ones.
+  records written and flushed per turn: a killed run still leaves readable evidence.
+  worker.py substitutes its own EventTrace with the same write/close interface: keep that duck
+  type intact.
 
 WHERE TO CHANGE
-  Record shape .................. the loops (they build the dict); this file only writes it
-  Rendering for humans/agents ... render()
+  record shape ................. the loops (they build the dict); this file only writes it
+  rendering for humans/agents .. render()
 """
 from __future__ import annotations
 

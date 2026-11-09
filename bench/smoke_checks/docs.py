@@ -2,18 +2,23 @@
 
 WHAT IT IS
   Two offline checks over the documents an agent reads before editing: `AGENTS.md`, `README.md`,
-  `docs/*.md`, `tui/README.md`, `bench/HARD.md`.
+  `docs/*.md`, `tui/README.md`, `bench/HARD.md`, plus the generated `docs/agent/` pages.
     paths   every backticked path a document names resolves in the tree, so a rename cannot
             leave a pointer that costs the next agent a wasted `read`.
     unique  no paragraph of one document is copied verbatim into another. Each fact has one
             owner (AGENTS.md: invariants/recipes/failures; README.md: identity and evals;
             docs/run.md: invocation; docs/architecture.md: runtime shape; tui/README.md: the wire
-            contract; HARD.md: measured evidence), and duplicated prose drifts until one copy
-            lies, which an agent cannot detect by reading either copy.
+            contract; HARD.md: measured evidence; docs/agent/: generated module facts), and
+            duplicated prose drifts until one copy lies, which an agent cannot detect by reading
+            either copy.
+    agent   the generated `docs/agent/` set is byte-identical to what the module headers render,
+            every indexed source module appears on exactly one page, and no page exceeds its
+            100-line budget.
 
 ENTRY POINTS
   run(check)                        called by bench/smoke.py::main after `index`
   DOCS                              the documents that are checked
+  _agent_docs()                     agent-page drift, coverage and line-budget report
   _references(text)                 backticked spans that look like a repository path
   _resolves(ref, doc_dir, paths)    whether a reference names something in the tree
   _paragraphs(text)                 the comparison unit for the unique check
@@ -35,22 +40,29 @@ INVARIANTS
     `_DUP_CHARS`, so a shared sentence (`You are the reader.`) or a shared code block is not a
     copy. It is exact: paraphrased duplication is a review call, not a gate.
   - Read-only: it reads the documents and lists the tree; it writes nothing and needs no key.
+  - The generated agent pages are regenerated from `bench/agent/headers.py` and
+    `bench/index.py`; the gate compares bytes, so a header edit without regeneration fails.
 
 WHERE TO CHANGE
   The documents that are checked ....... DOCS
   What counts as a path reference ...... _references()
+  Agent-page drift and coverage ........ _agent_docs(); generator in bench/agent/pages.py
   Which trees are generated ............ _GENERATED (not this file's callers)
   The copy threshold ................... _DUP_CHARS, _paragraphs()
 """
 from __future__ import annotations
 
+import collections
 import os
 import re
 from pathlib import Path
 
+from bench.agent import headers as header_index
+from bench.agent import pages as agent_pages
+
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ("AGENTS.md", "README.md", "docs/README.md", "docs/run.md", "docs/architecture.md",
-        "tui/README.md", "bench/HARD.md")
+        "tui/README.md", "bench/HARD.md") + agent_pages.DOCS
 _DUP_CHARS = 200
 # Generated or tool-managed trees: absent in a fresh clone, so a pointer into one may dangle.
 _GENERATED = frozenset({
@@ -123,6 +135,32 @@ def _copies(docs):
     return found
 
 
+def _agent_docs():
+    """Agent-doc drift: stale files, overlong pages, missing/duplicate/unknown modules."""
+    base = str(ROOT)
+    wanted = sorted(row["path"] for row in header_index.index(base))
+    expected = agent_pages.render_all(base)
+    actual, stale = {}, []
+    for rel, text in expected.items():
+        try:
+            actual[rel] = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            actual[rel] = ""
+        if actual[rel] != text:
+            stale.append(rel)
+    seen, long = [], []
+    for rel in agent_pages.DOCS:
+        text = actual.get(rel, "")
+        if rel != agent_pages.INDEX and len(text.splitlines()) > agent_pages.MAX_LINES:
+            long.append("%s (%d lines)" % (rel, len(text.splitlines())))
+        seen.extend(re.findall(r"^module=(\S+)", text, re.M))
+    counts = collections.Counter(seen)
+    missing = [path for path in wanted if not counts[path]]
+    duplicate = sorted(path for path, count in counts.items() if count > 1)
+    unknown = sorted(path for path in counts if path not in set(wanted))
+    return stale, long, missing, duplicate, unknown
+
+
 def run(check):
     """Every repo path named in the checked documents resolves, and no document copies another."""
     paths = list(_walk(ROOT))
@@ -137,7 +175,21 @@ def run(check):
         for ref in _references(text):
             if not _resolves(ref, doc.parent, paths):
                 dead.append(f"{name}: {ref}")
+        for ref in re.findall(
+                r"^(?:module|file|page|source_headers|source_symbols|generated_by)=(\S+)",
+                text, re.M):
+            if not (ROOT / ref).exists():
+                dead.append(f"{name}: {ref}")
     check("docs: every named path exists", not dead, "; ".join(dead[:6]))
     copies = [f"{second} copies {first}: {paragraph[:60]}"
               for paragraph, first, second in _copies(DOCS)]
     check("docs: no paragraph is copied between documents", not copies, "; ".join(copies[:4]))
+    stale, long, missing, duplicate, unknown = _agent_docs()
+    drift = (["stale: " + ", ".join(stale[:4])] if stale else []) + (
+        ["unknown: " + ", ".join(unknown[:4])] if unknown else [])
+    check("docs: agent pages match module headers", not drift, "; ".join(drift))
+    coverage = (["missing: " + ", ".join(missing[:4])] if missing else []) + (
+        ["duplicate: " + ", ".join(duplicate[:4])] if duplicate else [])
+    check("docs: every source module documented exactly once", not coverage,
+          "; ".join(coverage))
+    check("docs: agent pages fit the line budget", not long, "; ".join(long[:4]))

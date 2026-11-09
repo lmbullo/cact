@@ -14,7 +14,9 @@ ENTRY POINTS
 
 INVARIANTS
   - Pure python and a TemporaryDirectory: no kernel, no network, and nothing in the real
-    state directory. XDG_STATE_HOME is set for the duration and restored in `finally`.
+    state directory. XDG_STATE_HOME is set for the duration and restored in `finally`, and
+    CODE_TUI_STATE / CODE_TUI_STATE_ROOT are cleared for the same reason: worker.state_dir
+    honours those first, and a smoke run inside a code-tui task has them set.
   - It drives the real `record_history` / `history_brief`, never a copy of their format.
   - The fake result has the same fields the loop returns (`final`, `stop`, `handoff`).
 
@@ -42,6 +44,8 @@ def _result(final="", handoff=None, stop="DONE"):
 def run(check):
     """Record a structured answer, then read it back through the next task's prefix."""
     old = os.environ.get("XDG_STATE_HOME")
+    explicit = {name: os.environ.pop(name, None)
+                for name in ("CODE_TUI_STATE", "CODE_TUI_STATE_ROOT")}
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["XDG_STATE_HOME"] = tmp
         try:
@@ -72,6 +76,19 @@ def run(check):
             check("handoff: the prefix also carries the untested line",
                   "untested: the retry path" in brief, brief[:400])
 
+            worker.record_history(workspace, "mixed gates", _result(
+                final="mixed",
+                handoff={"summary": "one gate passed, one failed",
+                        "changed": ["c.py"],
+                        "gates": [{"name": "smoke", "ok": True, "exit": 0},
+                                  {"cmd": "ruff check .", "result": "3 errors", "exit": 1}]},
+            ), ["c.py"])
+            row = json.loads(path.read_text().splitlines()[-1])
+            check("handoff: a mixed gate list persists each row's failure",
+                  [gate.get("ok") for gate in row.get("gates") or []] == [True, False]
+                  and (row.get("gates") or [{}])[1].get("exit") == 1,
+                  json.dumps(row.get("gates"))[:300])
+
             path.write_text(
                 json.dumps({"when": "09:00", "prompt": "legacy", "summary": "old row",
                             "files": ["old.py"], "stop": "DONE"}) + "\n"
@@ -100,3 +117,6 @@ def run(check):
                 os.environ.pop("XDG_STATE_HOME", None)
             else:
                 os.environ["XDG_STATE_HOME"] = old
+            for name, value in explicit.items():
+                if value is not None:
+                    os.environ[name] = value

@@ -1,40 +1,37 @@
-"""prelude_journal: the mutation journal — the one path every write goes through.
+"""prelude_journal: the mutation journal: the one path every write goes through.
 
 WHAT IT IS
-  Fragment 2/5 of `PRELUDE` (see prelude.py). It owns `_commit` (journal row, snapshot diff,
-  `_CELL_CHANGED`), the `_Writer`/`open()` wrapper that catches an unclosed write, the mutation
-  hint table `_HINT`, and the readers of the journal: `_snapshot`, `_tree_state`, `_row`,
-  `_changed`, `_delta`, `session_diff()`, `changes()`, `diff()`, `undo()`.
+  Fragment 2/5 of PRELUDE (see prelude.py). Owns _commit (journal row, snapshot diff,
+  _CELL_CHANGED), the _Writer/open() wrapper that catches an unclosed write, the mutation hint
+  table _HINT, and the journal readers: _snapshot, _tree_state, _row, _changed, _delta,
+  session_diff(), changes(), diff(), undo().
 
 ENTRY POINTS
-  Inside the cell namespace: _commit, open, _resolve, _read_text, _digest, _snapshot,
-  _tree_state, _row, changes(), diff(path, max_chars), diff_tool(path, max_chars),
-  session_diff(path, max_chars), status(cwd), undo(path, n)
-  `_HINT` maps a refused shell verb to the typed helper that replaces it.
+  cell namespace: _commit, open, _resolve, _read_text, _digest, _snapshot, _tree_state, _row,
+  changes(), diff(path, max_chars), diff_tool(path, max_chars), session_diff(path, max_chars),
+  status(cwd), undo(path, n)
+  _HINT maps a refused shell verb to the typed helper that replaces it.
 
 INVARIANTS
-  - Every mutating verb in prelude_verbs.py commits through `_commit`; nothing may write a
-    tracked file another way, or changes()/diff()/undo() start lying.
-  - `diff()` stays the python helper that returns text; `diff_tool()` is the typed
-    `session_diff` and returns the one envelope shape: `page.truncated` (not an inline
-    "...[diff truncated]" with ok:true) plus `ignored` for journaled writes to a path the
-    tree walk skips (bench/.tmp/), so chars:0 never silently means "no changes".
-  - `open()` is rebound here and routes a write through `_Writer`; headers.py pins
-    `builtins.open` before this runs so the header index is never journalled.
-  - `_BASE` is the session-start snapshot; `_snapshot()` (last fragment) fills it, so these
-    functions must tolerate `_BASE == {}` until then.
-  - `undo()` restores session-start text and drops files created this session; it never
-    touches git.
-  - `status()` is read-only: one `git status --porcelain=v1 -b` plus `diff_tool`'s file
-    summary. It never journals and never mutates. A directory that is not a git repository
-    is a valid tree state (`git: false`), not a failed tool call: the journal summary is
-    still the answer.
+  every mutating verb in prelude_verbs.py commits through _commit; any other write to a tracked
+  file makes changes()/diff()/undo() lie.
+  diff() = python helper returning text. diff_tool() = typed `session_diff`, one envelope shape:
+  page.truncated (never inline "...[diff truncated]" with ok:true) + `ignored` for journaled
+  writes to a path the tree walk skips (bench/.tmp/), so chars:0 never silently means "no changes".
+  open() rebound here, routes writes through _Writer; headers.py pins builtins.open before this
+  runs, so the header index is never journalled.
+  _BASE = session-start snapshot; _snapshot() (last fragment) fills it: tolerate _BASE == {}
+  until then.
+  undo() restores session-start text + drops files created this session; never touches git.
+  status() read-only: one `git status --porcelain=v1 -b` + diff_tool's file summary; never
+  journals, never mutates. Non-git directory = valid tree state (git: false), not a failed call:
+  the journal summary is still the answer.
 
 WHERE TO CHANGE
-  The journal row or delta ................ _commit, _row, _delta
-  What `undo` restores .................... undo
-  The tree-state summary .................. status
-  The refusal hints ....................... _HINT (and run_prelude's `_mutating_command`)
+  journal row / delta ....... _commit, _row, _delta
+  undo restore set .......... undo
+  tree-state summary ........ status
+  refusal hints ............. _HINT (and run_prelude's `_mutating_command`)
 """
 from __future__ import annotations
 

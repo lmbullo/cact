@@ -29,7 +29,7 @@
  * can see every kind a journal can contain.
  */
 import { expect, test } from "bun:test";
-import { EVENT_PREFIX, journalWorkerEvent, parseWorkerLine, type JournalEvent } from "../src/worker-events";
+import { EVENT_PREFIX, capString, capValue, journalWorkerEvent, parseWorkerLine, type JournalEvent } from "../src/worker-events";
 
 /** Journal one wire line the way server.ts does: parse it, then hand the message to the mapper. */
 function journal(line: string): JournalEvent[] {
@@ -94,4 +94,33 @@ test("an unknown kind still falls back to the log event it does today", () => {
   // A line that is not ours at all is not a message; server.ts journals it as a plain log line.
   expect(parseWorkerLine("plain stdout from the worker")).toBeNull();
   expect(journal("plain stdout from the worker")).toEqual([]);
+});
+
+test("every journaled payload is capped at its own field limit", () => {
+  const marker = "\n… truncated";
+  // The boundary is exact: at the limit the string is untouched, one over it is marked.
+  expect(capString("abc", 3)).toBe("abc");
+  expect(capString("abcd", 3)).toBe(`abc${marker}`);
+  expect(capString(42, 3)).toBe(42);
+  // Payloads: strings 16000, arrays 40, depth 12, with the cut always named.
+  const capped = capValue({ text: "x".repeat(17000), items: Array.from({ length: 45 }, (_, n) => n) });
+  expect(capped.text).toBe(`${"x".repeat(16000)}${marker}`);
+  expect(capped.items.length).toBe(40);
+  let deep: any = "leaf";
+  for (let level = 0; level < 14; level += 1) deep = { child: deep };
+  expect(JSON.stringify(capValue(deep))).toContain("[depth]");
+
+  // The journal's own caps: a huge cell.start code, a check name/line, a log text.
+  const start = journal(wire({ kind: "cell.start", cell: 1, tool: "code",
+    code: "y".repeat(13000), args: { path: "a.txt" } }));
+  expect((start[0] as any).code.length).toBe(12000 + marker.length);
+  expect((start[0] as any).code.endsWith(marker)).toBe(true);
+  const check = journal(wire({ kind: "check", ok: false, name: "n".repeat(250), line: "l".repeat(700) }));
+  expect((check[0] as any).check.name.length).toBe(200 + marker.length);
+  expect((check[0] as any).check.line.length).toBe(600 + marker.length);
+  const log = journal(wire({ kind: "log", text: "z".repeat(5000) }));
+  expect((log[0] as any).text.length).toBe(4000 + marker.length);
+  // The unknown-kind fallback is the raw line, cut at 3000 with no marker: it is history, not a
+  // payload field an agent parses.
+  expect((journal(wire({ kind: "future", text: "q".repeat(5000) }))[0] as any).text.length).toBe(3000);
 });

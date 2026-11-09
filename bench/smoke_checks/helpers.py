@@ -18,7 +18,7 @@ INVARIANTS
 
 WHERE TO CHANGE
   The reply dialect ...................... reply.compile_reply (this file only scores it)
-  The card digest ........................ state_loop.digest / digest_card
+  The card digest ........................ state_text.digest / digest_card
   A typed tool's spec .................... verbs.VERBS, tools.TYPE_TOOLS
 """
 from __future__ import annotations
@@ -30,6 +30,7 @@ import tempfile
 from pathlib import Path
 
 import bench.agent.config as config
+import bench.agent.handoff as handoff
 import bench.agent.llm as llm
 import bench.agent.loop as loop
 import bench.agent.reply as reply
@@ -68,6 +69,26 @@ def run(check):
                  obs_index=0)
     probe = state_loop.StateLoop(object(), object(), loop.Budget(), card_budget=1200)
     expected = state_loop.render_observation(under, 1, plan=[probe.state.phase_line()])[0]
+    gate = {"summary": "done", "gates": [{"cmd": "bun test",
+                                         "result": "1 passed, 0 failed, exit 0"}]}
+    check("handoff: cmd/result gate rows render as ok, not fail",
+          "bun test ok" in handoff.render(gate), str(gate))
+    failed_gate = {"summary": "x", "gates": [{"cmd": "bun test",
+                                             "result": "1 passed, 1 failed, exit 1"}]}
+    check("handoff: a mixed result with a nonzero exit stays fail",
+          "bun test fail" in handoff.render(failed_gate), str(failed_gate))
+    mixed_gate = {"summary": "x", "gates": [
+        {"cmd": "bun test", "result": "2 passed, 0 failed, exit 0"},
+        {"cmd": "ruff check .", "result": "3 errors, exit 1"},
+    ]}
+    mixed = handoff.render(mixed_gate)
+    check("handoff: a mixed gate list keeps each row's own verdict",
+          "bun test ok" in mixed and "ruff check . fail" in mixed
+          and "ruff check . ok" not in mixed, mixed[:240])
+    normalized = handoff.fields(mixed_gate)["gates"]
+    check("handoff: a mixed gate list normalizes to per-row ok flags",
+          [row["ok"] for row in normalized] == [True, False]
+          and normalized[0]["name"] == "bun test", str(normalized)[:240])
     check("state: a card under the turn budget is byte-identical to the pure renderer",
           probe._observe(under, 1) == expected,
           probe._observe(under, 1)[:160])
@@ -86,11 +107,27 @@ def run(check):
 
     check("loop: budget defaults", loop.Budget().max_steps == 200)
     check("config: mode is a loop name", config.MODE in ("state", "tool", "repl"))
-    check("config: the measured m3-plan profile is the default arm",
+    check("config: the measured m3-plan profile is kept as a historical arm",
           config.PROFILES["m3-plan"] == {"code_mode": False, "effort": "low",
                                          "effort_policy": "fixed", "inline_finish": False,
                                          "task_tool": False}
           and config.PROFILE in config.PROFILES, config.PROFILE)
+    check("config: fast-code is the default arm",
+          config.PROFILE == "fast-code"
+          and config.PROFILES["fast-code"]["inline_finish"] is True
+          and config.PROFILES["fast-code"]["code_mode"] is False
+          and "code" in config.PROFILES["fast-code"]["allowed_tools"].split(","),
+          config.PROFILE)
+    check("config: the fast profile is the lean typed set with inline finish",
+          config.PROFILES["fast"]["code_mode"] is False
+          and config.PROFILES["fast"]["inline_finish"] is True
+          and "plan" not in config.PROFILES["fast"]["allowed_tools"].split(","),
+          str(config.PROFILES["fast"]))
+    check("config: the code-act profile is one code cell plus a small typed set",
+          config.PROFILES["code-act"]["code_mode"] is True
+          and config.PROFILES["code-act"]["allowed_tools"].startswith("code,")
+          and config.PROFILES["code-act"]["inline_finish"] is True,
+          str(config.PROFILES["code-act"]))
     check("llm: error type", issubclass(llm.LLMError, RuntimeError))
     check("trace: render is callable", callable(trace.render))
     check("task_journal: verbs", "final_answer" in task_journal.VERBS)

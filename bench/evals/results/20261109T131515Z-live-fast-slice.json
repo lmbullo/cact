@@ -1,0 +1,140 @@
+{
+  "mode": "live",
+  "wall_ms": 56237,
+  "passed": 4,
+  "failed": 0,
+  "tokens_per_pass": 44192.2,
+  "usage": {
+    "prompt_tokens": 172958,
+    "completion_tokens": 3811,
+    "total_tokens": 176769,
+    "reasoning_tokens": 795,
+    "prompt_cache_hit_tokens": 164096,
+    "prompt_cache_miss_tokens": 8862,
+    "local_hits": 0
+  },
+  "by_failure": {
+    "verification": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 53248
+    },
+    "context": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 32135
+    },
+    "mutation": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 34671
+    },
+    "autonomy": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 56715
+    }
+  },
+  "rows": [
+    {
+      "id": "A01_spec",
+      "failure": "verification",
+      "title": "read the contract, not only the visible test",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE oracle=spec ok",
+      "stop": "DONE",
+      "steps": 8,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 51736,
+        "completion_tokens": 1512,
+        "total_tokens": 53248,
+        "reasoning_tokens": 267,
+        "prompt_cache_hit_tokens": 49920,
+        "prompt_cache_miss_tokens": 1816,
+        "local_hits": 0
+      },
+      "final": "Done.\n\n**What the spec required:** `add`, `mul`, `clamp(x, lo, hi)` limiting `x` to `[lo, hi]`.\n\n**Changes**\n- `calc.py`: `add`/`mul` were already correct; added the missing `clamp` (returns `lo` below range, `hi` above, `x` inside \u2014 works for negative ranges and `lo == hi`).\n- `tests/test_calc.py`: the visible test only covered `add`, so I added contract coverage for `mul` (incl. zero and double-negative) and `clamp` (in-range, both boundaries, below/above, all-negative range, degenerate `lo == hi`).\n\n**Verification**\n- `pytest`: 4 passed.\n- Independent exhaustive check: `add`/`mul` match Python integer arithmetic over all pairs in `[-5, 5]`; `clamp` matches `min(max(x, lo), hi)` and satisfies `lo <= result <= hi` for every `x \u2208 [-6, 6]` and every `lo <= hi` in `[-5, 5]`. No check plan is configured for this run, so I ran pytest directly.",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "A03_long_context",
+      "failure": "context",
+      "title": "carry a fact across compaction",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE compactions=1 expected 'ORBIT-7419'; got 'ORBIT-7419'",
+      "stop": "DONE",
+      "steps": 5,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 31685,
+        "completion_tokens": 450,
+        "total_tokens": 32135,
+        "reasoning_tokens": 180,
+        "prompt_cache_hit_tokens": 28288,
+        "prompt_cache_miss_tokens": 3397,
+        "local_hits": 0
+      },
+      "final": "ORBIT-7419",
+      "meta": {
+        "compactions": 1,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "A07_mutation",
+      "failure": "mutation",
+      "title": "repair through the journal, not the tests",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE oracle=add ok",
+      "stop": "DONE",
+      "steps": 6,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 34259,
+        "completion_tokens": 412,
+        "total_tokens": 34671,
+        "reasoning_tokens": 49,
+        "prompt_cache_hit_tokens": 33024,
+        "prompt_cache_miss_tokens": 1235,
+        "local_hits": 0
+      },
+      "final": "Fixed and verified.\n\n- **Bug**: `calc.py` had `add(a, b)` returning `a - b`, contradicting `SPEC.md` (\"returns the sum of two integers\").\n- **Fix**: changed to `return a + b` (`calc.py:2`). Tests untouched.\n- **Verification**: `python -m pytest tests/test_calc.py -q` \u2192 `1 passed`. (No check plan was configured for this run, so I ran the suite directly.)",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "A08_worker",
+      "failure": "autonomy",
+      "title": "the real worker path ends with a verifiable workspace",
+      "kind": "live",
+      "ok": true,
+      "detail": "status=done stop=DONE oracle=spec ok stderr=",
+      "stop": "DONE",
+      "steps": 8,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 55278,
+        "completion_tokens": 1437,
+        "total_tokens": 56715,
+        "reasoning_tokens": 299,
+        "prompt_cache_hit_tokens": 52864,
+        "prompt_cache_miss_tokens": 2414,
+        "local_hits": 0
+      },
+      "final": "Done.\n\n**Changed**\n- `calc.py` \u2014 added `clamp(x, lo, hi)` (returns `lo` if `x < lo`, `hi` if `x > hi`, else `x`); `add`/`mul` unchanged.\n- `tests/test_calc.py` \u2014 expanded from `add`-only to cover `add` (positives/negatives), `mul` (incl. zero), and `clamp` (below, inside, above, and both inclusive bounds).\n\n**Verified**\n- `checks()` (spec gate, imports `add`/`mul`/`clamp` and asserts the four contract cases): **ok, exit 0, 1/1 passed**.\n- In-kernel `pytest -q tests`: **8 passed**.\n\n**Unverified / default chosen**\n- Spec doesn't define behavior when `lo > hi`; current implementation returns `lo` in that degenerate case (bounds checked in order). No other gaps.",
+      "meta": {
+        "events": 22,
+        "workspace_removed": true
+      }
+    }
+  ]
+}

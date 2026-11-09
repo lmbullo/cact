@@ -1,41 +1,38 @@
-"""The verb registry: every typed action, its JSON schema, and its one-line contract.
+"""verbs: the verb registry: every typed action, its JSON schema, its one-line contract.
 
 WHAT IT IS
-  The single source of truth for the typed tool layer. `VERBS[name]` carries the tool
-  description, the JSON schema the provider sees, whether the action mutates the tree, the
-  prelude function that implements it (`function`, default `name`), and whether it is a
-  typed tool (`typed`, default True) or a python-only helper. `tools.py` builds the provider
-  specs from the typed entries; `kernel/process.py` ships the whole dict to the child as
-  KERNEL_VERBS so `help()`/`verbs()` and the driver resolve the same names. Adding a verb
-  here, implementing the function in kernel/prelude.py (or, for a parent-side tool like
-  `checks`, a handler in tool_loop.py plus a prelude stub), adding a smoke call in
-  bench/smoke_checks/, and mentioning it in the rules text is the whole job.
+  Single source of truth for the typed tool layer. VERBS[name] = tool description, JSON schema
+  the provider sees, mutates flag, prelude function that implements it (`function`, default
+  name), typed flag (`typed`, default True) vs python-only helper. tools.py builds provider
+  specs from the typed entries; kernel/process.py ships the whole dict to the child as
+  KERNEL_VERBS, so help()/verbs() and the driver resolve the same names. Adding a verb = entry
+  here + function in kernel/prelude.py (or, for a parent-side tool like `checks`, a handler in
+  tool_loop.py + a prelude stub) + smoke call in bench/smoke_checks/ + mention in the rules text.
 
 ENTRY POINTS
   VERBS          name -> {function, summary, schema, mutates, typed?, requires_run?}
-  TOOL_NAMES     the typed tool names (no `python`; that is the escape hatch)
-  Look one up straight from VERBS[name]; there is no accessor layer.
+  TOOL_NAMES     typed tool names (no `python`: that is the escape hatch)
+  look up VERBS[name] directly; no accessor layer.
 
 INVARIANTS
-  - Stdlib-only and import-free: kernel/process.py imports it in the parent and ships its JSON
-    to the child, so it must never touch the filesystem or import bench modules.
-  - The schema is the contract, and the function's real signature is the authority: the
-    driver binds each typed call with `inspect.signature().bind`, so a schema/signature
-    mismatch surfaces as `bad_args`/`bad_arguments` instead of a traceback, and `help()`
-    prints each live signature. A mismatch is a bug in the schema or the function, never a
-    reason to loosen the check.
-  - `mutates=True` means the function writes the workspace and must go through `_commit`.
-    The loop uses it only for rendering; the kernel's journal is still the authority.
-  - `python` is deliberately absent. It is the persistent-kernel escape hatch, not a verb.
-  - `typed=False` entries (`run`) remain in the registry so `help()` documents the python
-    helpers, but they never become provider tools. `exec` is the typed process tool; `run`
-    is the shell-string escape hatch inside a python cell.
+  stdlib-only, import-free: kernel/process.py imports it in the parent and ships its JSON to the
+  child; never touch the filesystem or import bench modules.
+  schema = contract; the function's real signature = authority: the driver binds each typed call
+  with inspect.signature().bind, so a schema/signature mismatch surfaces as
+  bad_args/bad_arguments, never a traceback; help() prints each live signature. A mismatch is a
+  bug in the schema or the function, never a reason to loosen the check.
+  mutates=True = function writes the workspace and must go through _commit. The loop uses it only
+  for rendering; the kernel journal is still the authority.
+  `python` deliberately absent: persistent-kernel escape hatch, not a verb.
+  typed=False entries (`run`) stay in the registry so help() documents the python helpers, but
+  never become provider tools. `exec` = typed process tool; `run` = shell-string escape hatch
+  inside a python cell.
 
 WHERE TO CHANGE
-  A new typed action ................ add the entry here, the function in kernel/prelude.py,
-                                      and a `Kernel.call` case in bench/smoke_checks/verbs.py
-  A verb's arguments ................ its `schema` here and the function signature in PRELUDE
-  What the model is told ............ `summary` (provider tool description)
+  new typed action ... entry here + function in kernel/prelude.py + a Kernel.call case in
+                       bench/smoke_checks/verbs.py
+  verb arguments ..... its schema here + the function signature in PRELUDE
+  model-facing text .. summary (provider tool description)
 """
 from __future__ import annotations
 
