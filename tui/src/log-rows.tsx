@@ -1,29 +1,30 @@
 /**
- * log-rows.tsx: the log's row primitives — one `key=value` line and the opening prompt block.
+ * log-rows.tsx: the log's row primitives — one `key=value` line and the two prose heads.
  *
  * WHAT IT IS
  *  What both halves of the log share: the field list and its per-field caps, `KvRow`, `bodyRows`,
- *  the silent-kind rule and the block that opens every log. Re-exported from log-view.tsx.
+ *  `BlockHead`, the silent-kind rule and the block that opens every log. Re-exported by log-view.
  *
  * ENTRY POINTS
  *  INDENT, FIELD_CAP, DEFAULT_CAP, Field   the shared column and the per-key caps
  *  fields, since, finalColor, noticeOf, isSilent   tokens, gutter, colour, notices, silence
  *  KvRow({gutter, fit, fields, color})     one row; each value clipped inside its own field
  *  bodyRows(lines, dropped, color)         a wrapped block plus its `(+N more lines)`
- *  PromptView({task, width, origin})       the opening block: `kind=prompt chars=N` + prompt
+ *  BlockHead({label, color})               a block's `▸ you` / `▸ summary` head
+ *  PromptView({task, width})               `▸ you` + the whole prompt
  *
  * INVARIANTS
- *  - Truncation is per field (theme.clip adds `…`), never per row: a long value cannot push its
- *    key or a later field off the line.
- *  - Only the prompt and the final summary wrap, whole, unclipped, capped then counted.
+ *  - Truncation is per field (`theme.clip` adds `…`), never per row; only the prompt and the
+ *    final summary wrap, whole, unclipped, capped then counted.
  *  - Lifecycle kinds, `cell.start/end` and `check` are silent: the header says the state.
+ *  - A prose block opens with a `▸` word (`you`, `summary`), never a `kind=` token.
  *  - No row contains `─`: the prompt box owns the only hairline.
- *
  * WHERE TO CHANGE
- *  What a row may hold .... FIELD_CAP, DEFAULT_CAP, fields   One row's clipping .... KvRow
- *  What is silent ......... isSilent, noticeOf   The opening block .... PromptView
+ *  A row's fields .... FIELD_CAP, DEFAULT_CAP, fields   clipping .... KvRow   silence .... isSilent
+ *  A block's head .... BlockHead, PromptView   The opening block .... PromptView
  */
 import type { RGBA } from "@opentui/core";
+import { TextAttributes } from "@opentui/core";
 import { C, STATUS, clip, elapsed, wrapText } from "./theme";
 import type { Task, TaskEvent, TaskStatus } from "./types";
 
@@ -122,6 +123,20 @@ export function KvRow({ gutter, fit, fields: row, color }: { gutter: string; fit
 }
 
 /**
+ * The head of a wrapped block: the `▸` marker plus the block's one name (`you`, `summary`).
+ * A block is prose the reader came to read, so its head is a word, not a `kind=` token; the
+ * marker carries the status colour and the label stays body ink.
+ */
+export function BlockHead({ label, color }: { label: string; color: RGBA }) {
+  return (
+    <text>
+      <span fg={color}>{"\u25b8 "}</span>
+      <span fg={C.text} attributes={TextAttributes.BOLD}>{label}</span>
+    </text>
+  );
+}
+
+/**
  * The body of a block: one blank row after the head, then the wrapped prose in the shared
  * INDENT column, then the overflow count when the block was capped. Returned as a plain array
  * of rows rather than a component, so a block is exactly one column with no extra box.
@@ -140,26 +155,19 @@ export function bodyRows(lines: string[], dropped: number, color: RGBA) {
 
 /**
  * The log's opening block: the whole prompt the run started from, wrapped to the pane, under a
- * `kind=prompt chars=N model=… effort=…` row. It is the bright end of the bracket — the reader's
- * own words — and sits in the same column as the agent's final summary.
+ * `you` head. It is the bright end of the bracket — the reader's own words — and sits in the
+ * same column as the agent's final summary. Model, effort and prompt length are not repeated
+ * here: the masthead carries the model, and a count of the reader's own words helps nobody.
  */
-export function PromptView({ task, width, origin }: { task: Task; width: number; origin?: number }) {
-  // The prompt is the first tick of the timeline; without a start time there is no gutter.
-  const gutter = origin ? `${elapsed(0).padStart(6)} ` : "";
-  const fit = Math.max(8, width - 2 - gutter.length);
+export function PromptView({ task, width }: { task: Task; width: number }) {
+  const fit = Math.max(8, width - 2);
   const text = task.prompt ?? "";
-  const row = fields(
-    ["kind", "prompt"],
-    ["chars", text.length],
-    ["model", task.model],
-    ["effort", task.effort],
-  );
   const { lines, dropped } = text.trim()
     ? wrapText(text, Math.max(8, fit - INDENT.length))
     : { lines: [], dropped: 0 };
   return (
     <box style={{ flexDirection: "column", flexShrink: 0, paddingTop: 1, paddingBottom: 1 }}>
-      <KvRow gutter={gutter} fit={fit} fields={row} color={C.text} />
+      <BlockHead label="you" color={C.accent} />
       {lines.length > 0 ? bodyRows(lines, dropped, C.text) : null}
     </box>
   );

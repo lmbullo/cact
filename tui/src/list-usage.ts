@@ -8,7 +8,8 @@
  *   foldTurn(previous, turn, data)   one turn event folded into the live `progress`
  *   taskUsage(task), taskCost(task)  live `progress` / final `usage`, and the row price (`$0.07`)
  *   formatTokens(count)              `950`, `4.2k`, `12k`, `1.0M`
- *   taskCounters(task), taskProgress(task), taskDuration(task, now)
+ *   Stat, taskStats(task)            the counters as `{label, value}` parts (`turn 3`, `in 1.2k`)
+ *   taskCounters, taskProgress, taskDuration   the same parts as text, and the wall clock
  * INVARIANTS
  *   `taskUsage` is the only place a counter is read: the board row, the log header and the closing
  *   block all format what it returns, so two views cannot disagree.
@@ -127,41 +128,55 @@ export function formatTokens(value: number): string {
   return `${(thousands / 1000).toFixed(1)}M`;
 }
 
+/** One counter as a view prints it: a dim `label` and the bright `value` beside it. */
+export type Stat = { label: string; value: string };
+
 /**
- * The counters one task reports, as separate parts so a narrow frame can drop the tail
- * instead of losing the whole label: steps, tokens in/out, price, cache hit rate, context
- * window. A part is omitted when its number is unknown, never printed as a zero place-holder;
- * the price follows the tokens it is computed from.
+ * The counters one task reports, as labelled parts so a view can ink the label and the value
+ * separately and a narrow frame can drop the tail instead of losing the whole label: turn,
+ * tokens in, tokens out, price, cache hit rate, context window. The price sits before the
+ * cache rate: what the run costs is the fact a reader wants, the rate explains it afterwards.
+ * The price carries no label — `$0.07` (or `<$0.01`) already reads as money — which keeps the
+ * board row inside 60 columns.
+ * A part is omitted when its number is unknown, never printed as a zero place-holder; the
+ * price follows the tokens it is computed from.
  */
-export function taskCounters(task: Task): string[] {
+export function taskStats(task: Task): Stat[] {
   const usage = taskUsage(task);
-  const parts: string[] = [];
-  if (usage.steps !== undefined) parts.push(`${usage.steps} steps`);
-  const tokens = [
-    usage.tokensIn !== undefined ? `↑${formatTokens(usage.tokensIn)}` : "",
-    usage.tokensOut !== undefined ? `↓${formatTokens(usage.tokensOut)}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  if (tokens) parts.push(tokens);
+  const parts: Stat[] = [];
+  if (usage.steps !== undefined) parts.push({ label: "turn", value: String(usage.steps) });
+  if (usage.tokensIn !== undefined) parts.push({ label: "in", value: formatTokens(usage.tokensIn) });
+  if (usage.tokensOut !== undefined) parts.push({ label: "out", value: formatTokens(usage.tokensOut) });
   const price = taskCost(task);
-  if (price) parts.push(price);
+  if (price) parts.push({ label: "", value: price });
   const cached = (usage.cacheHit ?? 0) + (usage.cacheMiss ?? 0);
-  if (cached > 0) parts.push(`${Math.round(((usage.cacheHit ?? 0) / cached) * 100)}% cache`);
+  if (cached > 0) parts.push({ label: "cache", value: `${Math.round(((usage.cacheHit ?? 0) / cached) * 100)}%` });
   if (usage.context !== undefined) {
-    parts.push(
-      usage.window
-        ? `ctx ${formatTokens(usage.context)}/${formatTokens(usage.window)}`
-        : `ctx ${formatTokens(usage.context)}`,
-    );
+    parts.push({
+      label: "ctx",
+      value: usage.window
+        ? `${formatTokens(usage.context)}/${formatTokens(usage.window)}`
+        : formatTokens(usage.context),
+    });
   }
   return parts;
 }
 
+/** The same counters one `label value` string each: `turn 3`, `in 1.2k`, `$0.07`. */
+export function taskCounters(task: Task): string[] {
+  return taskStats(task).map(statText);
+}
+
+/** One stat as text: `label value`, or just the value when it has no label. */
+function statText(part: Stat): string {
+  return part.label ? `${part.label} ${part.value}` : part.value;
+}
+
 /** The board row's tail: the counters and the cache rate, without the log-only context window. */
 export function taskProgress(task: Task): string {
-  return taskCounters(task)
-    .filter((part) => !part.startsWith("ctx "))
+  return taskStats(task)
+    .filter((part) => part.label !== "ctx")
+    .map(statText)
     .join(" · ");
 }
 

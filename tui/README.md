@@ -87,20 +87,20 @@ The loop is autonomous — it asks no questions, needs no approvals and is not c
 so the only thing that comes back is that summary.
 
 One row per task: a `›` selection marker, the task's short handle (`#4f7c1`), the prompt, then
-right-aligned telemetry — `steps`, tokens in and out, the run's price — and the wall time.
-Tokens read `↑in ↓out` (prompt, then completion) and the cache part is the fraction of prompt
-tokens the provider served from its own cache. The price is what the run cost in USD: `$0.07`
-with two decimals, `<$0.01` under a cent, computed by `pricing.ts` from the same usage split
-(cache-hit, cache-miss and output tokens are priced separately, and a run with no cache counters
-has all its input priced as a miss). That table is the only place a price exists: a model it
-does not list keeps its token count alone, with no guessed figure. A row whose task recorded
-errors appends `N err` in clay after the time. Every number comes from one place,
-`list-model.taskUsage`: counters come from turn events (`Task.progress`) while the task runs,
-and a finished row falls back to the final `steps`/`usage` totals and its recorded span. The
-context window (`ctx`) is the log header's alone — a row has no room for it and would repeat
-the same fill twice. Row id is `t-<base36 timestamp>-<5 hex>`; the row shows only its last
-segment (`#4f7c1`) because the timestamp half is already implied by the order. The full id
-stays in `tasks/<id>.json` and `GET /api/tasks`.
+right-aligned telemetry — the turn, tokens in and out, the run's price, the cache hit rate — and
+the wall time. The labels are the reader's words: `turn 3 · in 421k · out 8.0k · $0.07 · cache 62%`.
+The price is what the run cost in USD: `$0.07` with two decimals, `<$0.01` under a cent, computed
+by `pricing.ts` from the same usage split (cache-hit, cache-miss and output tokens are priced
+separately, and a run with no cache counters has all its input priced as a miss). That table is
+the only place a price exists: a model it does not list keeps its token count alone, with no
+guessed figure. A row whose task recorded errors appends `N err` in clay after the time. Every
+number comes from one place, `list-usage.ts taskStats` / `taskUsage`: counters come from turn
+events (`Task.progress`) while the task runs, and a finished row falls back to the final
+`steps`/`usage` totals and its recorded span. The context window (`ctx`) is the log header's
+alone — a row has no room for it and would repeat the same fill twice. Row id is
+`t-<base36 timestamp>-<5 hex>`; the row shows only its last segment (`#4f7c1`) because the
+timestamp half is already implied by the order. The full id stays in `tasks/<id>.json` and
+`GET /api/tasks`.
 
 The masthead is the same on both screens: a `▌ code` brand, the workspace with `$HOME`
 shortened to `~`, then the model, effort and the running count on the right. It reads `offline`
@@ -124,7 +124,7 @@ board, and the same read refreshes `stale` between snapshots. `Ctrl+R` forces on
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
  ● running  1
- › #4f7c1  add a retry to fetch     3 steps · ↑421k ↓8.0k · $0.07 · 62% cache  11s
+ › #4f7c1  add a retry to fetch     turn 3 · in 421k · out 8.0k · $0.07 · cache 62%  11s
 
  ○ queue  1
    #1a9de  write tests for the parser
@@ -193,59 +193,64 @@ reminder; it never invents a fake section or an empty table.
 
 ## 4. Live run log
 
-`Enter` on an empty prompt opens the selected task's log. Every row is machine-first: one dim
-elapsed gutter, then `key=value` fields and nothing else — no glyphs, no sentences, no decorative
-prose. The fields are the journal's own names, so a row can be pasted into a grep. The body is
-the two ends of the run: the task's prompt opens the log as a wrapped body under a `kind=prompt`
-row, and the agent's final summary closes it as a wrapped body under a `kind=final` row. Tool
-calls are the loop's transcript, not the reader's: a `cell.start` draws no row. The loop is
-trusted, and a tool call is not a fact anyone acts on; the summary is.
+`Enter` on an empty prompt opens the selected task's log. The body is the two ends of the run:
+the task's prompt opens the log as a wrapped body under a `▸ you` head, and the agent's final
+summary closes it as a wrapped body under a `▸ summary` head. The heads are words, not
+`kind=` tokens, and the marker carries the status colour; the prose sits in the same `INDENT`
+column at both ends, so the start and the finish of a run line up. The masthead already names the
+model and the effort, so the prompt block does not repeat them. Tool calls are the loop's
+transcript, not the reader's: a `cell.start` draws no row. The loop is trusted, and a tool call is
+not a fact anyone acts on; the summary is.
 
 The run's state has exactly one source: the status line at the top, drawn from `Task.status`.
-The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no status field on the
-closing row — so the screen cannot say `queue` and `queued` at once, and nothing can go on
-saying `queued` after the run has left that state. Lifecycle events stay in `events/<id>.jsonl`
-as journal history; they are not rendered.
+The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no waiting row, no status
+field on the closing block — so the screen cannot say `queue` and `queued` at once, and nothing
+can go on saying `queued` after the run has left that state. Lifecycle events stay in
+`events/<id>.jsonl` as journal history; they are not rendered.
 
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
- ● running  #4f7c1  esc/enter: back · 3 steps · ↑421k ↓8.0k · 11s · $0.07 · 62% cache · ctx 421k/1.0M
+ ● running  #4f7c1  esc/enter: back   turn 3 · 13s · in 421k · out 8.0k · $0.07 · cache 62% · ctx 421k/1.0M
 
-  0ms kind=prompt chars=118 model=deepseek-flash effort=low
+ ▸ you
 
-      add a retry with exponential backoff and jitter to the fetch helper, and cover the
-      503 path with a test
+     add a retry with exponential backoff and jitter to the fetch helper, and cover the
+     503 path with a test
 
-  1.5s kind=turn notice=[finish] final_answer rejected: the project check still fails
+ 1.5s kind=turn notice=[finish] final_answer rejected: the project check still fails
 
-  7.5s kind=final
+ ▸ summary
 
-      Retry added to the fetch helper; the backoff path is covered by a test.
-      chg: src/fetch.ts, tests/fetch.test.ts
-      gates: test ok(0), typecheck ok(0)
-      defer: retry the 503 path under a cold cache
-      untested: the browser fetch path
+     Retry added to the fetch helper; the backoff path is covered by a test.
+     chg: src/fetch.ts, tests/fetch.test.ts
+     gates: test ok(0), typecheck ok(0)
+     defer: retry the 503 path under a cold cache
+     untested: the browser fetch path
 ⠋ ─────────────────────────────────────────────────────────────────────────────────────────────────
  › task for /home/you/some/project…
 ───────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 The log is the same screen with its content pane swapped: the masthead, the breath under it, a
-status line, the rows, and the prompt box's two lines. The status line anchors everything left:
-the dot, the status word, the short handle, how the run ended, `esc/enter: back` and the live
-counters follow in a fixed two-column gap; the hint is never dropped and the counters disappear
-from the tail as the terminal narrows. It does not repeat the prompt — the log opens with that in full, right below.
+status line, the body, and the prompt box's two lines. The status line answers the reader's
+questions in their words, once each, all anchored left: the dot and the status word (`● running`,
+`✓ done`, `✖ failed`), the short handle, how the run ended when that is news, `esc/enter: back`,
+then the live counters — `turn 4`, the wall clock, `in`/`out` tokens, the price, `cache 62%` and
+`ctx <latest prompt>/<window>`. The hint is never dropped and the counters disappear from the tail
+as the terminal narrows, so what a narrow frame loses is the context window first, then the cache
+rate and the price. It does not repeat the prompt — the log opens with that in full, right below.
 
 Once the run has settled, the line also answers "how did this end?" at a glance, from the task
-JSON and the journal alone: the stop reason (`Task.stop` — `DONE`, `TRUNCATED`, `LLM_FAILED`,
-`GOAL_UNMET`, ...), the error count when the task recorded any (`Task.errors`), and — when the
-last `check` event of the journal failed — the check's name with the first failing line of its
-output. A running task has no stop reason yet, so it prints none of this and its counters do not
+JSON and the journal alone: the stop reason when it is not the status word itself (`TRUNCATED`,
+`LLM_FAILED`, `GOAL_UNMET`, ...), the error count when the task recorded any (`Task.errors`), and
+— when the last `check` event of the journal failed — the check's name with the first failing
+line of its output. A successful `DONE`/`VERIFIED` is not printed twice: `✓ done` already says
+it. A running task has no stop reason yet, so it prints none of this and its counters do not
 move.
 
 ```
-  ✓ done  #4f7c1  DONE   esc/enter: back · 7 steps · ↑12.4k ↓1.2k · 11s · <$0.01 · 62% cache
+  ✓ done  #4f7c1  esc/enter: back   turn 7 · 11s · in 12.4k · out 1.2k · <$0.01 · cache 62%
   ✖ failed  #9a2b0  GOAL_UNMET  typecheck: src/client.test.tsx(12,17): error TS2304: …  esc/enter: back
 ```
 
@@ -253,39 +258,40 @@ The failing check keeps a third of the row before the counters start filling it,
 give way (from the tail) rather than the verdict. At 60 columns the same line is
 `✖ failed  #9a2b0  GOAL_UNMET  typecheck: src… esc/enter: back`: still one row, still clipped.
 
-Those counters are the log's data row, and the only one: turns taken, tokens in and out (`↑`
-prompt, `↓` completion, both summed over turns), the wall time, the run's price, the prompt-cache
-hit rate and the context window as `ctx <latest prompt>/<window>`. They are derived once, by
-`list-model.taskUsage`, from `Task.progress` while the run streams and from the final
-`steps`/`usage` after it. No row in the body prints a counter, so a number cannot appear twice or
+Those counters are the log's data row, and the only one: turns taken, tokens in and out (prompt
+and completion, both summed over turns), the wall time, the run's price, the prompt-cache hit rate
+and the context window as `ctx <latest prompt>/<window>`. They are derived once, by
+`list-model.taskUsage`, and shaped once, by `list-model.taskStats`; the board row prints the same
+parts from the same list. No row in the body prints a counter, so a number cannot appear twice or
 mean two things.
 
 Row fields by kind (`src/log-view.tsx`, `EventView`):
 
-| kind | fields |
+| kind | what is drawn |
 |---|---|
+| `final` | a `▸ summary` head, then the summary body |
 | `turn` | `kind=turn notice=<the rejected or staged finish, one line>` and `lines=N` when it was several |
-| `final` | `kind=final`, then the summary body |
 | `error` | `kind=error text=<one line>` and `lines=N` when it was several |
 | `stderr` | `kind=stderr …` |
 | `log` | `kind=log …` |
 | anything else | `kind=<kind>` only; the payload is never dumped |
-| no rows yet | `kind=waiting status=queued|running` |
+| prompt | a `▸ you` head, then the whole prompt |
 
-`cell.start`, `cell.end`, `check` and the lifecycle kinds render no row at all; their journal
-entry stays in the machine log. A `cell.start` is the loop's transcript — which verb ran with
-which arguments — and it is deliberately not drawn.
+`cell.start`, `cell.end`, `check`, the lifecycle kinds and a notice-free `turn` render no row at
+all; their journal entry stays in the machine log. A `cell.start` is the loop's transcript — which
+verb ran with which arguments — and it is deliberately not drawn.
 
-Truncation is per field, not per row: each value is clipped to the columns its own key leaves
-(`FIELD_CAP`, then what is left of the pane), so a long notice can neither push its key nor
-a later field off the line, and `…` marks the cut. The two exceptions are the opening prompt and
-the final summary: they are wrapped whole by `theme.wrapText` into the shared `INDENT` column,
-never clipped, and past `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N more lines)`. The
-log opens and closes in that same column, so the start and the finish of a run line up.
+A diagnostic row (a notice, an error) is machine-first: one dim elapsed gutter, then
+`key=value` fields, each value clipped to the columns its own key leaves (`FIELD_CAP`, then what
+is left of the pane), so a long notice can neither push its key nor a later field off the line,
+and `…` marks the cut. The two prose blocks are the exception: the prompt and the final summary
+are wrapped whole by `theme.wrapText` into the shared `INDENT` column, never clipped, and past
+`SUMMARY_MAX_LINES` (400) the rest is reported as `(+N more lines)`.
 
 The log is monochrome by design: the gutter and the keys use the quietest greys, the values body
-ink, amber marks a rejected or staged finish, clay an error, and the closing row borrows the
-run's status colour. Nothing is bold. Colour appears only where it means something.
+ink, amber marks a rejected or staged finish, clay an error, the summary's `▸` takes the run's
+status colour and the prompt's takes the accent. Nothing but the status word is bold. Colour
+appears only where it means something.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
 one exception: a turn carrying a `notice` — a rejected or staged `final_answer`, recorded by

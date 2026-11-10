@@ -4,14 +4,15 @@
  * WHAT IT IS
  *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
  *  over the WebSocket exactly as python/worker.py emits them. The frame must open with the whole
- *  prompt, add no row for the loop's transcript (tool calls, lifecycle, checks), keep the prompt
- *  box where it was, and close on the summary block wrapped below a `kind=final` row in the same
- *  column the prompt used.
+ *  prompt under a `▸ you` head, add no row for the loop's transcript (tool calls, lifecycle,
+ *  checks), keep the prompt box where it was, and close on the summary block under `▸ summary`
+ *  in the same column the prompt used.
  *
  *  The run's state is rendered exactly once — by the log header, from `Task.status` — so the
  *  body must never repeat the status word and the lifecycle events must add no row at all. The
- *  header also says how a settled run ended (stop reason, error count, last failed check), which
- *  is why the closing summary block carries only its kind.
+ *  header also says how a settled run ended (stop reason, error count, last failed check) and
+ *  it is the only place the counters are printed, which is why the closing block carries only
+ *  its head.
  *
  * ENTRY POINTS
  *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
@@ -20,15 +21,15 @@
  * INVARIANTS
  *  - Event fixtures mirror the `emit({...})` payloads of python/worker.py; a new kind added
  *    there without a case here means the panel can drop it silently.
- *  - A row is machine-first: only `field=value` tokens (kind, notice, text, lines) and one
- *    elapsed gutter. No glyphs, no prose, so a row can be grepped; the tests read the same
- *    fields a reader would.
+ *  - A prose block is headed by a `▸` word (`you`, `summary`) and its body wraps unclipped; a
+ *    diagnostic row (a rejected finish, an error) stays machine-first `field=value`.
  *  - Tool calls are the loop's transcript, not the reader's: a `cell.start` renders no row, so
  *    the body stays the prompt, a notice, an error and the summary.
  *  - Exactly one status word per log is the invariant: the header's. The same holds for the
- *    counters (steps, tokens in/out, cache rate, context window): the header prints them once
- *    and the closing block repeats none of them. How the run ended — the stop reason, the error
- *    count, the failed check — is the header's line too, never the summary block's.
+ *    counters (turn, tokens in/out, price, cache rate, context window): the header prints them
+ *    once and the closing block repeats none of them. How the run ended — the stop reason, the
+ *    error count, the failed check — is the header's line too, never the summary block's.
+ *  - A successful stop `DONE` is the status word `done`: the header never prints both.
  *  - A lifecycle row or a second status word on the closing block is a regression, not a
  *    wording preference.
  *  - React `act(...)` warnings in `bun test` are expected noise.
@@ -100,18 +101,18 @@ test("live log opens on the prompt and closes on the summary", async () => {
   expect(logFrame).toContain("›");
   expect(logFrame).toContain("task for /tmp/ws");
 
-  // The log opens with the task's prompt as a block: a `kind=prompt chars=N` row, then the prompt
-  // in the indented column (one box pad + four) that the final summary will also use.
-  expect(logFrame).toContain("kind=prompt");
-  expect(logFrame).toContain("chars=8");
+  // The log opens with the task's prompt as a block: a `▸ you` head, then the prompt in the
+  // indented column (one box pad + four) that the final summary will also use.
+  expect(logFrame).toContain("▸ you");
   const promptBody = logFrame.split("\n").find((line) => /^ {5}live job/.test(line))!;
   expect(promptBody).toMatch(/^ {5}live job/);
   const promptIndent = promptBody.length - promptBody.trimStart().length;
   // The prompt appears once: the header carries the state, not a clipped copy of the block.
   expect(logFrame.split("\n").filter((line) => line.includes("live job")).length).toBe(1);
-  // With the prompt as the only content, the log says it is waiting for the first event.
-  expect(logFrame).toContain("kind=waiting");
-  expect(logFrame).toContain("status=running");
+  // Nothing in the body repeats the header: no status word, no `kind=` token, no counters.
+  expect(logFrame).not.toContain("kind=");
+  expect(logFrame).not.toContain("status=running");
+  expect(logFrame).not.toContain("turn ");
 
   // The live log keeps the board's prompt box: a hairline above and below it, so the prompt
   // sits inside a closed frame at the bottom of the screen.
@@ -135,7 +136,10 @@ test("live log opens on the prompt and closes on the summary", async () => {
   // the fixed two-column gap, not pushed to the terminal's right edge.
   const headerRow = logRows.find((line) => line.includes("● running"))!;
   expect(headerRow).toMatch(/#eeee5555 {2}esc\/enter: back/);
-
+  // No counters yet: the task has no steps or usage, so the header prints no place-holder.
+  expect(headerRow).not.toContain("turn ");
+  expect(headerRow).not.toContain("steps");
+  expect(headerRow).not.toContain("↑");
   const push = async (seq: number, event: Record<string, unknown>) => {
     sockets.at(-1)!.send(JSON.stringify({ type: "event", taskId: task.id, event: { seq, ts: 1, ...event } }));
     await settle();
@@ -185,10 +189,9 @@ test("live log opens on the prompt and closes on the summary", async () => {
 
   // The final event closes the log with the summary block. The header above already owns the
   // run's state, its counters and how it ended (stop reason, error count, last failed check),
-  // so the closing head names itself (`▸ summary`) and carries only the cell count. That is the
-  // one source of truth — no second status word, no copied steps, tokens, cache rate or context
-  // window. A task with a start time also carries the timeline gutter, which the wrap must
-  // leave room for.
+  // so the closing head is one word, `▸ summary`, and carries nothing else. That is the one
+  // source of truth — no second status word, no copied turn, tokens, cache rate or context
+  // window.
   const summary = "DONE: " + "y".repeat(300);
   await push(6, {
     kind: "final",
@@ -220,22 +223,23 @@ test("live log opens on the prompt and closes on the summary", async () => {
   const finalRows = frame.split("\n");
   const header = finalRows.find((line) => line.includes("esc/enter: back"))!;
   expect(header).toContain("✓ done");
-  expect(header).toContain("DONE");
-  expect(header).toContain("7 steps");
-  expect(header).toContain("↑3.6k ↓610");
+  // `✓ done` already says the run finished, so the stop word DONE is not printed twice.
+  expect(header).not.toContain("DONE");
+  expect(header).toContain("turn 7");
+  expect(header).toContain("in 3.6k · out 610");
   // The price claims the room the cache rate used to have at 80 columns: the tail still gives
-  // way, and the number that moves (steps, tokens, price) is kept before the rate.
+  // way, and the number that moves (turn, tokens, price) is kept before the rate.
   expect(header).toContain("<$0.01");
-  expect(header).not.toContain("83% cache");
+  expect(header).not.toContain("cache 83%");
   // One status word on the whole log: the header's.
   expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
-  const finalLine = finalRows.find((line) => line.includes("kind=final"))!;
-  // The closing head is the kind only: the cell count was tool telemetry, and the summary below
-  // it is the fact the reader came for.
+  const finalLine = finalRows.find((line) => line.includes("▸ summary"))!;
+  // The closing head is one word: the summary below it is the fact the reader came for.
+  expect(finalLine).not.toContain("kind=");
   expect(finalLine).not.toContain("cells");
   expect(finalLine).not.toContain("stop=");
   expect(finalLine).not.toContain("errors");
-  expect(finalLine).not.toContain("7 steps");
+  expect(finalLine).not.toContain("turn");
   expect(finalLine).not.toContain("↑");
   expect(finalLine).not.toContain("cache");
   expect(finalLine).not.toContain("done");
@@ -285,7 +289,7 @@ test("a long prompt opens the log whole, wrapped instead of clipped", async () =
   await flush();
 
   const frame = captureCharFrame();
-  expect(frame).toContain("kind=prompt");
+  expect(frame).toContain("▸ you");
   // Every word of the prompt is on screen: it wraps, it is never ellipsized.
   const flat = frame.replace(/\s+/g, " ");
   for (const word of words) expect(flat).toContain(word);
@@ -334,8 +338,9 @@ test("a settled run's header carries its stop reason and error count", async () 
   expect(header).toContain("✓ done");
   expect(header).toContain("TRUNCATED");
   expect(header).toContain("2 errors");
-  // The counters still share the line; only their tail may give way.
-  expect(header).toContain("4 steps");
+  // The counters still share the line; only their tail may give way. A stop that is not the
+  // status word (TRUNCATED) stays: it says why a `done` run ended early.
+  expect(header).toContain("turn 4");
   expect(header).toContain("esc/enter: back");
   expect(header.length).toBeLessThanOrEqual(100);
   // One row, once: the reason is not repeated anywhere else on the screen.
@@ -407,7 +412,7 @@ test("a running task shows no stop reason and its counters do not move", async (
 
   const before = headerLine(captureCharFrame());
   expect(before).toContain("● running");
-  expect(before).toContain("3 steps");
+  expect(before).toContain("turn 3");
   expect(before).not.toContain("DONE");
 
   sockets.at(-1)!.send(JSON.stringify({

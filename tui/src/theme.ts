@@ -45,7 +45,7 @@ export const C = {
   red: hex("#e07a5f"), // muted clay, a failure
 };
 
-/** One short word and one dot per status, so a row reads `● running 3 steps prompt`. */
+/** One short word and one dot per status, so a row reads `● running  turn 3 prompt`. */
 export const STATUS: Record<TaskStatus, { word: string; mark: string; color: RGBA }> = {
   running: { word: "running", mark: "●", color: C.green },
   queued: { word: "queue", mark: "○", color: C.yellow },

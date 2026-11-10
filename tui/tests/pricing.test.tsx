@@ -139,10 +139,10 @@ async function rowAt(width: number, task: Task): Promise<string> {
 test("the row keeps its price and one line at 60 columns", async () => {
   const line = await rowAt(60, cachedTask);
   expect(line).toContain("#4f7c1");
-  expect(line).toContain("3 steps");
+  expect(line).toContain("turn 3");
   expect(line).toContain("$0.07");
   // The price follows the tokens it was computed from, on the row as in the table.
-  expect(line.indexOf("$0.07")).toBeGreaterThan(line.indexOf("↑750k"));
+  expect(line.indexOf("$0.07")).toBeGreaterThan(line.indexOf("in 750k"));
   // The prompt gave up its room, not the numbers.
   expect(line).not.toContain("exponential");
   expect(line.trimEnd().length).toBeLessThanOrEqual(60);

@@ -9,7 +9,7 @@
  *  Re-exports list-order.ts, list-usage.ts, list-scroll.ts: STATUS_ORDER, TRIAGE_ORDER,
  *  BOARD_ORDERS, bandOrder, nextOrder, orderLabel, orderTasks, taskHandle, buildRows,
  *  stepSelection, selectedRowIndex, scrollWindow, followSelection, taskUsage, foldTurn,
- *  formatTokens, taskCounters, taskCost, taskProgress, taskDuration, isFinishedStatus,
+ *  formatTokens, taskStats, taskCounters, taskCost, taskProgress, taskDuration, isFinishedStatus,
  *  nextRunningTaskId, and their types.
  *
  * INVARIANTS

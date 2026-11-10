@@ -3,8 +3,8 @@
  *
  * WHAT IT IS
  *  `TaskRow`, the single line a task occupies: `›` marker, short `#handle`, the prompt, then the
- *  right-aligned telemetry (steps, tokens, cache, wall) and the error count. Re-exported from
- *  board-view.tsx, which is the import path the tests and the App use.
+ *  right-aligned telemetry (turn, tokens in/out, price, cache rate, wall) and the error count.
+ *  Re-exported from board-view.tsx, which is the import path the tests and the App use.
  *
  * ENTRY POINTS
  *  TaskRow({task, selected, width, now, onSelect})   one task, one line, click or key selects
@@ -19,7 +19,7 @@
  *
  * WHERE TO CHANGE
  *  What a row says .... the spans at the end of TaskRow
- *  What it sheds first .... telemetry/limit in TaskRow   The numbers .... list-model taskCounters
+ *  What it sheds first .... telemetry/limit in TaskRow   The numbers .... list-model taskStats
  */
 import { C, clip } from "./theme";
 import { taskDuration, taskHandle, taskProgress } from "./list-model";
@@ -27,7 +27,7 @@ import type { Task } from "./types";
 
 /**
  * One task row: the `›` marker, the short handle, the prompt, then right-aligned telemetry.
- * The prompt absorbs the slack so steps/tokens/cache and wall time line up down the board,
+ * The prompt absorbs the slack so turn/tokens/price/cache and wall time line up down the board,
  * and the row never repeats the status word — its section already said it.
  */
 export function TaskRow(props: {

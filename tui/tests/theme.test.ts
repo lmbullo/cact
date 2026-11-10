@@ -17,8 +17,8 @@
  *  - `taskDuration` is never handed a clock: the caller passes `now`, so these cases are exact.
  *  - `taskUsage` prefers live `progress` and falls back to the final `steps`/`usage`; a number
  *    that is unknown stays `undefined` so no view prints a zero place-holder.
- *  - `taskCounters` prints tokens in then out, the cache hit rate only when the split is
- *    known, and the context window only against a window.
+ *  - `taskCounters` prints the turn, tokens in then out, the price, the cache hit rate only
+ *    when the split is known, and the context window only against a window.
  *  - `foldTurn` sums the tokens and the cache split over turns but keeps the latest prompt as
  *    the context; it is what server.ts calls, so the live numbers come from tested code.
  *  - `shortPath` only rewrites a real `$HOME` prefix; an unrelated absolute path is unchanged.
@@ -29,7 +29,7 @@
  *  The duration grammar .... src/theme.ts (elapsed)
  *  The summary wrapping ..... src/theme.ts (wrapText)
  *  The live/final choice ... src/list-model.ts (taskUsage, taskDuration)
- *  A counter's wording ...... src/list-model.ts (taskCounters)
+ *  A counter's wording ...... src/list-usage.ts (taskStats, taskCounters)
  *  A turn's live counters ... src/list-model.ts (foldTurn)
  */
 import { expect, test } from "bun:test";
@@ -76,7 +76,7 @@ test("taskCounters derives in/out tokens, cache rate and context from one place"
       window: 1_048_576,
     },
   };
-  expect(taskCounters(live)).toEqual(["3 steps", "↑4.2k ↓310", "<$0.01", "81% cache", "ctx 4.2k/1.0M"]);
+  expect(taskCounters(live)).toEqual(["turn 3", "in 4.2k", "out 310", "<$0.01", "cache 81%", "ctx 4.2k/1.0M"]);
 
   // A finished task falls back to the final counters, which are the same numbers: totals over
   // turns for tokens and the cache split, the kept last-turn context for the window.
@@ -103,12 +103,12 @@ test("taskCounters derives in/out tokens, cache rate and context from one place"
     window: 1_048_576,
   });
   // The price follows the tokens it is computed from, before the cache rate and the context.
-  expect(taskCounters(done)).toEqual(["7 steps", "↑9.0k ↓450", "<$0.01", "67% cache", "ctx 4.2k/1.0M"]);
+  expect(taskCounters(done)).toEqual(["turn 7", "in 9.0k", "out 450", "<$0.01", "cache 67%", "ctx 4.2k/1.0M"]);
 
-  // Nothing known prints nothing: no `0 steps`, no `0% cache`.
+  // Nothing known prints nothing: no `turn 0`, no `cache 0%`.
   expect(taskCounters(base)).toEqual([]);
   // A cache split where nothing was cached is still a rate.
-  expect(taskCounters({ ...base, progress: { cacheHit: 0, cacheMiss: 100 } })).toEqual(["<$0.01", "0% cache"]);
+  expect(taskCounters({ ...base, progress: { cacheHit: 0, cacheMiss: 100 } })).toEqual(["<$0.01", "cache 0%"]);
   // A context with no window reports the fill alone.
   expect(taskCounters({ ...base, progress: { context: 900 } })).toEqual(["ctx 900"]);
 });
