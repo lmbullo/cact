@@ -1,36 +1,26 @@
-"""runner: execute one eval pass, aggregate by failure tag, and append the evidence.
+"""runner: execute one eval pass, aggregate by failure tag, append the evidence.
 
 WHAT IT IS
-  The one place that knows the registry and the two execution modes. `run()` selects cases,
-  creates a fresh temp workspace per case, builds the right client (scripted offline, real
-  `llm.Client` live), catches any case exception as a failed row, and returns a `Report`.
-  `Report.text()` is the table; `Report.write()` appends a JSON file under `results/` with
-  the per-case counters and the aggregate `tokens/pass`. Nothing is overwritten: an eval run
-  is evidence, like a trace.
+  The one place that knows the registry and both execution modes.  run() selects cases, gives each
+  a fresh temp workspace, builds the client (scripted offline, llm.Client live), turns a case
+  exception into a failed row, and returns a Report; Report.text() is the table, write() appends.
 
 ENTRY POINTS
   REGISTRY                         id -> Case (loop + live)
   run(ids=None, live=False, *, api_key="", model="deepseek-flash", effort="low") -> Report
-  Report.rows / .passed / .failed / .usage / .by_failure
-  Report.text() / .write(tag="")   render and persist
+  Report.rows/.passed/.failed/.usage/.by_failure, Report.text()/.write(tag="")  view, persist
   main(argv=None) -> int           the CLI behind bench/eval.py
 
 INVARIANTS
-  - Offline is the default and needs no key. `live=True` with no key is an error before any
-    case runs, never a silently green pass over an empty live set.
-  - A case gets `tempfile.mkdtemp()`, never a shared directory; the workspace is removed
-    after the row is recorded. The oracle has already read it by then.
-  - A case exception is `ok=False` with the exception text; one broken eval cannot hide the
-    rest of the suite.
-  - The aggregate is honest about cost: `tokens_per_pass` is total tokens divided by passes,
-    and `None` when nothing passed. A pass with no usage is still a pass.
-  - `write()` uses a UTC timestamp and the run mode in the filename; the results directory is
-    append-only.
+  offline is the default and needs no key; live=True with no key is an error before any case
+  runs, never a green pass over an empty live set.
+  a case gets tempfile.mkdtemp(), removed after the row is recorded; an exception is ok=False
+  with its text, so one broken eval cannot hide the rest.
+  tokens_per_pass = total tokens / passes, None when nothing passed; write() names the file by
+  UTC timestamp and mode; results/ is append-only.
 
 WHERE TO CHANGE
-  A new case ............... its module's CASES list, then REGISTRY here
-  The CLI flags ............ main
-  The persisted row ........ `_row`
+  a new case .. its module's CASES, then REGISTRY;  CLI flags .. main;  row .. _row
 """
 from __future__ import annotations
 
@@ -104,6 +94,7 @@ class Report:
             mark = "PASS" if result.ok else "FAIL"
             lines.append(f"{mark} {case.id:18} {case.failure:12} "
                          f"stop={result.stop or '-':12} steps={result.steps:<3} "
+                         f"err={result.errors:<3} "
                          f"tok={int((result.usage or {}).get('total_tokens') or 0):<7} "
                          f"{result.detail[:120]}")
         for tag, bucket in sorted(self.by_failure().items()):

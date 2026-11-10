@@ -1,32 +1,26 @@
 """live: failure-mode evals that need a model, each with a hidden oracle and a cost row.
 
 WHAT IT IS
-  The cases a scripted client cannot judge: does the model read the contract instead of the
-  visible tests, find latent bugs, carry a fact across a compaction, follow an on-demand
-  skill, accept a skeptic's objection, and delegate instead of filling its own context. Every
-  case has a deterministic oracle from `oracle.py`; the model's prose is never the verdict.
-  These cases are opt-in (`--live`) because they cost tokens and need a key.
+  The cases a scripted client cannot judge: reading the contract instead of the visible tests,
+  finding latent bugs, carrying a fact across compaction, following an on-demand skill, accepting
+  a skeptic's objection, delegating instead of filling context.  Every case has a deterministic
+  oracle from oracle.py; the model's prose is never the verdict.
 
 ENTRY POINTS
-  LIVE_CASES   the list `runner` registers; each is a `types.Case` with kind="live"
+  LIVE_CASES   the list runner registers; each is a types.Case with kind="live"
   run_live(ws, client, prompt, **kwargs) -> (RunResult, ToolLoop)   the shared constructor
 
 INVARIANTS
-  - One case, one workspace, one kernel child, stopped in a `finally`. A live case never
-    shares a budget or a workspace with another case.
-  - The goal is the oracle, not the visible test: a green visible suite is a fixture detail,
-    not a pass. `goal_stops=False` keeps the run going after a failing finish, so the row
-    measures the model's repair behavior.
-  - The row carries `steps`, `usage` and `stop`; a pass with a runaway token count is still
-    reported, because cost is part of the result. `Budget.max_total_tokens` is the hard cap.
-  - A provider failure is a failed row, not a crash of the suite. The runner catches it.
-  - The prompts name the artifact and the expected shape; they do not name the answer. A live
-    eval that can be passed from prior knowledge is not measuring the agent.
+  one case, one workspace, one kernel child, stopped in a finally; no shared budget or workspace.
+  the goal is the oracle, not the visible test; goal_stops=False keeps the run going after a
+  failing finish so the row measures repair behavior.
+  the row carries steps, usage and stop; Budget.max_total_tokens is the hard cap.
+  a provider failure is a failed row, not a suite crash; the runner catches it.
+  prompts name the artifact and expected shape, never the answer.
 
 WHERE TO CHANGE
-  A new live behavior ....... a case here plus an oracle
-  The prompts ............... each case body
-  The budgets ............... the `Budget` each case builds
+  a new live behavior .. a case here plus an oracle;  prompts .. each case body;
+  budgets .. the Budget each case builds
 """
 from __future__ import annotations
 
@@ -61,10 +55,24 @@ def run_live(ws: Path, client, prompt: str, **kwargs):
 
 
 def _row(ok: bool, detail: str, result, loop=None) -> CaseResult:
+    error_calls = []
+    for turn in result.turns:
+        for call in turn.get("calls") or []:
+            observed = call.get("observation") or {}
+            if observed.get("exit") not in ("error", "raise"):
+                continue
+            try:
+                payload = json.loads(observed.get("result") or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            error_calls.append({"name": call.get("name"),
+                                "code": (payload.get("error") or {}).get("code"),
+                                "kind": payload.get("kind")})
     return CaseResult(
         ok=ok, detail=detail, stop=result.stop, steps=result.steps,
         usage=result.usage, final=result.final, errors=result.errors,
-        meta={"compactions": getattr(loop, "compactions", 0)} if loop is not None else {},
+        meta={"compactions": getattr(loop, "compactions", 0),
+              "error_calls": error_calls} if loop is not None else {"error_calls": error_calls},
     )
 
 

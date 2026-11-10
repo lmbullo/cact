@@ -2,30 +2,25 @@
  * detect-checks.ts: the verification plan for one workspace.
  *
  * WHAT IT IS
- *  `detectChecks(root, env)` turns a project tree into the ordered `CheckSpec[]` the worker
- *  runs: the goal (whole plan) and the cheap health subset (after a mutating cell).
+ * detectChecks(root, env) turns a project tree into the ordered CheckSpec[] the worker runs: the
+ * goal (whole plan) and the cheap health subset (after a mutating cell).
  *
  * ENTRY POINTS
- *  detectChecks(root, env = process.env) -> CheckSpec[]
+ * detectChecks(root, env = process.env) -> CheckSpec[]
  *
  * INVARIANTS
- *  - Explicit configuration wins: `CODE_TUI_CHECKS` (JSON list) then `CODE_TUI_CHECK` (one
- *    command). An empty `CODE_TUI_CHECK` disables verification.
- *  - Otherwise: `bench/smoke.py`, `ruff.toml`, or `Cargo.toml` at the root, plus `lint`,
- *    `typecheck`, `format:check` and `test` (or `build` when neither exists) from the root and
- *    `tui/package.json`. Lint, typecheck and format are cheap: a mutating cell cannot leave
- *    the tree in a state the project itself would reject. A Rust crate gets `cargo fmt
- *    --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test
- *    --workspace`; a correct but warning-laden crate is not done.
- *  - The package manager follows the lockfile: bun.lock/bun.lockb -> bun, package-lock.json
- *    -> npm, default bun. A `tests/` directory is a bun test target only for a bun project;
- *    npm projects need a `test` script.
- *  - `scope` is the subdirectory a spec belongs to; the loop filters the cheap health run by
- *    changed paths, and the goal ignores the filter.
+ * explicit configuration wins: CODE_TUI_CHECKS (JSON list), then CODE_TUI_CHECK (one command);
+ * an empty CODE_TUI_CHECK disables verification.
+ * otherwise bench/smoke.py, ruff.toml or Cargo.toml at the root, plus lint, typecheck, format:check
+ * and test (or build when neither exists) from the root and tui/package.json; lint, typecheck and
+ * format are cheap, so a mutating cell cannot leave a tree the project itself would reject.
+ * a Rust crate gets cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings and cargo test --workspace.
+ * the package manager follows the lockfile: bun.lock/bun.lockb -> bun, package-lock.json -> npm, default bun; a tests/ directory is a bun target only for a bun project.
+ * scope is the subdirectory a spec belongs to; the loop filters the cheap run by changed paths.
  *
  * WHERE TO CHANGE
- *  What a plan looks like ............ the body of detectChecks
- *  A new project convention .......... the package.json loop and the runner choice
+ * what a plan looks like ............ the body of detectChecks
+ * a new project convention .......... the package.json loop and the runner
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";

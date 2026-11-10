@@ -6,9 +6,9 @@ subsystem=smoke
 page=docs/agent/smoke.md
 modules=20
 module=bench/smoke_checks/__init__.py symbols=-
-entry=python3 bench/smoke.py    the only entry point; it decides the order | <module>.run(check, ...)  one group; `check` is bench.smoke_support.check
+entry=python3 bench/smoke.py  the only entry, it decides the order;  <module>.run(check, ...)  one | group; `check` is bench.smoke_support.check
 module=bench/smoke_checks/docs.py symbols=run
-entry=run(check)                        called by bench/smoke.py::main after `index` | DOCS                              the documents that are checked | _agent_docs()                     agent-page drift, coverage and line-budget report | _references(text)                 backticked spans that look like a repository path | _resolves(ref, doc_dir, paths)    whether a reference names something in the tree | _paragraphs(text)                 the comparison unit for the unique check | _copies(docs)                     (text, path, path) for every paragraph two documents share
+entry=run(check), DOCS                  group entry after `index`; the documents that are checked | _agent_docs()                     agent-page drift, coverage and line-budget report | _references(text)                 backticked spans that look like a repository path | _resolves(ref, doc_dir, paths)    whether a reference names something in the tree | _paragraphs(text), _copies(docs)  comparison unit; paragraph pairs two documents share
 module=bench/smoke_checks/env.py symbols=run
 entry=run(check)   called by bench/smoke.py before the kernel groups
 module=bench/smoke_checks/evals.py symbols=run
@@ -26,7 +26,7 @@ entry=run(check)                    called by bench/smoke.py::main after helpers
 module=bench/smoke_checks/limits.py symbols=run
 entry=run(check)   called by bench/smoke.py after the turn-machine group
 module=bench/smoke_checks/plans.py symbols=run
-entry=run(check) -> Path   called by bench/smoke.py::main; returns the temp workspace the kernel | groups then reuse, so every later group shares one fixture tree
+entry=run(check) -> Path   called by bench/smoke.py::main; returns the shared temp workspace
 module=bench/smoke_checks/protocol.py symbols=run
 entry=run(check, root)   called by bench/smoke.py::main after plans (it needs the temp root)
 module=bench/smoke_checks/repl.py symbols=run

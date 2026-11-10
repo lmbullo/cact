@@ -1,34 +1,27 @@
 #!/usr/bin/env python3
-"""guide: the CLI form of the `guide()` verb — what every module is, and which one owns a topic.
+"""guide: the CLI form of `guide()`; what each module is and which one owns a topic.
 
 WHAT IT IS
-  `bench/agent/headers.py` turns the WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE
-  header of every module into rows; this is the terminal front for those rows, and the same
-  concept the kernel exposes as `guide(query)` / `guide(path)`. One name for one thing: the `map`
-  verb lists files, `guide` (verb or this CLI) reads source headers. It is the first command an
-  agent should run in this repo: one screen instead of the whole tree, plus a gate (`--check`)
-  that fails when a module stops explaining itself.
+  Terminal front for bench/agent/headers.py rows: path, title, sections. `--check` is the
+  header gate: a missing section or an in-scope header over MAX_HEADER lines exits 1.
 
 ENTRY POINTS
-  python3 bench/guide.py                     the index: one line per module
-  python3 bench/guide.py --query checks      ranked modules that own "checks", with their headers
-  python3 bench/guide.py --module bench/agent/check_plan.py  one module's full header
-  python3 bench/guide.py --json [--query Q]  the same data as JSON, for a program
+  python3 bench/guide.py                     one line per module (the index)
+  python3 bench/guide.py --query checks      ranked modules + their headers
+  python3 bench/guide.py --module PATH       one module's full header
+  python3 bench/guide.py --json [--query Q]  the same data as JSON
   python3 bench/guide.py --limit N           cap the rows for --query (default 6)
-  python3 bench/guide.py --check             exit 1 if a header is missing a section
+  python3 bench/guide.py --check             exit 1 on any header gap
   main(argv=None) -> exit code; the flags are mutually exclusive except --json
 
 INVARIANTS
-  - Read-only and offline: it prints, it never writes, and it needs no key and no workspace.
-  - It delegates every parse to bench/agent/headers.py, the same source a kernel cell runs, so
-    the CLI and the `guide()` verb cannot disagree.
-  - `--check` is the contract gate: exit 0 means every indexed source file carries all four
-    sections. It is the reason a new module cannot land undocumented.
-  - `--json` never mixes prose into stdout; the human table only exists without it.
+  read-only and offline: it prints, it never writes, it needs no key and no workspace.
+  every parse is delegated to bench/agent/headers.py, so CLI and `guide()` verb cannot disagree.
+  --json never mixes prose into stdout; the human table only exists without it.
 
 WHERE TO CHANGE
-  The data ......... bench/agent/headers.py (parsing, ranking, rendering)
-  A new flag ....... main(); keep `--check` green when you add a module
+  The data ......... bench/agent/headers.py (parsing, budget, ranking, rendering)
+  A new flag ....... main(); keep --check green when you add a module
 """
 from __future__ import annotations
 
@@ -64,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": not gaps, "problems": gaps}, indent=2))
         else:
             for gap in gaps:
-                print("%s  missing: %s" % (gap["path"], ", ".join(gap["missing"])))
+                print("%s  %s (%d header lines)"
+                      % (gap["path"], gap["reason"], gap["header_lines"]))
             print("%d module(s) with a header gap" % len(gaps) if gaps
                   else "every module header is complete")
         return 1 if gaps else 0

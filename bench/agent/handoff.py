@@ -1,28 +1,19 @@
-"""handoff: structured finish answer + the compact block it renders to.
-
+"""handoff: structured finish answer and the compact block it renders to.
 WHAT IT IS
   final_answer(value) accepts a plain string or a dict {summary, changed, gates, deferred,
-  untested}. One rendering + normalization for both halves:
-    fields(value)   normalized dict (empty for a plain string), every field clipped
-    render(value)   short block: summary first, one line per non-empty section
-    split(value)    (rendered_text, fields), the pair a Cell carries
-
+  untested}. fields() normalizes and clips; render()/split() produce the caller-facing pair.
 ENTRY POINTS
   render(value)   str    caller-facing text; a string value passes through unchanged
   fields(value)   dict   summary/changed/gates/deferred/untested, clipped to fixed limits
   split(value)    tuple  (render(value), fields(value)) for Cell.from_reply
-
 INVARIANTS
-  plain string input = never reformatted, never validated; existing callers stay byte-identical.
-  nothing dropped silently: changed capped at 12 paths + `+N more`; every list capped, omitted
-  count named in the line.
-  block bounded: summary 600 chars, item 160, section line 700. Same text is the TUI final card
-  and the next task's `[workspace history]` source.
-
+  plain string input is never reformatted, never validated; existing callers stay byte-identical.
+  nothing dropped silently: changed capped at 12 paths + `+N more`; every list capped.
+  block bounded: summary 600 chars, item 160, section line 700.
 WHERE TO CHANGE
-  new dict field ......... FIELDS, fields(), render()
-  cap / clip width ....... SUMMARY_CHARS / ITEM_CHARS / CHANGED_CAP / LINE_CHARS
-  kernel final_answer .... kernel/driver.py (passes a dict through untouched)
+  new dict field ....... FIELDS, fields(), render()
+  cap / clip width ..... SUMMARY_CHARS / ITEM_CHARS / CHANGED_CAP / LINE_CHARS
+  kernel final_answer .. kernel/driver.py (passes a dict through untouched)
 """
 from __future__ import annotations
 

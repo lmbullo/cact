@@ -1,54 +1,27 @@
-"""End-to-end run through the real TUI worker: clone a frozen workspace, drive the agent,
-journal everything, then check and diff it.
+"""live: end-to-end run through the real TUI worker: clone a frozen workspace, drive, journal, check, diff.
 
 WHAT IT IS
-  The honest test. It clones `bench/archive/results/ws/tui-base` to `bench/ws/runs/<tag>`, writes
-  `<tag>.prompt.txt`, spawns `tui/python/worker.py` against it, records `<tag>.events.jsonl`
-  (the worker's `@@TUI@@` lines), then runs the check itself and diffs the tree against the
-  base. `bench/task_journal.py` reads the result back. `--sandbox daytona` runs the same case
-  on a disposable Daytona box and copies the same artifacts back; `local` stays the default.
+  The honest test: clones bench/archive/results/ws/tui-base to bench/ws/runs/<tag>, writes <tag>.prompt.txt, spawns
+  tui/python/worker.py, records <tag>.events.jsonl (@@TUI@@ lines), runs the check and diffs against the base.
+  bench/task_journal.py reads it back; --sandbox daytona (snapshot CODE_TUI_DSNAPSHOT, default code-tui-py-bun) is disposable.
 
 ENTRY POINTS
-  python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt "..." \
-          --check "bun run typecheck" [--checks '[{"name":"smoke","cmd":"...","cheap":true}]']
-          [--legacy r1|r3|both] [--sandbox local|daytona]
-  load_key()      DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env}
-  _daytona(args, base)  the sandbox path: snapshot, upload, worker, check, download, delete
-  _summary(args, events, final, wall, run, check)  the one summary both paths write
-
-  `--sandbox daytona` uses the snapshot named by `CODE_TUI_DSNAPSHOT` (default
-  `code-tui-py-bun`), built once from `python:3.12` + bun (bench/remote.py::create_snapshot)
-  and reused by name afterwards. The key is passed only in the worker's exec `env=`, never to
-  `create(env=...)` and never to a file.
-
-  The base must already exist: `bench/ws/` is gitignored, so build it first with
-  `python3 -m bench.snapshot freeze tui bench/ws/tui-base` or point --base at the archived
-  `bench/archive/results/ws/tui-base`.
+  python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt "..." --check "bun run typecheck"
+          [--checks '[{"name":"smoke","cmd":"...","cheap":true}]'] [--legacy r1|r3|both] [--sandbox local|daytona]
+  load_key() = DEEPSEEK_API_KEY, else ~/.config/code-tui/{env,.env};  _daytona(args, base) = the sandbox path;
+  _summary(args, events, final, wall, run, check) = the one summary both paths write.
 
 INVARIANTS
-  - `--tag` names a new directory under bench/ws/runs/. That tree and its journals are
-    append-only evidence: never reuse a tag, never rewrite an old run.
-  - Everything is driven through the worker's public interface (`@@TUI@@` JSON lines,
-    `VERBS` list), so this file doubles as the contract test for worker.py: if the worker
-    changes its messages, this breaks first.
-  - `--legacy` toggles the worker's legacy env flags (`CODE_TUI_LEGACY_TIMEOUT`,
-    `CODE_TUI_LEGACY_CHECK`) so old behaviour stays reproducible. On Daytona, every
-    `CODE_TUI_*` override except host-path settings is forwarded to the worker, so a profile
-    or scope experiment is the same command locally and in the sandbox.
-  - `--check` is a single command; `--checks` is a JSON plan (see bench/agent/check_plan.py)
-    and wins when set. The worker treats the plan as its goal and runs the `cheap` subset
-    after mutating cells.
-  - The check runs twice by design: once inside the agent as its goal, once here as the
-    independent verdict printed in the summary. On `daytona` the second run happens inside
-    `/work/ws` and its output is classified by `check_run.from_output`.
-  - The sandbox is disposable: it is deleted in a `finally`, so no exception path leaves one
-    billing. Only the snapshot (the slow build) survives.
+  tag names a NEW dir under bench/ws/runs/: append-only evidence, never reuse a tag, never rewrite an old run.
+  everything goes through the worker's public interface (@@TUI@@ lines, VERBS), so this is the contract test for worker.py.
+  --legacy toggles CODE_TUI_LEGACY_TIMEOUT/CHECK; on Daytona every CODE_TUI_* override except host-path settings is
+  forwarded, so a profile experiment is one command. --check is one command; --checks (JSON plan) wins and is the goal.
+  the check runs twice (agent goal + independent verdict; on daytona in /work/ws via check_run.from_output); the sandbox
+  is deleted in a finally, only the snapshot survives.
 
 WHERE TO CHANGE
-  What a live run records ..... _summary(), the one events/summary writer
-  How the worker is invoked ... the argv/env block in _local() and _daytona()
-  The sandbox layout ......... _daytona(), HARNESS_EXCLUDE, SNAPSHOT_ENV
-  Key discovery ............... load_key()
+  recorded fields ... _summary()   worker argv/env ... _local() and _daytona()   key discovery ... load_key()
+  base must exist first: python3 -m bench.snapshot freeze tui bench/ws/tui-base   sandbox ... HARNESS_EXCLUDE, SNAPSHOT_ENV
 """
 from __future__ import annotations
 

@@ -1,28 +1,22 @@
 """docs: fetch one documentation page -> clean, bounded text for the model.
-
 WHAT IT IS
-  The `docs` tool. A coding agent that guesses an npm/pip/framework API from memory writes code
-  that fails at the call site. DocsClient.fetch(url) fetches one http(s) page, strips
-  scripts/styles/navigation, keeps headings and code blocks, returns compact text under a hard
-  char budget. Parent-side like `delegate`: no network inside the bwrap kernel, no wider shell.
-
+  The `docs` tool. DocsClient.fetch(url) fetches one http(s) page, strips scripts/styles/navigation,
+  keeps headings and code blocks and returns compact text under a hard char budget. Parent-side
+  like `delegate`: no network inside the bwrap kernel, no wider shell.
 ENTRY POINTS
   DOCS_TOOL                       provider tool spec
   DocsClient(cache_dir=None, *, timeout=20, max_bytes=2_000_000, cache=True)
     .fetch(url, max_chars=12_000) -> dict  ok/kind/url/title/headings/text/chars/truncated
   extract(html, url="") -> dict   parser, exposed for tests
-
 INVARIANTS
   scheme = http(s) only: file://, data: and every other scheme refused; no local file read, no
   workspace escape.
   size cap enforced before parsing: huge page -> truncated=True, never an unbounded download.
-  fetch failure = structured dict (ok:false, error.code), never an exception into the loop; model
-  gets a reason and can try another URL or fall back to `search`.
-  cache = disk, keyed by URL under bench/.cache/docs/; hit costs no network. cache=False for a
+  fetch failure = structured dict (ok:false, error.code), never an exception into the loop.
+  cache = disk, keyed by URL under bench/.cache/docs/; hit costs no network; cache=False for a
   live eval that must observe a changing page.
-  parser = stdlib-only, tolerant: malformed HTML must not raise; result always has `text`
+  parser = stdlib-only and tolerant: malformed HTML must not raise; result always has `text`
   (possibly "") so "empty page" != "fetch failed".
-
 WHERE TO CHANGE
   stripped/kept content ..... `_Page`, `extract`
   network policy ............ `DocsClient.fetch` (scheme, timeout, byte cap)

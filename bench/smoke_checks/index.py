@@ -1,12 +1,11 @@
 """index: the contract index reaches an agent, and the map CLI agrees with it.
 
 WHAT IT IS
-  Drives bench/agent/headers.py the way a kernel cell does: `index(ROOT)` must contain the
-  modules an agent is told to read, `guide()` must page with an offset, a topic query must
-  name the owning module, an unknown module must be a miss and not an exception, and a known
-  module must read back whole. Every ENTRY POINTS line that names a callable must resolve to a
-  symbol declared somewhere in the Python source, so a header cannot advertise a function that
-  was deleted. Then `python3 bench/guide.py --check` must exit clean.
+  Drives bench/agent/headers.py the way a kernel cell does: index(ROOT) must contain the modules an
+  agent is told to read, guide() must page with an offset, a topic query must name the owning
+  module, an unknown module must be a miss and not an exception, and a known module must read back
+  whole.  Every ENTRY POINTS callable must resolve to a declared symbol, so a header cannot
+  advertise a deleted function.  Then python3 bench/guide.py --check must exit clean.
 
 ENTRY POINTS
   run(check)                    called by bench/smoke.py::main after helpers
@@ -14,18 +13,14 @@ ENTRY POINTS
   _entry_point_gaps(rows, names)  (module, callable) pairs a header names but nothing declares
 
 INVARIANTS
-  - One example path is asserted (`bench/agent/kernel/prelude.py`): if the kernel package is
-    renamed or re-split, this check moves with it, because the index is how an agent finds
-    the action space.
-  - The guide CLI is invoked in-process with a redirected stdout, so no child and no shell.
-  - The entry-point check is deliberately lenient about *where* a name is declared: a
-    re-export (`bench/agent/__init__.py` names `guide`) is legitimate. It only flags a name
-    that appears nowhere in the source, which is real drift (a deleted function still in a
-    header). Fixtures and generated trees are skipped by `headers._walk`.
+  one example path is asserted (bench/agent/kernel/prelude.py); a kernel rename moves this check.
+  the guide CLI runs in-process with redirected stdout, no child and no shell.
+  the entry-point check is lenient about where a name is declared (a re-export is legitimate) and
+  flags only a name that appears nowhere in the source; fixtures and generated trees are skipped
+  by headers._walk.
 
 WHERE TO CHANGE
-  The indexed roots or skip rules ..... headers.SKIP_DIRS / LANGUAGES (not this file)
-  The example query or module ......... this file's checks
+  indexed roots or skip rules .. headers.SKIP_DIRS / LANGUAGES;  example query or module .. here
 """
 from __future__ import annotations
 
@@ -111,6 +106,14 @@ def run(check):
           str([r["path"] for r in rows[:3]]))
     gaps = headers.problems(ROOT)
     check("headers: every module header is complete", not gaps, str(gaps[:3]))
+    check("headers: no in-scope header exceeds %d lines" % headers.MAX_HEADER,
+          not [row for row in rows if headers.in_scope(row["path"])
+               and row["header_lines"] > headers.HEADER_ALLOW.get(
+                   row["path"], headers.MAX_HEADER)],
+          str([(row["path"], row["header_lines"]) for row in rows
+               if headers.in_scope(row["path"])
+               and row["header_lines"] > headers.HEADER_ALLOW.get(
+                   row["path"], headers.MAX_HEADER)])[:300])
     hit = headers.guide(ROOT, query="check plan", limit=3)
     check("headers: a query names the owning module",
           bool(hit["modules"]) and hit["modules"][0]["path"] == "bench/agent/check_plan.py",

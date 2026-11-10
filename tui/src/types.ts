@@ -1,49 +1,26 @@
-/**
- * The wire contract shared by server.ts, client.tsx, launcher.ts and stop.ts.
+/** The wire contract shared by server.ts, client.tsx, launcher.ts and stop.ts.
  *
  * WHAT IT IS
- *  Types only. `Task` is one queued/running/finished agent task (the board row and the
- *  detail view); `TaskEvent` is one line of events/<id>.jsonl; `CheckState` is the verdict a
- *  `check` event carries; `ServerInfo` is server.json and GET /health; `CheckSpec` is one entry
- *  of the verification plan;
- *  `Snapshot`/`WsMessage` are the WebSocket messages; `WorkerMessage` is the `@@TUI@@`
- *  payload emitted by python/worker.py.
+ * Types only. Task = one queued/running/finished task (board row + detail); TaskEvent = one line of events/<id>.jsonl;
+ * CheckState = the verdict a `check` event carries; ServerInfo = server.json and GET /health; CheckSpec = one plan entry;
+ * Snapshot/WsMessage = WebSocket messages; WorkerMessage = the @@TUI@@ payload emitted by python/worker.py.
  *
  * ENTRY POINTS
- *  Task, TaskStatus, TaskEvent, CheckState, ServerInfo, SourceFingerprint, CheckSpec, Snapshot,
- *  WsMessage, WorkerMessage
+ * Task, TaskStatus, TaskEvent, CheckState, ServerInfo, SourceFingerprint, CheckSpec, Snapshot, WsMessage, WorkerMessage
  *
  * INVARIANTS
- *  - Types only: no runtime code, nothing to import at runtime. Changing a field here means
- *    changing server.ts (producer) and client.tsx (consumer) in the same commit.
- *  - `TaskStatus` is the closed vocabulary the board colours and sections by; the mapping
- *    from stop reason to status lives in tui/python/worker.py, not here.
- *  - `Task.progress` is the live estimate from turn events; `steps`/`usage` are the final
- *    counters, and `context`/`window` keep the last turn's prompt size and the model's window.
- *    The client derives every counter from them in list-model.taskUsage.
- *  - `Task.stop`/`Task.errors` are the final verdict and the error count; `CheckState` is the
- *    same verdict for one verification run, carried by a `check` event. The log header reads
- *    the three of them and nothing else about how a run ended.
- *  - `WorkerMessage` mirrors the `emit({...})` payloads in python/worker.py; that file is the
- *    source of truth for the message kinds.
- *  - `ServerInfo.source` is the boot fingerprint of the files the detached server imported
- *    (source-hash.ts); `stale`/`changed` are measured on each read, never stored, so a reader can
- *    tell a running process from the tree on disk.
- *  - `CheckSpec` mirrors `bench.agent.check_plan.CheckSpec`: {name, cmd, cheap, scope?}, where
- *    `scope` is a list of path prefixes. It is parsed in detect-checks.ts from
- *    CODE_TUI_CHECKS / CODE_TUI_CHECK / package.json.
- *  - `ServerInfo.logsDir` and `Task.log` are the machine-readable per-task JSONL under the state
- *    dir: `logs/<id>.jsonl`, holding journal `event` records, raw worker `stdout`/`stderr`, the
- *    `prompt`, and the run's `usage` and `error` records. /health publishes the directory, a task
- *    payload its own file, so an agent needs no path formula of its own.
+ * types only: no runtime code; changing a field means changing server.ts (producer) and client.tsx (consumer) together.
+ * TaskStatus is the closed vocabulary the board colours/sections by; stop reason -> status lives in tui/python/worker.py.
+ * Task.progress is the live estimate from turn events; steps/usage are final; context/window keep the last prompt size and window.
+ * Task.stop/Task.errors are the final verdict/error count; CheckState is the same verdict for one verification run.
+ * WorkerMessage mirrors emit({...}) in python/worker.py, the source of truth for the message kinds.
+ * ServerInfo.source is the boot fingerprint (source-hash.ts); stale/changed are measured on each read, never stored.
+ * CheckSpec mirrors bench.agent.check_plan.CheckSpec {name,cmd,cheap,scope?}; scope is path prefixes; parsed in detect-checks.ts.
+ * ServerInfo.logsDir / Task.log = logs/<id>.jsonl (event/stdout/stderr/prompt/usage/error records); no path formula needed.
  *
  * WHERE TO CHANGE
- *  The task shape ................. Task / TaskStatus
- *  The journal line shape ......... TaskEvent
- *  A verification verdict ......... CheckState
- *  The detection plan ............ CheckSpec; detectChecks in detect-checks.ts
- *  A worker message .............. WorkerMessage + journalWorkerEvent in worker-events.ts
- *  The machine log's record kinds .. server.ts::appendLog call sites
+ * task shape ... Task/TaskStatus   journal line ... TaskEvent   verdict ... CheckState   plan ... CheckSpec, detectChecks
+ * worker message ... WorkerMessage + journalWorkerEvent   machine log kinds ... server.ts::appendLog call sites
  */
 export type TaskStatus = "queued" | "running" | "done" | "partial" | "failed" | "cancelled";
 

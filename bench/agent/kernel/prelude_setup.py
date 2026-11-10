@@ -1,25 +1,20 @@
 """prelude_setup: the namespace a kernel cell starts in + path-matching helpers.
-
 WHAT IT IS
-  Fragment 1/5 of PRELUDE (join: prelude.py). Defines what a fresh cell already sees: the
-  exec'd header index (_HEADERS, guide), _ROOT, per-cell and per-session read ledgers, mutation
-  flags, .gitignore/include matching (_ignore_patterns, _ignored, _glob_match, _include_match,
-  _include_patterns), and the basics every later fragment uses.
-
+  Fragment 1/5 of PRELUDE (join: prelude.py). Defines what a fresh cell sees: exec'd header
+  index (_HEADERS, guide), _ROOT, read ledgers, mutation flags, .gitignore/include matching,
+  and the basics every later fragment uses.
 ENTRY POINTS
   guide(query, path, limit, chars, offset, headers)   the one verb the header index adds
-  _fail(kind, code, message, use, **extra)    the one error-dict builder every verb uses
-  _partial_failure(results)                   aggregate error for a batch with bad paths
-  cell namespace: _ROOT, _READS_CELL, _READS_SESSION, _READ_MAX_CHARS, _READ_MAX_LINES, _MUT,
-  _JOURNAL, _SNAP, _JSEQ, _CELL_CHANGED, _SKIP_DIRS, _IGNORE
-
+  _fail(kind, code, message, use, **extra)            the one error-dict builder
+  _partial_failure(results)                           aggregate error for a bad-path batch
+  cell namespace: _ROOT, _READS_CELL, _READS_SESSION, _READ_MAX_CHARS, _READ_MAX_LINES,
+  _MUT, _JOURNAL, _SNAP, _JSEQ, _CELL_CHANGED, _SKIP_DIRS, _IGNORE
 INVARIANTS
   runs first: may use only the stdlib modules it imports itself.
-  _fail = the one refusal shape: {ok:false, kind, error:{code,message,use}, path?}. Every verb
+  _fail = the one refusal shape {ok:false, kind, error:{code,message,use}, path?}; every verb
   returns it; the driver adds the live signature at the typed-call boundary.
   guide() = thin wrapper over _HEADERS["guide"], read-only; the rest of the prelude never calls it.
-  path matching shared by map/search/read: a change here changes which files those three report.
-
+  path matching shared by map/search/read: a change here changes which files those report.
 WHERE TO CHANGE
   skipped files .......... _SKIP_DIRS, _ignore_patterns, _ignored
   include= matching ...... _glob_match, _include_match, _include_patterns

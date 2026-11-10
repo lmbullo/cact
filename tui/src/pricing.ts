@@ -1,34 +1,27 @@
 /**
  * Pricing: the one table of what a run costs, and the one place a price is computed.
- *
  * WHAT IT IS
- *  USD per 1M tokens for the model the server runs (`server.ts`: `CODE_TUI_MODEL`), split the
- *  way the provider bills it — prompt cache hit, prompt cache miss, completion. `cost()` turns
- *  the usage record the server already keeps into USD and `formatCost()` renders it for a row
- *  tail; no view formats a price of its own.
- *
+ *   USD per 1M tokens for the model server.ts runs (`CODE_TUI_MODEL`), split as the provider bills:
+ *   prompt cache hit, prompt cache miss, completion; no view formats a price of its own.
  * ENTRY POINTS
- *  PRICES                 model -> {hit, miss, out} in USD per 1M tokens
- *  DEFAULT_MODEL          the model server.ts runs when CODE_TUI_MODEL is unset
- *  priceFor(model)        the table row, or undefined for a model with no published price
- *  cost(usage, model?)    USD for one usage record, or undefined when there is nothing to price
- *  formatCost(usd)        `$0.07`, `<$0.01` under a cent, "" when there is no price
- *
+ *   PRICES                 model -> {hit, miss, out} in USD per 1M tokens
+ *   DEFAULT_MODEL          the model server.ts runs when CODE_TUI_MODEL is unset
+ *   priceFor(model)        the table row, or undefined for a model with no published price
+ *   cost(usage, model?)    USD for one usage record, or undefined when there is nothing to price
+ *   formatCost(usd)        `$0.07`, `<$0.01` under a cent, "" when there is no price
  * INVARIANTS
- *  - One table, one date: `PRICES` is the only place a price is written down. The README points
- *    here instead of copying numbers, so a price change has exactly one edit.
- *  - Never invent a price: a model that is not in `PRICES` yields undefined and the row keeps
- *    its token count alone. No default rate, no "estimated" figure.
- *  - Cache-hit, cache-miss and output tokens are priced separately and per 1M tokens, because
- *    that is how the provider bills them: a cache hit is an order of magnitude cheaper than a
- *    miss, so folding the two would misprice a cached run.
- *  - Missing cache counters mean all input is priced as miss — the conservative choice, so a
- *    provider that stops reporting the split cannot make a run look cheaper than it was.
- *
+ *   one table, one date: `PRICES` is the only place a price is written down; the README points here
+ *   instead of copying numbers, so a price change has exactly one edit.
+ *   never invent a price: a model not in `PRICES` yields undefined and the row keeps its token
+ *   count alone; no default rate, no "estimated" figure.
+ *   cache-hit, cache-miss and output tokens are priced separately and per 1M, as the provider bills
+ *   them; folding hit and miss would misprice a cached run.
+ *   missing cache counters mean all input is priced as miss, so a provider that stops reporting the
+ *   split cannot make a run look cheaper than it was.
  * WHERE TO CHANGE
- *  A price or the source date ..... PRICES (move the date with the numbers)
- *  How usage becomes USD .......... cost
- *  How a price is printed ......... formatCost
+ *   a price or the source date ..... PRICES (move the date with the numbers)
+ *   how usage becomes USD .......... cost
+ *   how a price is printed ......... formatCost
  */
 
 /** The billed rates for one model, in USD per 1M tokens. */

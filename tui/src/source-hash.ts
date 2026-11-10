@@ -1,37 +1,27 @@
 /**
  * source-hash.ts: is the running server the code the tree holds?
- *
  * WHAT IT IS
- *  The fingerprint of the files the detached server imports once at boot
- *  (`src/server.ts`, `src/worker-events.ts`, `src/detect-checks.ts`) and the comparison a later
- *  read makes against it. `client.tsx` and the rest are re-imported by every `code` launch, and
- *  `bench/**` plus `python/worker.py` by every task's worker, so only these can go stale under a
- *  live pid.
+ *   Hash of the files the detached server imports once at boot (server.ts, worker-events.ts,
+ *   detect-checks.ts) and the read-time comparison against it.
  *
  * ENTRY POINTS
- *  SOURCE_FILES                  the files a running server cannot re-read: server.ts,
- *                                worker-events.ts, detect-checks.ts
- *  bootSource(root, files, now)  boot: {source: {hash, files, hashedAt}, hashes}
- *  compareSource(root, boot)     read time: {stale, changed}; a missing file counts as changed
- *  fileHash(root, file)          one file's sha256, or "missing"
- *  combineHash(files, hashes)    the one digest that stands for the whole set
+ *   SOURCE_FILES                  server.ts, worker-events.ts, detect-checks.ts
+ *   bootSource(root, files, now)  boot: {source: {hash, files, hashedAt}, hashes}
+ *   compareSource(root, boot)     read time: {stale, changed}; a missing file counts as changed
+ *   fileHash(root, file)          one file's sha256, or "missing"
+ *   combineHash(files, hashes)    the one digest that stands for the whole set
  *
  * INVARIANTS
- *  - Three files, ~15KB: the read-time comparison is cheap enough to run on a `/health`, but the
- *    caller still throttles it (server.ts: at most once every 2s).
- *  - Paths are relative to `root` (the `tui/` directory) and are exactly what `changed` reports,
- *    so the board can name the file without a second lookup.
- *  - An unreadable or absent file hashes to the same literal ("missing") both times, so a file
- *    that was there at boot and is gone now is `changed`, and one that was never there is not.
- *  - `hashes` is the per-file record `changed` needs; `hash` is only the combined digest that
- *    `/health` publishes. Do not try to derive one from the other.
- *  - Pure reads: nothing is written, nothing is cached here (the throttle lives in server.ts).
+ *   paths are relative to `root` (the `tui/` directory) and are exactly what `changed` reports.
+ *   an unreadable/absent file hashes to the same literal ("missing") both times, so boot-present
+ *   and now-gone is `changed`, while never-there is not.
+ *   `hashes` is the per-file record `changed` needs; `hash` is only the combined `/health` digest.
+ *   Comparison is cheap (~15KB) but the caller throttles it (server.ts, at most 2s); pure reads.
  *
  * WHERE TO CHANGE
- *  What the server's own source is ..... SOURCE_FILES
- *  How a file is digested .............. fileHash / combineHash
- *  What counts as stale ................ compareSource
- *  When the comparison runs ............. server.ts (sourceStatus, SOURCE_RECHECK_MS)
+ *   what the server's own source is ..... SOURCE_FILES
+ *   how a file is digested .............. fileHash / combineHash
+ *   what counts as stale / when ........ compareSource; server.ts (sourceStatus, SOURCE_RECHECK_MS)
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

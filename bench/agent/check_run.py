@@ -1,32 +1,26 @@
 """check_run: one project command -> one Check (the unit; the plan is check_plan.py).
 
 WHAT IT IS
-  run_check(cmd, cwd) -> Check: runs a shell command (tsc, bun test, pytest, ...), parses output.
-  evaluate(goal) -> (ok, Check | None): calls a goal callable; normalises bool vs Check for the loops.
+  run_check(cmd, cwd) -> Check runs a shell command (tsc, bun test, pytest, ...) and parses its
+  output; evaluate(goal) -> (ok, Check | None) normalises a goal callable's bool vs Check.
 
 ENTRY POINTS
   Check(cmd, state, exit_code, duration_ms, stdout, stderr, failures)
-    state = "passed" | "failed" | "unrunnable"
-    .ok, .text(limit)  model-facing rendering; unrunnable is called out explicitly
+    state = "passed" | "failed" | "unrunnable";  .ok, .text(limit);  .summary(limit) last count
   run_check(cmd, cwd, timeout=600.0) -> Check
-  from_output(cmd, exit_code, stdout, stderr, duration_ms) -> Check  already-run command
+  from_output(cmd, exit_code, stdout, stderr, duration_ms) -> Check   already-run command
   evaluate(goal) -> (ok, Check | None)
 
 INVARIANTS
-  "unrunnable" != "failed": broken command, timeout or crash means the check itself is broken;
-  text says so, so the model repairs the project instead of chasing a missing tool.
-  TUI maps unrunnable -> failed task only in the loop, never here.
+  "unrunnable" != "failed": broken command, timeout or crash means the check itself is broken; the TUI maps unrunnable -> failed task only in the loop, never here.
   failures = bounded, de-duplicated [{line, text}] parsed by _PATTERNS: bun `(fail)`, pytest
   `FAILED`, tsc `file(line,col): error TSxxxx`, assertion lines.
-  goal raises -> unrunnable; never an exception in the loop.
-  goals = callables, not command strings: tui/python/worker.py builds check_plan.Verifier, whose
-  authoritative() runs the whole plan on every finish attempt; multi-command plans live there.
+  a goal that raises -> unrunnable, never an exception in the loop; goals are callables:
+  worker.py builds check_plan.Verifier, whose authoritative() runs the whole plan on a finish.
 
 WHERE TO CHANGE
-  another runner's failure lines .. _PATTERNS, _failures
-  several checks / cheap subset ... check_plan.py (CheckSpec, run_specs)
-  check execution ................. run_check (timeout, bash, cwd)
-  model-facing failure text ....... Check.text
+  failure lines .. _PATTERNS, _failures;  several checks .. check_plan.py;  execution ..
+  run_check;  failure text .. Check.text
 """
 from __future__ import annotations
 
@@ -54,6 +48,20 @@ class Check:
         """True only for a run that exited 0."""
         return self.state == "passed"
 
+    def summary(self, limit: int = 180) -> str:
+        """The last output line that looks like a count/result, else the last non-empty line."""
+        for line in reversed((self.stderr + "\n" + self.stdout).splitlines()):
+            text = line.strip()
+            if not text:
+                continue
+            if _COUNT.search(text):
+                return text[:limit]
+        for line in reversed((self.stderr + "\n" + self.stdout).splitlines()):
+            text = line.strip()
+            if text:
+                return text[:limit]
+        return ""
+
     def first_failure(self) -> str:
         """The first failing line `_PATTERNS` found, else the first non-empty output line."""
         for hit in self.failures or ():
@@ -69,7 +77,9 @@ class Check:
     def text(self, limit: int = 3000) -> str:
         """The model-facing line(s): verdict first, then the parsed failure lines or a tail."""
         if self.state == "passed":
-            return f"{self.cmd}: passed ({self.duration_ms}ms)"
+            detail = self.summary()
+            return f"{self.cmd}: passed ({self.duration_ms}ms)" + (
+                f" | {detail}" if detail else "")
         if self.state == "unrunnable":
             detail = (self.stderr or self.stdout or "").strip()[-limit:]
             return f"{self.cmd}: could not run. This is not a failed test; the check itself is broken.\n{detail}"
@@ -85,6 +95,8 @@ class Check:
 
 
 # Test-runner failure lines, one pattern per dialect. Order matters: first match wins.
+_COUNT = re.compile(r"\b\d+\s+(?:pass|fail|passed|failed|tests?)\b|\bRan\s+\d+", re.I)
+
 _PATTERNS = (
     re.compile(r"^\s*\(fail\)\s*(.+)$"),
     re.compile(r"^\s*FAILED\s+(.+)$"),

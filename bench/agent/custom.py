@@ -1,31 +1,26 @@
 """custom: per-run experiment tools from a JSON manifest; never a second tool catalog.
 
 WHAT IT IS
-  Manifest = data: list of tools {name, provider summary, JSON schema, python source defining
-  the function}. load() validates; verbs() -> registry shape of verbs.VERBS; specs() -> provider
-  specs; prelude() -> source the kernel execs. Kernel(extra_verbs=..., extra_prelude=...) ships
-  all three to the child; ToolLoop merges the specs, so a run can test an action without editing bench.
+  Manifest = data: a list of {name, provider summary, JSON schema, python source defining the
+  function}.  load() validates; verbs() -> registry shape of verbs.VERBS; specs() -> provider
+  specs; prelude() -> source the kernel execs.  Kernel(extra_verbs=, extra_prelude=) ships all
+  three to the child; ToolLoop merges the specs, so a run tests an action without editing bench.
 
 ENTRY POINTS
   load(path) -> list[CustomTool]  parse + validate a manifest file
   verbs(tools) -> dict            {name: {function, summary, schema, mutates}}
   specs(tools) -> list[dict]      provider tool specs
-  prelude(tools) -> str           source the child execs
-  CustomTool                      .name .summary .schema .source
+  prelude(tools) -> str   source the child execs;  CustomTool   .name .summary .schema .source
 
 INVARIANTS
-  name collision = reject before kernel start: built-in verb, `python`, `delegate`,
-  `final_answer`, `help`, `skill`. Experiments add actions; never weaken a gate or replace the journal.
-  source runs in the kernel namespace: may use _walk, read, _commit and the rest of the prelude;
-  must define exactly the named callable. Missing callable = load error, never a late NameError.
-  mutates = declared data, not inferred: used for rendering only; the journal still decides what
-  changed. A custom tool that writes calls _commit.
-  stdlib-only, no bench imports: parent reads it, source is shipped to a child that cannot import bench.
+  a name collision rejects before kernel start: built-in verb, python, delegate, final_answer,
+  help, skill.  Experiments add actions; never weaken a gate or replace the journal.
+  source runs in the kernel namespace: may use _walk, read, _commit and the rest of the prelude,
+  must define exactly the named callable; a missing callable is a load error.
+  mutates is declared, not inferred: rendering only; the journal still decides what changed.
 
 WHERE TO CHANGE
-  manifest fields ......... CustomTool, load
-  reserved names .......... RESERVED
-  child payload ........... verbs, specs, prelude, then kernel/process.py env block
+  manifest fields .. CustomTool, load;  reserved names .. RESERVED;  child payload .. verbs, specs, prelude, then kernel/process.py env block
 """
 from __future__ import annotations
 

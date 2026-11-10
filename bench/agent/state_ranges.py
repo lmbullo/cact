@@ -1,29 +1,23 @@
 """state_ranges: read ranges: the line arithmetic behind [read] and what a card delivered.
-
 WHAT IT IS
-  read() records served ranges in Cell.reads; a card may serve them whole (typed verbatim
-  observation) or partially (digested python/exec stream). This module turns recorded ranges +
-  the text the card rendered into the ranges the model really saw, and computes the holes.
-  Coverage = guidance, never a finish gate.
-
+  read() records served ranges in Cell.reads; a card may serve them whole (typed verbatim) or
+  partially (digested stream). This module turns recorded ranges + rendered text into the ranges
+  the model really saw, and computes the holes. Coverage = guidance, never a finish gate.
 ENTRY POINTS
   merge_ranges(ranges) -> [[a, b], ...]        overlapping/adjacent, sorted, disjoint
   gaps(ranges, total) -> [[a, b], ...]          lines of 1..total the ranges miss
   covered(ranges) -> int                       distinct lines in the merged ranges
-  numbered_lines(text) -> set[int]             `   12| line` numbers a rendered block carries
-  numbered_lines_by_path(text, paths) -> {path: set[int]}   same, split by `# path` headers
+  numbered_lines(text); numbered_lines_by_path(text, paths)  `   12| line` numbers, split by `# path`
   delivered_ranges(reads, body, digested) -> {path: [[a, b], ...]}
-
 INVARIANTS
-  opens no file, compares no text against one: a range is claimed only from Cell.reads or from
-  numbered lines still present in the rendered body. A digested card cannot claim an elided line;
-  a raw (non-numbered) read is never guessed.
-  digested batch read split by `# path` headers: one file's line numbers are never credited to
+  opens no file and compares no text against one: a range is claimed only from Cell.reads or from
+  numbered lines still present in the body; a digested card cannot claim an elided line, and a raw
+  (non-numbered) read is never guessed.
+  a digested batch read is split by `# path` headers, so one file's numbers are never credited to
   another file with a line at that number.
-  merge_ranges accepts unsorted input with any b >= a pairing, never mutates its argument;
-  gaps([]) = whole file; gaps([(1, total)], total) = empty.
-  pure, deterministic: same reads + same body -> same answer; no state between calls.
-
+  merge_ranges accepts unsorted input with any b >= a and never mutates its argument; gaps([]) =
+  whole file; gaps([(1, total)], total) = empty.
+  pure, deterministic: same reads + same body -> same answer, no state between calls.
 WHERE TO CHANGE
   what counts as a delivered line ... delivered_ranges, numbered_lines, _NUMBERED
   [read] wording .................... state_card.render_observation (not here)

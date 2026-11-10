@@ -1,28 +1,19 @@
 """plans: the check plan, the Verifier, read coverage and the goal check.
-
 WHAT IT IS
-  The checks-engine contract: a spec's `scope` filters the cheap run, the plan short-circuits
-  on the first failure, the goal re-runs the whole plan every attempt, the cache fills from a
-  run and drops on a mutation, and `--health off` disables the cheap subset. Then the post-plan
-  green gate (open/close, one finish cell, foreign-gate refusal), the read coverage arithmetic
-  (merge/gaps/covered/delivered_ranges) and `check_run.run_check`'s three states: passed,
-  failed, unrunnable.
-
+  Checks-engine contract: scope filters the cheap run, plan short-circuits on first failure,
+  goal re-runs the whole plan, cache drops on mutation, --health off disables the cheap subset;
+  then green gate, coverage arithmetic and check_run.run_check's passed/failed/unrunnable.
 ENTRY POINTS
-  run(check) -> Path   called by bench/smoke.py::main; returns the temp workspace the kernel
-                       groups then reuse, so every later group shares one fixture tree
-
+  run(check) -> Path   called by bench/smoke.py::main; returns the shared temp workspace
 INVARIANTS
-  - It owns the workspace fixture (smoke_support.workspace): the kernel groups must run after
-    it and must not create their own root, or their journal state diverges.
-  - Every command here is `true`/`false`/`touch`/`printf` in the temp dir: seconds, no network.
-  - The coverage checks never open a file: they feed `delivered_ranges` the exact text a
-    digested card shows, which is the whole point of that function.
-
+  owns the workspace fixture (smoke_support.workspace); kernel groups must run after it and
+  must not create their own root, or journal state diverges.
+  every command is true/false/touch/printf in the temp dir: seconds, no network.
+  coverage checks never open a file: they feed delivered_ranges the exact digested text.
 WHERE TO CHANGE
-  A plan/verifier behaviour .............. bench/agent/check_plan.py (this file only scores it)
-  Coverage arithmetic .................... state_loop.merge_ranges / gaps / delivered_ranges
-  The check states ....................... check.run_check
+  plan/verifier ....... bench/agent/check_plan.py (this file only scores it)
+  coverage arithmetic . state_loop.merge_ranges / gaps / delivered_ranges
+  check states ........ check.run_check
 """
 from __future__ import annotations
 
@@ -165,18 +156,27 @@ def run(check):
           and gate.suffix("exec") == "")
     first = gate.refusal("code")
     second = gate.refusal("code")
-    check("green: exactly one code cell may carry the finish",
-          first is None and second == (GREEN, green_gate.CELL_REFUSAL)
-          and gate.cells == 2)
+    check("green: code cells stay open after the pass",
+          first is None and second is None and gate.cells == 2)
     gate.note_checks(_Checks('{"ok": true, "rows": [{"name": "test"}]}'))
-    check("green: a fresh passing checks resets the finish allowance",
+    check("green: a fresh passing checks resets the cell count",
           gate.cells == 0 and gate.refusal("code") is None)
     gate.invalidate()
     check("green: a mutation closes the gate again", not gate.passed and gate.refusal("exec") is None)
     gate.note_checks(_Checks("not json"))
     check("green: an unparseable checks payload never opens the gate", not gate.passed)
 
+    bun = check_mod.Check(cmd="bun test", state="passed", exit_code=0, duration_ms=7,
+                          stdout=" 7 pass\n 0 fail\nRan 7 tests across 5 files. [2.3s]\n")
+    check("checks: a passed row carries the last count line, so the model need not re-run it",
+          bun.summary() == "Ran 7 tests across 5 files. [2.3s]"
+          and "7 pass" not in bun.text(), bun.summary())
+
     lint = check_plan.CheckSpec.parse([{"name": "lint", "cmd": "python3 -m ruff check ."}])
+    check("green: an exec argv is matched to the one plan spec it runs",
+          green_gate.plan_command({"argv": ["ruff", "check"]}, lint) is None
+          and green_gate.plan_command(
+              {"argv": ["python3", "-m", "ruff", "check", "."]}, lint) is lint[0])
     check("green: the plan's own command is never foreign, even when it names ruff",
           not green_gate.is_plan_command({"argv": ["ruff", "check"]}, lint)
           and green_gate.is_plan_command({"argv": ["python3", "-m", "ruff", "check", "."]}, lint)

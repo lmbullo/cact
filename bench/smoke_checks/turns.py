@@ -1,29 +1,18 @@
-"""turns: the turn machine — finish protocol, stop vocabulary and call pairing.
-
+"""turns: the turn machine: finish protocol, stop vocabulary and call pairing.
 WHAT IT IS
-  ToolLoop.run over a scripted client and a scripted kernel: a staged answer accepted by the
-  next no-tool reply, the staging notice in the tool result, a typed tool dispatched through
-  Kernel.call, staging surviving later calls in its turn, a later non-final cell clearing it,
-  a silent final_answer stopping the rest of its turn, the handoff winning over the short
-  value, skipped calls still paired, one tool message per call even when dispatch raises or
-  the arguments are unparsable, LLM_FAILED with a summary record, the budget-forced push,
-  the restart card, and a goal check re-prompting (and rejecting a staged answer) until it
-  passes.
-
+  ToolLoop.run over scripted client and kernel: staging acceptance/clearing, typed dispatch,
+  silent final_answer, handoff precedence, skipped-call pairing, bad args, LLM_FAILED, budget
+  push, restart card, goal re-check.
 ENTRY POINTS
   run(check)   called by bench/smoke.py::main after the kernel groups
-
 INVARIANTS
-  - Nothing here spawns: FakeClient answers the scripted reply, FakeKernel answers the
-    scripted Cell, so each check is deterministic and offline.
-  - The pairing checks compare tool-call ids with tool-message ids: an orphaned call or a
-    duplicated result is the failure mode the protocol has to prevent.
-  - `staged_code` and `_run_loop` come from smoke_support; keep one scripted reply per turn.
-
+  nothing spawns: FakeClient and FakeKernel make each check deterministic and offline.
+  pairing checks compare tool-call ids with tool-message ids; orphans/duplicates fail.
+  staged_code and _run_loop come from smoke_support; keep one scripted reply per turn.
 WHERE TO CHANGE
-  A stop reason or the finish protocol ..... bench/agent/tool_loop.py (this file scores it)
-  The staging notice text .................. tool_loop's notice strings
-  Budget behaviour ......................... agent/loop.py::Budget
+  stop reason/finish protocol ... bench/agent/tool_loop.py (this file scores it)
+  staging notice text ........... tool_loop's notice strings
+  budget behaviour .............. agent/loop.py::Budget
 """
 from __future__ import annotations
 
@@ -125,6 +114,82 @@ def run(check):
           result.turns[0]["calls"][0]["args"] == {"path": "a.txt"}
           and result.turns[0]["calls"][0]["observation"]["tool"] == "read",
           str(result.turns[0]["calls"][0])[:240])
+
+    command_call = _call("x1", None, name="exec",
+                         arguments='{"command": "echo hi"}')
+    result, client, kernel = _run_loop(
+        [_reply(calls=[command_call]), _reply(content="done", finish="stop")],
+        {}, typed={"exec": Cell(stdout="hi\n", stderr="", result='{"ok": true, "kind": "command"}',
+                               final=None, duration_ms=1, tool="exec")})
+    check("turn: exec(command=...) is repaired to the shell field",
+          kernel.calls == [("exec", {"shell": "echo hi"})]
+          and "[shape] exec(command=" in client.requests[1][-1]["content"],
+          str(kernel.calls) + client.requests[1][-1]["content"][:160])
+
+    code_call = _call("x2", None, name="exec", arguments='{"code": "print(1)"}')
+    result, client, kernel = _run_loop(
+        [_reply(calls=[code_call]), _reply(content="done", finish="stop")],
+        {"print(1)": _cell(stdout="1\n")})
+    check("turn: exec(code=...) is repaired to the python cell",
+          kernel.codes == ["print(1)"]
+          and result.turns[0]["calls"][0]["name"] == "python"
+          and "[shape] exec(code=" in client.requests[1][-1]["content"],
+          str(kernel.codes) + str(result.turns[0]["calls"][0])[:200])
+
+    edit_call = _call("x3", None, name="edit",
+                      arguments='{"path": "a.txt", "old": "a", "new": "b"}')
+    result, client, kernel = _run_loop(
+        [_reply(calls=[edit_call]), _reply(content="done", finish="stop")],
+        {}, typed={"edit": Cell(stdout="edited a.txt", stderr="", result='{"ok": true, "kind": "edits"}',
+                               final=None, duration_ms=1, tool="edit")})
+    check("turn: edit(path, old, new) is repaired to the batch shape",
+          kernel.calls == [("edit", {"edits": [{"path": "a.txt", "old": "a", "new": "b"}]})],
+          str(kernel.calls))
+
+    git_call = _call("x4", None, name="git",
+                     arguments='{"action": "add", "paths": ["-A", "."]}')
+    result, client, kernel = _run_loop(
+        [_reply(calls=[git_call]), _reply(content="done", finish="stop")],
+        {}, typed={"git": Cell(stdout="", stderr="", result='{"ok": true, "kind": "git_action"}',
+                              final=None, duration_ms=1, tool="git")})
+    check("turn: git add -A drops the flag instead of passing it as a path",
+          kernel.calls == [("git", {"action": "add", "paths": ["."]})], str(kernel.calls))
+
+    json_call = _call("x5", None, name="exec",
+                      arguments='{"argv": ["echo", "hi"]} trailing text')
+    result, client, kernel = _run_loop(
+        [_reply(calls=[json_call]), _reply(content="done", finish="stop")],
+        {}, typed={"exec": Cell(stdout="hi\n", stderr="", result='{"ok": true, "kind": "command"}',
+                               final=None, duration_ms=1, tool="exec")})
+    check("turn: trailing text after the JSON object is ignored, not a bad_args stop",
+          kernel.calls == [("exec", {"argv": ["echo", "hi"]})]
+          and "[shape] ignored text after the JSON object" in client.requests[1][-1]["content"],
+          str(kernel.calls) + client.requests[1][-1]["content"][:180])
+
+    obs_call = _call("x7", None, name="read", arguments='{"path": "_OBS[3]"}')
+    result, client, kernel = _run_loop(
+        [_reply(calls=[obs_call]), _reply(content="done", finish="stop")],
+        {}, typed={"page": Cell(stdout="paged\n", stderr="", result='{"ok": true, "kind": "obs"}',
+                              final=None, duration_ms=1, tool="page")})
+    check("turn: read(_OBS[n]) is repaired to page(handle)",
+          kernel.calls == [("page", {"handle": "_OBS[3]"})]
+          and "[shape] read(_OBS[n])" in client.requests[1][-1]["content"],
+          str(kernel.calls) + client.requests[1][-1]["content"][:180])
+
+    plan_root = Path(tempfile.mkdtemp(prefix="cact-smoke-redirect-"))
+    redirect_verifier = check_plan.Verifier(
+        check_plan.CheckSpec.parse([{"name": "ok", "cmd": "true"}]), str(plan_root))
+    redirect_client = FakeClient([
+        _reply(calls=[_call("x6", None, name="exec", arguments='{"argv": ["true"]}')]),
+        _reply(content="done", finish="stop")])
+    redirect_kernel = FakeKernel({})
+    tool_loop.ToolLoop(redirect_client, redirect_kernel, loop.Budget(),
+                       verifier=redirect_verifier).run("smoke", "task")
+    check("turn: exec of an exact plan command is redirected to checks",
+          redirect_kernel.calls == []
+          and redirect_client.requests[1][-1]["content"].startswith("[shape] ")
+          and "checks('ok')" in redirect_client.requests[1][-1]["content"],
+          redirect_client.requests[1][-1]["content"][:240])
 
     result, client, kernel = _run_loop(
         [_reply(calls=[_call("c1", staged_code), _call("c2", "print('more')")]),

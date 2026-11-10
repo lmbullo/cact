@@ -1,28 +1,18 @@
 """types: the two records every eval produces, shared by the loop and live suites.
-
 WHAT IT IS
-  `Case` is one eval definition: an id, the failure it targets, a title, whether it needs a
-  live model, and the callable that runs it. `CaseResult` is its outcome: pass/fail, a detail
-  line, and the loop counters the runner aggregates. `Context` is what a case receives: a
-  fresh workspace, a client factory and the run options.
-
+  Case = id, failure tag, title, kind, run callable. CaseResult = pass/fail, detail and loop
+  counters. Context = fresh workspace, client factory, run options.
 ENTRY POINTS
   Case(id, failure, title, kind, fn, tags=())
   CaseResult(ok, detail, stop="", steps=0, usage=None, final="", errors=0, meta=None)
   Context(workspace, client_factory, options)
-
 INVARIANTS
-  - `kind` is "loop" for a scripted, offline case and "live" for one that needs a key. The
-    runner never mixes the two in one pass, so a keyless run cannot silently skip a live
-    case and call the suite green.
-   - `failure` is a stable tag (`context`, `tooling`, `mutation`, `finish`, `verification`,
-     `cost`, `autonomy`), not prose: the summary groups by it so a regression names the
-     broken mechanism.
-  - A case that raises is reported as a failed CaseResult by the runner, never as a crash.
-
+  kind is "loop" for scripted/offline or "live" for a key; the runner never mixes them.
+  failure is a stable tag, not prose: the summary groups by it.
+  a case that raises is reported as a failed CaseResult, never a crash.
 WHERE TO CHANGE
-  A new tag ............... the `failure` values the catalog uses
-  A result field .......... CaseResult (then the runner's row)
+  a new tag ....... the `failure` values the catalog uses
+  a result field .. CaseResult (then the runner's row)
 """
 from __future__ import annotations
 

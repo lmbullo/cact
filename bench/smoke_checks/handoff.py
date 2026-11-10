@@ -1,29 +1,18 @@
 """handoff: the structured finish answer survives into the next task's prompt.
-
 WHAT IT IS
-  The cross-task half of the handoff contract: `tui/python/worker.py` appends one
-  `history.jsonl` row per task and prepends a compact `[workspace history]` prefix to the
-  next task. These checks prove that a dict `final_answer` reaches both:
-    record   the row keeps summary/changed/gates/deferred/untested
-    prefix   the next task sees the previous task's `deferred` and `untested` lines
-    legacy   an old row with only summary/files/stop still parses
-    cap      the open-items lines stay bounded (newest first, at most six)
-
+  Cross-task half: worker.py appends history.jsonl and prepends a compact `[workspace history]`.
+  Checks prove a dict final_answer reaches record, prefix, legacy and cap.
 ENTRY POINTS
   run(check)   called by bench/smoke.py::main after gates
-
 INVARIANTS
-  - Pure python and a TemporaryDirectory: no kernel, no network, and nothing in the real
-    state directory. XDG_STATE_HOME is set for the duration and restored in `finally`, and
-    CODE_TUI_STATE / CODE_TUI_STATE_ROOT are cleared for the same reason: worker.state_dir
-    honours those first, and a smoke run inside a code-tui task has them set.
-  - It drives the real `record_history` / `history_brief`, never a copy of their format.
-  - The fake result has the same fields the loop returns (`final`, `stop`, `handoff`).
-
+  pure python + TemporaryDirectory: no kernel, no network, nothing in the real state dir.
+  XDG_STATE_HOME is set and restored in finally; CODE_TUI_STATE/CODE_TUI_STATE_ROOT cleared.
+  drives real record_history / history_brief, never a copy of their format.
+  the fake result has the loop fields: final, stop, handoff.
 WHERE TO CHANGE
-  The row format ........................ tui/python/worker.py::record_history
-  The prompt prefix ..................... tui/python/worker.py::history_brief
-  The rendered block .................... bench/agent/handoff.py
+  row format ........ tui/python/worker_history.py::record_history
+  prompt prefix ..... tui/python/worker_history.py::history_brief
+  rendered block .... bench/agent/handoff.py
 """
 from __future__ import annotations
 

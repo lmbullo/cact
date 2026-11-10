@@ -1,50 +1,27 @@
 """envelope: the typed observation envelope: one shape for every verb result.
 
 WHAT IT IS
-  A typed verb answers with data, not a terminal transcript. normalize(tool, value) turns any
-  PRELUDE helper return into the one dict a loop, trace or another agent can read:
-    ok       bool
-    op       verb name
-    kind     the helper's own kind (file/matches/map/git_diff/...)
-    data     small tool-specific fields (path, count, occurrences, ...)
-    page     {shown, total, offset, next, unit, has_more, truncated, complete} or None
-    handle   `_OBS[n]` address of the full delivered text, or None
-    notes    list of notes (never the only copy of a fact)
-    error    {code, message, use} when ok is false
-  page = the only paging contract. shown = count (or inclusive [a, b] range the helper already
-  reports); offset = cursor of the FIRST unit this response delivered; next = resume cursor;
-  unit = what the cursor counts (line/char/hit/file/entry/module); has_more = file/result
-  continues; truncated/complete = one pair: a built-in default page limit cut output the caller
-  did not ask to have cut (truncated:true, complete:false), or the request was served
-  (truncated:false, complete:true) even when has_more is true. A helper may keep extra top-level
-  keys for python callers; the envelope does not repeat them: no fact twice.
+  A typed verb answers with data, not a transcript: normalize(tool, value) turns any PRELUDE helper return into one dict:
+  ok bool; op verb name; kind the helper's own kind; data small tool fields; page {shown,total,offset,next,unit,has_more,
+  truncated,complete}|None; handle `_OBS[n]` of the full text|None; notes list (never the only copy of a fact); error
+  {code,message,use} when ok is false. page = the only paging contract; a helper may keep extra top-level keys for python
+  callers, the envelope repeats none.
 
 ENTRY POINTS
-  normalize(tool, value, handle=None) -> dict
-  page_of(kind, value) -> dict | None
+  normalize(tool, value, handle=None) -> dict;  page_of(kind, value) -> dict | None
   UNITS / BULK
 
 INVARIANTS
-  stdlib-only, side-effect-free: parent imports it; the kernel child does not.
-  never invents a page: page_of -> None when the helper returned no paging fields; a caller
-  must not treat None as "complete".
-  bulk payloads (text, stdout, stderr, matches, files, entries, items, modules, hunk) stay out
-  of the envelope: delivery = stdout, address = handle. Keeps the structured half small and
-  duplication impossible.
-  empty payload ({}) from a named tool -> ok:false/internal_error, never success: a missing
-  result means the verb crashed or never answered.
-  complete == not truncated everywhere. has_more separate, always means the underlying
-  file/result continues; never implies a failed request. A helper reports truncated only when a
-  built-in default (page size, max_chars) cut output; an explicit window (read end, max_files,
-  max_entries, max_results, max_chars) is served: complete with has_more true.
-  offset is never the next cursor: start of what this response delivered (0-based index for
-  map/guide/outline/search, first line for read, first char for git). next = the only resume
-  cursor.
-
+  stdlib-only, side-effect-free: the parent imports it, the kernel child does not.
+  never invents a page: page_of -> None when the helper returned no paging fields; a caller must not treat None as complete.
+  bulk payloads (text, stdout, stderr, matches, files, entries, items, modules, hunk) stay out: delivery = stdout, address = handle.
+  empty payload ({}) from a named tool -> ok:false/internal_error, never success (the verb crashed or never answered).
+  complete == not truncated everywhere; has_more separate, always means the underlying file/result continues, never a failed request.
+  a helper reports truncated only when a built-in default (page size, max_chars) cut output; an explicit window is served,
+  complete with has_more true. offset is never the next cursor (start of what was delivered); next = the only resume cursor.
 WHERE TO CHANGE
-  new paging field ............. page_of + the helper that returns it
-  model-visible structure ...... normalize's data filter
-  rendered card ................ bench/agent/state_card.py
+  new paging field ... page_of + the helper that returns it   model-visible structure ... normalize's data filter
+  rendered card ... bench/agent/state_card.py
 """
 from __future__ import annotations
 

@@ -1,10 +1,9 @@
 """oracle: the hidden ground truth every eval grades against, never a fixture in the workspace.
 
 WHAT IT IS
-  Small deterministic predicates over a finished workspace or a finished answer. The runner
-  calls one; the eval row records its `(ok, detail)`. The oracles run the workspace's code in
-  a subprocess from the workspace root, so an agent cannot satisfy them by editing a visible
-  test or by writing a plausible final answer.
+  Small deterministic predicates over a finished workspace or answer.  The runner calls one and
+  the eval row records its (ok, detail).  Oracles run the workspace's code in a subprocess from
+  the workspace root, so an agent cannot satisfy them by editing a visible test or answering well.
 
 ENTRY POINTS
   calc_spec(root) -> (ok, detail)          mul/clamp, which the visible test does not cover
@@ -15,17 +14,13 @@ ENTRY POINTS
   run_python(root, code) -> (ok, detail)   the one subprocess primitive
 
 INVARIANTS
-  - A subprocess failure is a failed oracle with stderr as the detail, never an exception
-    that aborts a suite. The eval runner reports one row per case.
-  - The code is passed as `-c`, not through a shell, and runs with the workspace as cwd, so
-    relative imports resolve the same way the agent's workspace does.
-  - Expected values live here, not in `fixtures.py`: a fixture is input, an oracle is the
-    answer, and one file must not hold both.
-  - `answer_eq` normalizes quotes and whitespace; correctness is the value, not its prose.
+  a subprocess failure is a failed oracle with stderr as the detail, never an exception that aborts
+  a suite; code is passed as -c, not through a shell, with the workspace as cwd.
+  expected values live here, not in fixtures.py: a fixture is input, an oracle is the answer.
+  answer_eq normalises quotes and whitespace; correctness is the value.
 
 WHERE TO CHANGE
-  A new eval's answer ....... a predicate here
-  The subprocess contract .... run_python
+  a new eval's answer .. a predicate here;  subprocess contract .. run_python
 """
 from __future__ import annotations
 

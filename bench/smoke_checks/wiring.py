@@ -4,28 +4,22 @@ WHAT IT IS
   Static, regex-only checks over the files that name the journal protocol:
     kinds   every `kind: "..."` server.ts / worker-events.ts / worker.py writes to a journal is
             named in tui/tests/, so a new event kind cannot ship untested.
-    verbs   every entry in verbs.VERBS has a `Kernel.call` case (or the equivalent python-helper
-            / `_checks_cell` form) in bench/smoke_checks/, so a new verb cannot ship uncalled.
-
-  Three defects in eight runs came from an untested branch of this class: the worker's
-  `extra_obs` signature, a `cell.end` branch, and a per-verb `_int_arg`. A static gate catches
-  the name that was never wired in without spawning a process.
+    verbs   every entry in verbs.VERBS has a Kernel.call case (or the equivalent python-helper
+            / _checks_cell form) in bench/smoke_checks/, so a new verb cannot ship uncalled.
 
 ENTRY POINTS
   run(check) -> None   called by bench/smoke.py::main after `repl`
 
 INVARIANTS
-  - Read-only and offline: regex over committed source, no process, no import side effect
-    beyond `bench.agent.verbs` (which is stdlib-only by contract).
-  - A fixture case proves each gate fails on an invented name, so a gate that silently stopped
-    matching cannot pass the tree.
-  - "Named" means the quoted kind or the verb appears in tui/tests/ or bench/smoke_checks/; the
-    test files stay the source of truth for behavior.
+  read-only and offline: regex over committed source, no process, no import side effect beyond
+  bench.agent.verbs (stdlib-only by contract).
+  a fixture case proves each gate fails on an invented name, so a gate that stopped matching
+  cannot pass the tree.
+  "named" means the quoted kind or the verb appears in tui/tests/ or bench/smoke_checks/.
 
 WHERE TO CHANGE
-  A journal kind .......................... tui/python/worker.py (source) + a tui/tests/ case
-  A typed verb ............................ bench/agent/verbs.py + a Kernel.call case here
-  What "covered" means .................... `_verb_covered`
+  a journal kind .. tui/python/worker_events.py + a tui/tests/ case;  a typed verb ..
+  bench/agent/verbs.py + a Kernel.call case here;  "covered" .. _verb_covered
 """
 from __future__ import annotations
 
@@ -40,6 +34,7 @@ SERVER_SOURCES = (
     ROOT / "tui" / "src" / "server.ts",
     ROOT / "tui" / "src" / "worker-events.ts",
     ROOT / "tui" / "python" / "worker.py",
+    ROOT / "tui" / "python" / "worker_events.py",
 )
 
 

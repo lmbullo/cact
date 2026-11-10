@@ -2,9 +2,8 @@
 
 WHAT IT IS
   RunState = the part of a run that survives a long transcript: task, environment card, plan,
-  changed paths, last checks, open items. The loop owns one instance; `plan` updates it; every
-  observation renders it; a fold carries it forward. State-first block: a small structured
-  object the harness owns, not "remember what the earlier turns said".
+  changed paths, last checks, open items.  The loop owns one instance; plan updates it, every
+  observation renders it, a fold carries it forward.
 
 ENTRY POINTS
   RunState(task="", env="")      .task / .env / .plan / .changed / .checks / .evidence / .open
@@ -15,17 +14,13 @@ ENTRY POINTS
   plan_rows(items) -> list[PlanItem]   strings or {text, done} dicts -> plan items
 
 INVARIANTS
-  state = data, not prose. plan_lines = the only renderer; state card and fold both call it: the
-  plan cannot drift between the two.
-  set_plan replaces text; mark only flips done flags. An index outside 1..len is ignored, never
-  guessed.
-  plan_lines -> [] for an empty plan: a task that never planned gets no padded reminder.
-  no I/O: the loop fills changed/checks from Cell records; this module reads no files.
+  state = data, not prose.  plan_lines is the only renderer; the state card and the fold both call
+  it, so the plan cannot drift between them.
+  set_plan replaces text; mark only flips done flags; an index outside 1..len is ignored; plan_lines -> [] for an empty plan, so a task that never planned gets no padded reminder.
+  no I/O: the loop fills changed/checks from Cell records.
 
 WHERE TO CHANGE
-  plan row fields ....... PlanItem, plan_rows
-  card rendering ........ plan_lines
-  trace record .......... summary
+  plan row fields .. PlanItem, plan_rows;  card rendering .. plan_lines;  trace record .. summary
 """
 from __future__ import annotations
 

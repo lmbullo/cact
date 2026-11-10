@@ -1,43 +1,27 @@
 """state_card: one cell rendered as [s]/[obs]/[page]/[data]/[read] lines.
 
 WHAT IT IS
-  The renderer behind StateLoop._observe. A cell becomes a card, not a transcript:
-    [s]          step, cost, elapsed of this call + the run's plan lines
-    chg: / [diff]  paths the cell changed + the journal's unified diff
-    [check]      cheap check: `pass`, or `<spec> : <first failing line>` + its _OBS handle
-    [obs]/[page] typed verb envelope: op/status, shown/total/offset/next/unit, completeness
-                 triple; a paged search also gets one `[hits]` line per file
-    [data]       typed result's structured fields; an oversized value is clipped per key and
-                 named in one `[data] clipped:` note
-    [note] / [error]  explicit notes + structured refusal (code, message, use,
-                 signature/valid/argument), never a prose-only failure
-    [stderr]/[stdout]  python/exec output, digested when over the output budget
-    [result]     last expression, clipped (python only)
-    [read]       `path a-b/total (unread: holes)` from Cell.reads + the text rendered here
+  The renderer behind StateLoop._observe: a cell becomes a card, not a transcript.
+  [s] step/cost/elapsed + plan lines; chg:/[diff] changed paths + the journal's unified diff; [check] `pass` or
+  `<spec> : <first failing line>` + its _OBS handle; [obs]/[page] the envelope (op/status, shown/total/offset/next/unit,
+  completeness; a paged search also gets one [hits] line per file); [data] structured fields, an oversized value clipped
+  per key and named in one `[data] clipped:` note; [note]/[error] notes + structured refusal (code, message, use,
+  signature/valid/argument), never prose-only; [stderr]/[stdout] python/exec output, digested over the output budget;
+  [result] last expression, clipped; [read] `path a-b/total (unread: holes)` from Cell.reads + the text rendered here.
 
 ENTRY POINTS
-  render_observation(cell, steps, prompt_tokens=0, check=None, output_budget=12_000,
-                     coverage=None, check_handle=None, plan=None)
-                       -> (card text, {path: [[a, b], ...]} the card made visible)
-  _VERBATIM_TOOLS ... typed verbs whose observation is never digested (they page themselves)
+  render_observation(cell, steps, prompt_tokens=0, check=None, output_budget=12_000, coverage=None, check_handle=None, plan=None)
+                       -> (card text, {path: [[a, b], ...]} the card made visible);  _VERBATIM_TOOLS = typed verbs never digested.
 
 INVARIANTS
-  pure: opens no workspace file; reads the loop's coverage ledger, never writes it. _observe
-  (state_loop.py) folds the returned ranges into coverage.
-  typed observation delivered whole; only python/exec output is digested, only above
-  output_budget: a verb already pages and names its own loss.
-  every card names the _OBS[n] entry holding the full text: the handle, not the text, is the
-  contract; page(handle) works across a kernel restart.
-  [read] built from Cell.reads + the text actually rendered: it can never claim a line the card
-  dropped; state_ranges.delivered_ranges owns that split.
-  refusal is structured: `[error] kind: code: message; use ...` (one line); a check failure is
-  one line whose full output is an _OBS handle.
-
+  pure: opens no workspace file, reads the loop's coverage ledger, never writes it (_observe folds the ranges in).
+  typed observation delivered whole; only python/exec output is digested, and only above output_budget.
+  every card names the _OBS[n] entry holding the full text: the handle is the contract; page(handle) survives a kernel restart.
+  [read] is built from Cell.reads + the text actually rendered, so it can never claim a line the card dropped.
+  refusal is structured: `[error] kind: code: message; use ...` (one line); a check failure is one line + an _OBS handle.
 WHERE TO CHANGE
-  card layout / section order ......... render_observation
-  typed observations kept verbatim .... _VERBATIM_TOOLS
-  clipping, digesting, [data] fields .. state_text.py
-  read ranges / what counts as read ... state_ranges.py
+  card layout/section order ... render_observation   verbatim observations ... _VERBATIM_TOOLS
+  clipping/digesting/[data] ... state_text.py   read ranges ... state_ranges.py
 """
 from __future__ import annotations
 

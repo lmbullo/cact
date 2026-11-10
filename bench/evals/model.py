@@ -1,35 +1,26 @@
 """model: a scripted client for loop evals that must run with no key and no network.
 
 WHAT IT IS
-  `ScriptedClient` implements the same `complete(messages, tools, max_tokens)` contract as
-  `agent.llm.Client`, but returns a list of pre-written replies. That makes the turn machine,
-  the kernel, the journal and the finish protocol testable deterministically: a script can
-  say "call read with a bad keyword, then repair it", and the eval asserts the exact stop,
-  observation and paired tool messages without a model in the loop.
-  `tool()` / `say()` build the two reply shapes; `ScriptedClient(responder=...)` computes a
-  reply from the messages when the script must depend on the previous observation.
+  ScriptedClient implements the same complete(messages, tools, max_tokens) contract as
+  agent.llm.Client but returns pre-written replies, so the turn machine, kernel, journal and
+  finish protocol are testable deterministically; tool()/say() build the two reply shapes and
+  ScriptedClient(responder=...) computes a reply from the messages.
 
 ENTRY POINTS
   ScriptedClient(replies, *, responder=None, usage=None)
-    .complete(messages, tools=None, max_tokens=8192) -> provider-shaped dict
+    .complete(messages, tools=None, max_tokens=8192, effort=None) -> provider-shaped dict
     .requests     every (messages, tools) the loop sent, for assertions
-  tool(name, arguments=None, **kwargs)   one tool_calls entry
-  say(text)                              one no-tool reply
+  tool(name, arguments=None, **kwargs), say(text)   one tool_calls entry / one no-tool reply
 
 INVARIANTS
-  - The reply shape is the provider's: `content`, `reasoning`, `tool_calls`, `usage`,
-    `latency_ms`, `finish`, `local_cache`. The loop never learns it is scripted.
-  - A script that runs out of replies repeats the last one; a test that needs a different
-    ending supplies it explicitly. Exhaustion is not an exception, because a loop under test
-    may legitimately make one more request than the happy path expected.
-  - `usage` is additive and cheap: the default one prompt token and one completion token per
-    reply keeps the token-budget eval meaningful without pretending to be a provider.
-  - Stdlib-only, no bench imports: the model half of an eval is data, not a dependency.
+  reply shape is the provider's: content, reasoning, tool_calls, usage, latency_ms, finish,
+  local_cache; the loop never learns it is scripted.
+  a script that runs out of replies repeats the last one, never raises.
+  usage is additive: one prompt and one completion token per reply unless overridden;
+  stdlib-only, no bench imports.
 
 WHERE TO CHANGE
-  A new reply shape .......... `tool`, `say`, ScriptedClient.complete
-  A dynamic script ........... `responder`
-  Usage accounting ........... `_reply`
+  a new reply shape .. tool, say, ScriptedClient.complete;  dynamic script .. responder;  usage .. _reply
 """
 from __future__ import annotations
 

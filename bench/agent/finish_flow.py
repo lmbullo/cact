@@ -1,38 +1,27 @@
 """finish_flow: the finish protocol: stage, gate, reject, accept.
-
 WHAT IT IS
-  The turn-machine step that turns a proposed finish into STAGED / rejected / accepted. Called by
-  tool_loop.py; owns no state of its own.
+  The turn-machine step turning a proposed finish into STAGED / rejected / accepted; called by
+  tool_loop.py, owns no state of its own.
 
 ENTRY POINTS
-  asks_for_input(text) -> bool    True when a proposed finish asks a human to decide
-  finish_reply(loop, messages, rec, content, finish_reason, finish) -> TurnOutcome
-  report_cell(loop, obs, cell, record, finish, step) -> str   paired tool message text
-  after_cell(loop, cell, finish, step) -> None
-  reject(loop, check, prefix) -> str
-
-  loop = tool_loop.ToolLoop. Seam fields: .autonomy, .skeptic, .scope (inline_finish,
-  clip_report), .goal_label, .goal_stops, ._surprise, ._gated, ._goal_state(),
-  ._skeptic_review(), .state.phase. A field rename moves here too.
+  asks_for_input(text) -> bool; finish_reply(loop, messages, rec, content, finish_reason, finish)
+    -> TurnOutcome; report_cell(loop, obs, cell, record, finish, step) -> str (paired tool text)
+  after_cell(loop, cell, finish, step) -> None;  reject(loop, check, prefix) -> str
+  loop = tool_loop.ToolLoop; seam: .autonomy, .skeptic, .scope (inline_finish, clip_report),
+    .goal_label, .goal_stops, ._surprise, ._gated, ._goal_state(), ._skeptic_review(), .state.phase
 
 INVARIANTS
-  gated run: no finish accepted without the goal check; no finish accepted while the skeptic
-  reports a gap. Both rejections clear the stage and continue the run.
-  accepted candidate = reply text for a silent stage, staged value otherwise (`finish.silent` /
-  `finish.content`); always passes clip_report.
-  rejected finish leaves no stage: rejection clears it; a later cell cannot resurrect an answer
-  the goal or the skeptic refused.
-  record.notice = last 2000 chars of the long text; paired tool message gets it whole
-  (pre-existing split, not a second protocol).
-  autonomy=True + asks a human -> NEEDS_INPUT, never a stalled run: no question, no wait, a
-  defensible default.
+  gated run: no finish accepted without the goal check, nor while the skeptic reports a gap;
+  both rejections clear the stage and continue the run.
+  accepted candidate = reply text for a silent stage, staged value otherwise (finish.silent /
+  finish.content); always passes clip_report; record.notice = last 2000 chars of the long text.
+  rejection clears the stage: a later cell cannot resurrect an answer the goal or skeptic refused.
+  autonomy=True + asks a human -> NEEDS_INPUT: no question, no wait, a defensible default.
 
 WHERE TO CHANGE
   finish decision order ......... finish_reply, report_cell
-  rejection wording ............. reject; ToolLoop CHECK_NOUN / REJECT_NONE_TAIL /
-                                  REJECT_DETAIL_TAIL
-  end without a stage ........... after_cell (goal_stops), finish_reply (no-tool reply)
-  question detector ............. ASK, asks_for_input
+  rejection wording ............. reject; ToolLoop CHECK_NOUN / REJECT_NONE_TAIL / REJECT_DETAIL_TAIL
+  end without a stage / question  after_cell (goal_stops), finish_reply; ASK / asks_for_input
 """
 from __future__ import annotations
 

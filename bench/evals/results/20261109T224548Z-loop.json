@@ -1,0 +1,454 @@
+{
+  "mode": "loop",
+  "wall_ms": 1822,
+  "passed": 16,
+  "failed": 0,
+  "tokens_per_pass": 50.8,
+  "usage": {
+    "prompt_tokens": 757,
+    "completion_tokens": 46,
+    "total_tokens": 813,
+    "reasoning_tokens": 0,
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 739,
+    "local_hits": 0
+  },
+  "by_failure": {
+    "finish": {
+      "n": 2,
+      "pass": 2,
+      "tokens": 8
+    },
+    "verification": {
+      "n": 2,
+      "pass": 2,
+      "tokens": 19
+    },
+    "tooling": {
+      "n": 5,
+      "pass": 5,
+      "tokens": 24
+    },
+    "context": {
+      "n": 4,
+      "pass": 4,
+      "tokens": 728
+    },
+    "mutation": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 6
+    },
+    "cost": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 22
+    },
+    "autonomy": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 6
+    }
+  },
+  "rows": [
+    {
+      "id": "L01_staged_finish",
+      "failure": "finish",
+      "title": "a silent final_answer keeps the next report",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE final='the real handoff'",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 4,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "the real handoff",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L02_goal_reject",
+      "failure": "verification",
+      "title": "a finish is rejected until the oracle passes",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE oracle=add ok",
+      "stop": "DONE",
+      "steps": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4,
+        "completion_tokens": 4,
+        "total_tokens": 8,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 4,
+        "local_hits": 0
+      },
+      "final": "fixed",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L03_skipped_pair",
+      "failure": "finish",
+      "title": "calls after a staged finish are skipped but paired",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE calls=[('python', None), ('read', True)]",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 4,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "handoff",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L04_bad_args",
+      "failure": "tooling",
+      "title": "a wrong keyword is structured bad_args",
+      "kind": "loop",
+      "ok": true,
+      "detail": "errors=1 rejected=True stop=DONE",
+      "stop": "DONE",
+      "steps": 3,
+      "errors": 1,
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 3,
+        "total_tokens": 6,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3,
+        "local_hits": 0
+      },
+      "final": "ok",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L05_repeat_read",
+      "failure": "context",
+      "title": "a repeated range is a pointer",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE second={\"tool\": \"read\", \"exit\": \"ok\", \"result\": \"{\\\"ok\\\": true, \\\"kind\\\": \\\"file\\\", \\\"path\\\": \\\"calc.py\\\", \\\"total_lines\\\": 2, \\\"shown\\\": [1, 2], \\\"offset\\\": 1, \\\"next\\\": null, \\\"truncated\\\": false, \\\"has_mo",
+      "stop": "DONE",
+      "steps": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 3,
+        "total_tokens": 6,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3,
+        "local_hits": 0
+      },
+      "final": "ok",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L06_unknown_tool",
+      "failure": "tooling",
+      "title": "an unknown tool is a paired notice",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE notice=[observation] unknown tool 'nope'; use the typed tools or python. help() lists the available verbs.",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 4,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "ok",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L07_python_write",
+      "failure": "mutation",
+      "title": "a raw open() write is journalled",
+      "kind": "loop",
+      "ok": true,
+      "detail": "changed=['calc.py'] diff={'tool': 'session_diff', 'exit': 'ok', 'result': '{\"ok\": true, \"kind\": \"diff\", \"path\": null, \"chars\": 96, \"total_chars\":",
+      "stop": "DONE",
+      "steps": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 3,
+        "total_tokens": 6,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3,
+        "local_hits": 0
+      },
+      "final": "changed",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L08_compaction",
+      "failure": "context",
+      "title": "a small budget folds old turns",
+      "kind": "loop",
+      "ok": true,
+      "detail": "compactions=2 folded=True",
+      "stop": "DONE",
+      "steps": 7,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 700,
+        "completion_tokens": 7,
+        "total_tokens": 707,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 700,
+        "local_hits": 0
+      },
+      "final": "done",
+      "meta": {
+        "compactions": 2,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L09_custom_tool",
+      "failure": "tooling",
+      "title": "a manifest adds one action",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE obs={'tool': 'count_rows', 'exit': 'ok', 'result': '{\"ok\": true, \"kind\": \"count_rows\", \"count\": 3}', 'stdout': '', 'stderr': '', 'restarted': False, 'rejected': Fal",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 4,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "3",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L10_skill",
+      "failure": "tooling",
+      "title": "a skill is loaded on demand and followed",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE oracle=CHANGELOG.md contains '2.4.1'",
+      "stop": "DONE",
+      "steps": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 3,
+        "total_tokens": 6,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3,
+        "local_hits": 0
+      },
+      "final": "released",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L11_delegate",
+      "failure": "context",
+      "title": "delegation returns one observation",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE calls=[('find', 'where is add?')] text=[subagent] stop=DONE steps=2 tokens=7\nfound it in calc.py",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 11,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "done",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L12_subagent",
+      "failure": "context",
+      "title": "the real subagent is read-only and answers",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE answer='ORBIT-7419' tools=['python', 'guide', 'skill', 'map', 'read', 'search', 'recall', 'outline']",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 4,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "ORBIT-7419",
+      "meta": {
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L13_skeptic",
+      "failure": "verification",
+      "title": "a skeptic rejects then accepts a finish",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE skeptic_calls=2",
+      "stop": "DONE",
+      "steps": 4,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 4,
+        "completion_tokens": 4,
+        "total_tokens": 11,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 4,
+        "local_hits": 0
+      },
+      "final": "fixed",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L14_token_limit",
+      "failure": "cost",
+      "title": "a total-token cap stops the run",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=TOKEN_LIMIT steps=2 tokens=22",
+      "stop": "TOKEN_LIMIT",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 20,
+        "completion_tokens": 2,
+        "total_tokens": 22,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L15_autonomy",
+      "failure": "autonomy",
+      "title": "an unattended finish cannot ask a human",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE oracle=add ok",
+      "stop": "DONE",
+      "steps": 3,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 3,
+        "total_tokens": 6,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3,
+        "local_hits": 0
+      },
+      "final": "fixed; chose a + b per SPEC",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    },
+    {
+      "id": "L16_docs",
+      "failure": "tooling",
+      "title": "docs() returns clean, bounded documentation",
+      "kind": "loop",
+      "ok": true,
+      "detail": "stop=DONE obs=[docs] Acme SDK (http://127.0.0.1:41519/sdk)\nUse npm install acme-sdk.\n\n```\nimport acme from 'acme-sdk'\n```\n[page] chars=62/62 truncated=False; pass max_chars for more.",
+      "stop": "DONE",
+      "steps": 2,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "total_tokens": 4,
+        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2,
+        "local_hits": 0
+      },
+      "final": "read",
+      "meta": {
+        "compactions": 0,
+        "workspace_removed": true
+      }
+    }
+  ]
+}

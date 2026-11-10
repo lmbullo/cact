@@ -1,0 +1,51 @@
+{
+  "mode": "live",
+  "wall_ms": 21667,
+  "passed": 1,
+  "failed": 0,
+  "tokens_per_pass": 52129.0,
+  "usage": {
+    "prompt_tokens": 50327,
+    "completion_tokens": 1802,
+    "total_tokens": 52129,
+    "reasoning_tokens": 225,
+    "prompt_cache_hit_tokens": 46720,
+    "prompt_cache_miss_tokens": 3607,
+    "local_hits": 0
+  },
+  "by_failure": {
+    "verification": {
+      "n": 1,
+      "pass": 1,
+      "tokens": 52129
+    }
+  },
+  "rows": [
+    {
+      "id": "A05_skeptic",
+      "failure": "verification",
+      "title": "a skeptic catches an incomplete contract",
+      "kind": "live",
+      "ok": true,
+      "detail": "stop=DONE oracle=spec ok",
+      "stop": "DONE",
+      "steps": 6,
+      "errors": 0,
+      "usage": {
+        "prompt_tokens": 50327,
+        "completion_tokens": 1802,
+        "total_tokens": 52129,
+        "reasoning_tokens": 225,
+        "prompt_cache_hit_tokens": 46720,
+        "prompt_cache_miss_tokens": 3607,
+        "local_hits": 0
+      },
+      "final": "The contract is complete.\n\n**What the spec required vs. what existed:**\n- `add(a, b)` \u2192 sum of two integers \u2014 already implemented, covered by the visible test.\n- `mul(a, b)` \u2192 product \u2014 already implemented, but **untested**.\n- `clamp(x, lo, hi)` \u2192 x limited to `[lo, hi]` \u2014 **missing entirely**; that was the real gap.\n\n**Changes (2 files):**\n1. `calc.py` \u2014 added `clamp(x, lo, hi)` as `min(max(x, lo), hi)`, which handles all three cases (below, inside, above), returns boundary values unchanged, and degenerates sensibly when `lo == hi`. `add` and `mul` were left as-is since they already satisfy the spec.\n2. `tests/test_calc.py` \u2014 the visible test only exercised `add`, so I added `test_mul` (positive, negative, zero) and `test_clamp` (below/inside/above, both boundaries, degenerate interval) to actually pin down the untested parts of the contract.\n\n**Verification:** `python -m pytest -q` \u2192 `3 passed`. Direct spot-checks: `clamp(5,1,3)=3`, `clamp(-2,0,10)=0`, `clamp(7,0,10)=7`.\n\nOne note on ambiguity: the spec says \"limited to `[lo, hi]`\" without stating behavior when `lo > hi`. I chose the conventional `min(max(...))` ordering rather than raising or swapping, since the spec gives no basis for an error case; if you intended `lo > hi` to be invalid input, tell me and I'll add an explicit guard.",
+      "meta": {
+        "compactions": 0,
+        "error_calls": [],
+        "workspace_removed": true
+      }
+    }
+  ]
+}

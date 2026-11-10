@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
-"""eval: the CLI front for bench/evals — loop contracts offline, agent failures live.
-
+"""eval: CLI front for bench/evals; offline loop contracts, live failures.
 WHAT IT IS
-  A thin entry point, not a second runner. It resolves the repo root for script mode, then
-  calls `bench.evals.runner.main`. The offline pass is the regression gate (no key, no
-  network); `--live` is the model-backed failure suite and needs DEEPSEEK_API_KEY.
-
+  Thin entry point: resolve repo root, call bench.evals.runner.main.
+  Offline is the default; --live needs DEEPSEEK_API_KEY.
 ENTRY POINTS
-  python3 bench/eval.py --list                 every case, its kind and its failure tag
+  python3 bench/eval.py --list                 every case, its kind and failure tag
   python3 bench/eval.py                        the offline loop pass
   python3 bench/eval.py --tasks L04_bad_args   one case
   python3 bench/eval.py --live                 the live failure-mode suite
   python3 -m bench.eval ...                    package mode
-
 INVARIANTS
-  - Offline is the default. A missing key can only fail a `--live` run, never turn the
-    offline suite green or empty.
-  - Exit 0 only when every selected case passes; the JSON evidence is written under
-    `bench/evals/results/` unless `--no-write`.
-   - Two import paths: script mode inserts the repo root, package mode uses the relative
-     import. Keep both working (the same rule the retired `bench.run` followed).
-
+  a missing key can only fail --live, never turn the offline suite green or empty.
+  exit 0 only when every selected case passes.
+  evidence under bench/evals/results/ unless --no-write.
+  script mode inserts the repo root; package mode uses the relative import; keep both.
 WHERE TO CHANGE
-  A case or the run logic .... bench/evals/runner.py
-  A new flag ................. runner.main (this file forwards argv unchanged)
+  case/run logic .... bench/evals/runner.py
+  a new flag ........ runner.main (argv forwarded unchanged)
 """
 from __future__ import annotations
 

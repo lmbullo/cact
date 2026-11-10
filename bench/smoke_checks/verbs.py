@@ -1,34 +1,25 @@
 """verbs: the typed verbs (map/read/search/splice/exec/outline/help) through Kernel.call.
 
 WHAT IT IS
-  The typed-call half of the action space on the same kernel as `files`: map with include and
-  paging, a batch read and its page unit, a repeated read as a pointer (and a commit
-  invalidating it), search by path list / serialized list / exact long line / context merge /
-  locators / count / include+ignore_case, splice, exec by argv, by command list and as a bare
-  shell string, the refusal codes (bad_arguments, shell_via_exec, mutation_via_exec,
-  unknown_verb, outside_root), and outline for Markdown, Python, HTML and HTML-in-a-JS-template,
-  plus help() and guide(headers=N). It also pins the paging contract: one error shape with a
-  `use` hint, `ok:false` for a miss or an unknown name, `offset` = start of the delivery,
-  `next` = resume cursor, `truncated` = a default limit cut it and `complete` = not truncated.
-  The boundary checks cover registry scalar coercion (`map(max_files='x')`), a verb that
-  raises (`internal_error`, rejected, no false `ok`), and the state card's clipped `[data]`
-  (map `dirs_matched`, an edit's `closest`/`context`) and kind/signature refusal line.
+  The typed-call half of the action space on the same kernel as files: map with include and
+  paging, batch and repeated reads, search (path list, long line, context, locators, count,
+  include, ignore_case), splice, exec by argv/command list/shell string, outline for Markdown,
+  Python, HTML and HTML-in-a-JS-template, help() and guide(headers=N).  It pins the paging
+  contract (offset = start of the delivery, next = resume cursor, truncated, complete), the
+  refusal codes (bad_arguments, shell_via_exec, mutation_via_exec, unknown_verb, outside_root),
+  registry scalar coercion, internal_error for a raising verb, and the clipped [data] card.
 
 ENTRY POINTS
   run(check, root, kernel)   called by bench/smoke.py::main after files
 
 INVARIANTS
-  - Each check asserts both the answer (`cell.stdout`) and the structured part it came from
-    (`cell.result`/`cell.envelope`), because an agent reads the envelope, not the printout.
-  - The exec refusals assert the *code* (`shell_via_exec`, `mutation_via_exec`), not the prose.
-  - The contract checks are regression pins for an audit: a defect that comes back fails here.
-  - It depends on `files` having run first on the same kernel instance.
+  each check asserts both cell.stdout and the structured cell.result/cell.envelope.
+  exec refusals assert the code, not the prose; the contract checks are regression pins for an audit.
+  it depends on files having run first on the same kernel instance.
 
 WHERE TO CHANGE
-  A verb's answer shape .................. the kernel/prelude_*.py fragment that owns it
-                                           (or run_prelude.py for exec)
-  The refusal codes ...................... run_prelude.py `_mutating_command` / exec_argv
-  The envelope ........................... bench/agent/envelope.py
+  a verb's answer shape .. the kernel/prelude_*.py fragment that owns it (run_prelude.py for exec);
+  refusal codes .. run_prelude.py _mutating_command / exec_argv;  envelope .. bench/agent/envelope.py
 """
 from __future__ import annotations
 
@@ -50,6 +41,12 @@ def run(check, root, kernel):
           and "secret.txt" not in cell.stdout
           and "skip.generated" not in cell.stdout,
           (cell.stdout + cell.stderr)[:240])
+    kernel.run("import pathlib; pathlib.Path('/tmp/cact-smoke-scratch.txt').write_text('scratch\\n')")
+    cell = kernel.call("read", {"path": "/tmp/cact-smoke-scratch.txt"})
+    check("kernel: read accepts a scratch path outside the workspace",
+          cell.envelope.get("ok") is True and "scratch" in cell.stdout,
+          (cell.stdout + (cell.result or ""))[:240])
+
     cell = kernel.call("read", {"path": "call_a.txt", "start": 1, "end": 1})
     check("kernel: a typed call carries the page envelope",
           cell.envelope is not None and cell.envelope.get("page", {}).get("unit") == "line"
@@ -101,6 +98,12 @@ def run(check, root, kernel):
     check("kernel: call(read) runs a typed verb through the same pipeline",
           cell.tool == "read" and "call_a.txt" in cell.stdout
           and cell.reads.get("call_a.txt", {}).get("total") == 2, (cell.stdout + cell.stderr)[:200])
+    kernel.run("import pathlib; pathlib.Path('/tmp/cact-smoke-scratch.txt').write_text('scratch\\n')")
+    cell = kernel.call("read", {"path": "/tmp/cact-smoke-scratch.txt"})
+    check("kernel: read accepts a scratch path outside the workspace",
+          cell.envelope.get("ok") is True and "scratch" in cell.stdout,
+          (cell.stdout + (cell.result or ""))[:240])
+
     cell = kernel.call("read", {"path": "call_a.txt", "start": 1, "end": 1})
     check("kernel: call(read) points at a range already delivered",
           "already delivered" in cell.stdout and (cell.result or "").find("already_read") >= 0,

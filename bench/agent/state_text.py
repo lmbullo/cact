@@ -1,34 +1,25 @@
 """state_text: card text: clipping, digesting, the [data] block: one card's size policy.
-
 WHAT IT IS
-  A state card is bounded on purpose. Process output -> digest: head, error lines, tail naming
-  the _OBS[n] entry holding the whole text. A structured [data] value is clipped per key, never
-  dropped with the block. This module decides only how much survives and where the rest is;
-  state_card.py decides what the card says.
+  Process output -> digest: head, error lines, tail naming the _OBS[n] with the whole text; a
+  [data] value is clipped per key, never dropped. This module sets how much survives; state_card.py
+  says what the card says.
 
 ENTRY POINTS
-  clip(text, limit) -> str        head of text + explicit `[+N chars]` marker
-  compact_stream(text) -> str     ANSI stripped; a run of identical lines capped at two
-  clip_card(text, budget, handle) -> (text, clipped)   whole card, or head + pinned lines
-  digest_card(text, budget, handle, errors=False) -> (text, digested)
-  digest(text, budget, handle) -> str                  digest_card's text only
-  data_block(data) -> (shown, clipped_keys)            [data] object, per key clipped
-  DATA_LINES, DATA_CHARS ... per-value clip, in lines and chars
+  clip(text, limit) -> str;  compact_stream(text) -> str (ANSI stripped, identical runs capped at 2)
+  clip_card(text, budget, handle) -> (text, clipped);  digest_card(text, budget, handle, errors=False)
+  digest(text, budget, handle) -> str;  data_block(data) -> (shown, clipped_keys)
+  DATA_LINES, DATA_CHARS  per-value clip, in lines and chars
 
 INVARIANTS
-  loss always named: clipped value carries `[+N chars]`; digested stream names the _OBS[n] handle
-  and the elided line range; a clipped card names itself in its marker.
+  loss always named: `[+N chars]`, the _OBS[n] handle and elided range, or the card's own marker.
   a budget is a delivery policy, not permission to lose a refusal: clip_card re-appends every
-  [error]/[check] line the head cut dropped; digest_card(errors=True) keeps stderr error lines.
+  [error]/[check] line the head cut; digest_card(errors=True) keeps stderr error lines.
   pure text in, text out: no file, no cell, no kernel; same input -> same output.
   [data] never drops a field: data_block clips a value and names its key in one `[data] clipped:`
-  note, so closest, valid and argv/results still reach the model.
-  digest_card's second value = the only honest coverage signal: undigested stream reached the
-  model whole; digested kept only head, error lines, tail.
+  note; digest_card's second value = coverage signal (whole vs head/errors/tail).
 
 WHERE TO CHANGE
-  elision notice / head-tail split .... digest_card
-  card marker / pinned lines .......... clip_card
+  elision notice / head-tail split .... digest_card;  card marker ... clip_card
   per-value clip ...................... DATA_LINES, DATA_CHARS, _data_value
   [data] field policy ................. data_block
 """

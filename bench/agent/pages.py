@@ -1,11 +1,10 @@
 """pages: generate docs/agent from module headers, so the terse pages cannot drift.
 
 WHAT IT IS
-  `render_all(root)` turns `bench/agent/headers.py::index` plus `bench/index.py::build`
-  into the agent-only documentation set: one small index (`docs/agent/README.md`) and one
-  page per subsystem (<= `MAX_LINES`). Each page maps every module in its subsystem to the
-  header's ENTRY POINTS and the indexed public symbols. `--write` persists the files;
-  `--check` fails when the tree differs from what the headers would generate.
+  render_all(root) turns bench/agent/headers.py::index plus bench/index.py::build into the
+  agent-only documentation set: one small index (docs/agent/README.md) and one page per subsystem
+  (<= MAX_LINES), each mapping its modules to the header's ENTRY POINTS and indexed public symbols.
+  --write persists; --check fails on a diff.
 
 ENTRY POINTS
   python3 -m bench.agent.pages [--write | --check]
@@ -15,18 +14,13 @@ ENTRY POINTS
   PAGES                                     (subsystem, page file) in index order
 
 INVARIANTS
-  - The source is the only authority: pages are rendered from header rows and symbol rows,
-    never hand-edited. A stale byte is a gate failure in bench/smoke_checks/docs.py.
-  - Every indexed module has one subsystem; an unassigned path is a render error, not a
-    silent omission, so a new directory forces a page decision.
-  - A page is key=value or one-line facts: no prose, no blank-line tutorials.
-  - Deterministic: modules sorted by path, subsystems in PAGES order.
+  pages are rendered from header rows and symbol rows, never hand-edited; a stale byte is a gate
+  failure in bench/smoke_checks/docs.py; an unassigned path is a render error, not an omission.
+  a page is key=value or one-line facts: no prose, no blank-line tutorials; modules are sorted
+  by path and subsystems follow PAGES order.
 
 WHERE TO CHANGE
-  Page names or subsystem ownership ...... PAGES, subsystem()
-  What a page row carries ................ _page(), _entry()
-  The line budget ........................ MAX_LINES (checked by bench/smoke_checks/docs.py)
-  The CLI ................................ main()
+  page names/ownership .. PAGES, subsystem();  row .. _page(), _entry();  MAX_LINES;  main()
 """
 from __future__ import annotations
 
@@ -43,9 +37,11 @@ PAGES = (
     ("bench-core", "bench-core.md"),
     ("agent", "agent.md"),
     ("kernel", "kernel.md"),
+    ("kernel-run", "kernel-run.md"),
     ("evals", "evals.md"),
     ("smoke", "smoke.md"),
     ("tui", "tui.md"),
+    ("tui-server", "tui-server.md"),
 )
 DOCS = (INDEX,) + tuple("docs/agent/" + page for _, page in PAGES)
 
@@ -53,6 +49,8 @@ DOCS = (INDEX,) + tuple("docs/agent/" + page for _, page in PAGES)
 def subsystem(path):
     """Owning page name for an indexed module path; '' when no page claims it."""
     path = str(path).replace("\\", "/")
+    if path.startswith("bench/agent/kernel/run_prelude_"):
+        return "kernel-run"
     if path.startswith("bench/agent/kernel/"):
         return "kernel"
     if path.startswith("bench/agent/"):
@@ -63,6 +61,8 @@ def subsystem(path):
         return "smoke"
     if path.startswith("bench/") and path.count("/") == 1:
         return "bench-core"
+    if path.startswith("tui/src/server"):
+        return "tui-server"
     if path.startswith("tui/"):
         return "tui"
     return ""

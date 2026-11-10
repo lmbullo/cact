@@ -1,43 +1,27 @@
 """config: production defaults and the loop factory used by the TUI (tui/python/worker.py).
 
 WHAT IT IS
-  Sole production construction site: which loop runs and with which budgets.
+  Sole production construction site: which loop runs and with which budgets; build() is what the worker calls.
   MODE = CODE_TUI_MODE read at import; default `state`; also `tool`, `repl`.
 
 ENTRY POINTS
   CONTEXT_WINDOW / MAX_OUTPUT / COMPACT_AT / OBS_CHARS / HISTORY / AUTONOMY ... constants
-  PROFILE / PROFILES / CODE_MODE / EFFORT / EFFORT_POLICY / INLINE_FINISH / RULES ... the arm
-  budget(steps, wall_s, output=MAX_OUTPUT) -> Budget   clamped to MAX_OUTPUT
-  production_scope() -> Scope    production capability set + output ceiling
-  build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label,
-        goal_stops, mode=MODE, health=None, verifier=None, scope=None)
-    -> StateLoop | ToolLoop | ReplLoop
+  PROFILE / PROFILES / CODE_MODE / EFFORT / EFFORT_POLICY / INLINE_FINISH / RULES ... the measured arm
+  budget(steps, wall_s, output=MAX_OUTPUT) -> Budget (clamped to MAX_OUTPUT);  production_scope() -> Scope
+  build(client, kernel, budget, *, rules, history, obs_chars, stop, goal, goal_label, goal_stops, mode=MODE,
+        health=None, verifier=None, scope=None) -> StateLoop | ToolLoop | ReplLoop
 
 INVARIANTS
-  build = only construction site in production; evals construct via
-  bench/evals/loops.py::run_loop (each case wires its own levers).
+  build = only production construction site; evals construct via bench/evals/loops.py::run_loop; constants are TUI-facing.
   unknown mode -> ReplLoop: a typo degrades to the simplest loop, never crashes a worker.
-  constants = TUI-facing; eval/test defaults live in loop.Budget and each case.
-  PROFILE selects a measured arm: `fast-code` (default) = lean typed set + one code/python cell,
-  inline finish, green-plan stop; `m3-plan` = historical python-cell arm; `current` = m3-plan +
-  inline finish; `code-act` = code-only. CODE_TUI_* flags override the profile.
-  scope() = harness capability limit, not a prompt: loop filters provider tools from it and
-  refuses a call outside it. CODE_TUI_ALLOWED_TOOLS narrows; CODE_TUI_ALLOW_EXEC=0 drops exec;
-  CODE_TUI_MAX_CALLS_PER_TURN / CODE_TUI_MAX_TURN_TOKENS cap one turn;
-  CODE_TUI_EFFORT_POLICY=adaptive spends low reasoning only after a surprise.
-  COMPACT_AT_TOKENS (85% of 1M window) compared against the provider's real prompt token count;
-  OBS_CHARS=0 means the state card decides, not a char cap.
-  verifier (check_plan.Verifier) = production wiring: owns goal, cheap subset, throttle, cache;
-  goal/health remain for bare callables. ReplLoop has no verifier slot (build hands goal_value);
-  ReplLoop has no scope slot.
-
+  PROFILE: fast-code (default) = lean typed set + one code cell, inline finish, green-plan stop; m3-plan = historical
+  python-cell arm; current = m3-plan + inline finish; code-act = code-only; CODE_TUI_* flags override the profile.
+  scope() = harness capability limit: CODE_TUI_ALLOWED_TOOLS narrows, ALLOW_EXEC=0 drops exec, MAX_CALLS_PER_TURN and
+  MAX_TURN_TOKENS cap a turn, EFFORT_POLICY=adaptive; COMPACT_AT_TOKENS = 85% of 1M vs the real prompt count; OBS_CHARS=0 = the card decides.
+  verifier (check_plan.Verifier) = production wiring; goal/health stay for bare callables; ReplLoop has no verifier/scope slot.
 WHERE TO CHANGE
-  production loop selection ...... build + MODE
-  production budgets ............ budget, MAX_OUTPUT
-  production capabilities ....... production_scope() + constants; agent/limits.py owns Scope
-  measured arm .................. PROFILE / PROFILES; per-knob CODE_TUI_* flags override
-  orchestration cell ............ CODE_MODE (fast-code keeps the python cell)
-  compaction threshold .......... CONTEXT_WINDOW, COMPACT_AT
+  loop selection ... build + MODE   budgets ... budget, MAX_OUTPUT   capabilities ... production_scope() + constants (agent/limits.py owns Scope)
+  measured arm ... PROFILE / PROFILES + CODE_TUI_* flags   orchestration cell ... CODE_MODE   compaction ... CONTEXT_WINDOW, COMPACT_AT
 """
 from __future__ import annotations
 

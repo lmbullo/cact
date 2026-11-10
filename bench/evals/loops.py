@@ -1,32 +1,26 @@
 """loops: deterministic, scripted evals for the turn machine and the kernel contract.
 
 WHAT IT IS
-  Every case here runs without a key or a network: a `ScriptedClient` plays the model, and
-  the assertion is about the loop's behavior, not a model's judgment. The cases cover the
-  failure modes that are cheap to miss in a live run: a staged finish, a rejected goal, bad
-  arguments, a repeated read, a journalled mutation, compaction, per-run custom tools,
-  on-demand skills, delegation, a skeptical finish, a token cap, paired skipped calls and an
-  unknown tool.
+  Every case runs without a key or network: a ScriptedClient plays the model and the assertion is
+  about the loop's behavior.  Cases cover a staged finish, a rejected goal, bad arguments, a
+  repeated read, a journalled mutation, compaction, per-run custom tools, on-demand skills,
+  delegation, a skeptical finish, a token cap, paired skipped calls and an unknown tool.
 
 ENTRY POINTS
-  LOOP_CASES   the list `runner` registers; each is a `types.Case`
+  LOOP_CASES   the list runner registers; each is a types.Case
   run_loop(ws, client, **kwargs) -> (RunResult, ToolLoop, Kernel)   the shared constructor
 
 INVARIANTS
-  - Each case gets a fresh workspace and one kernel child, stopped in a `finally`; a case
-    that leaks a child fails the suite's process check.
-  - A scripted reply list is the whole script: no case depends on the real provider, the
-    clock, or another case's files. `ScriptedClient` repeats its last reply, so a repair path
-    can be shorter than the loop's maximum.
-  - The oracle runs on the workspace after the loop stops. A case passes only when the stop,
-    the observation and the oracle agree; a model-shaped final answer alone is not enough.
-  - The `failure` tag is the diagnostic axis: `context`, `tooling`, `mutation`, `finish`,
-    `verification`, `cost`. A failing case names the mechanism, not just the task.
+  each case gets a fresh workspace and one kernel child, stopped in a finally; a leaked child
+  fails the suite's process check.
+  a scripted reply list is the whole script: no provider, clock or other case's files;
+  ScriptedClient repeats its last reply, so a repair path can be shorter than the loop maximum.
+  the oracle runs on the workspace after the loop stops; stop, observation and oracle must agree.
+  the failure tag is the diagnostic axis: context, tooling, mutation, finish, verification, cost.
 
 WHERE TO CHANGE
-  A new loop idea ......... add a case here, then register it in runner.REGISTRY
-  The shared constructor ... run_loop
-  A new scripted shape .... model.py (tool/say/responder)
+  a new loop idea .. a case here, then runner.REGISTRY;  constructor .. run_loop;
+  a new scripted shape .. model.py (tool/say/responder)
 """
 from __future__ import annotations
 

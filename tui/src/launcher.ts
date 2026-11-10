@@ -1,36 +1,27 @@
 /**
  * `bin/code`: find or start this workspace's server, then mount the client.
- *
  * WHAT IT IS
- *  Runs once per `./bin/code` invocation. It resolves the workspace, hashes it to a state
- *  dir, reuses a healthy server from server.json, otherwise spawns a detached server.ts with
- *  its output in server.log, waits for it, then imports the client with CODE_TUI_URL and
- *  CODE_TUI_WORKSPACE set.
+ *   Runs once per `./bin/code`: resolves the workspace, hashes it to a state dir, reuses a healthy
+ *   server from server.json, else spawns a detached server.ts (server.log), waits, then imports the
+ *   client with CODE_TUI_URL and CODE_TUI_WORKSPACE set.
  *
  * ENTRY POINTS
- *  (no exports) — side-effect entry point, imported by tui/bin/code.
- *  health(port) / existingServer() / waitForServer(timeoutMs) / launchDetachedServer(log) /
- *  ensureServer()
+ *   (no exports) — imported by tui/bin/code;  health(port) / existingServer() / waitForServer()
+ *   / launchDetachedServer(log) / ensureServer()
  *
  * INVARIANTS
- *  - Reuse before spawn: a second `./bin/code` in the same directory attaches to the running
- *    server instead of starting a rival one. A stale server.json (dead pid, bad health) is
- *    replaced.
- *  - server.json is the only rendezvous between the pieces: the server publishes it once it
- *    knows its port, stop.ts removes it, this launcher reads it to reuse a healthy server, and a
- *    running client re-reads it to follow a restart whose port changed (client.tsx,
- *    publishedUrl).
- *  - The server is detached and outlives the TUI; stop it with `./bin/code-stop` (stop.ts).
- *  - State dir: CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then
- *    workspaces/<sha256(cwd)[:16]>/ — the same formula as server.ts and stop.ts. Change it in
- *    all three or the pieces stop finding each other.
- *  - ~/.config/code-tui/{env,.env} is loaded into process.env before spawning, so
- *    DEEPSEEK_API_KEY can live in a file.
+ *   Reuse before spawn: a second `./bin/code` attaches to the running server; a stale server.json
+ *   (dead pid, bad health) is replaced.
+ *   server.json is the only rendezvous: the server publishes it, stop.ts removes it, this launcher
+ *   reads it, and client.tsx re-reads it to follow a restart whose port changed (publishedUrl).
+ *   The server is detached and outlives the TUI; stop it with `./bin/code-stop` (stop.ts).
+ *   State dir: CODE_TUI_STATE_ROOT, else $XDG_STATE_HOME/code-tui, then
+ *   workspaces/<sha256(cwd)[:16]>/ — the same formula as server.ts and stop.ts; change all three.
+ *   ~/.config/code-tui/{env,.env} loads into process.env before spawning.
  *
  * WHERE TO CHANGE
- *  Discovery / startup order .... ensureServer()
- *  Env loading .................. loadEnvFile()
- *  Env passed to the server ..... the spawn block in launchDetachedServer()
+ *   discovery / startup order .... ensureServer();  env loading ... loadEnvFile()
+ *   env passed to the server ..... the spawn block in launchDetachedServer()
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";

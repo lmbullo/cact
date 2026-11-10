@@ -1,41 +1,27 @@
 """protocol: the one wire shape shared by parent and kernel child.
 
 WHAT IT IS
-  Everything both halves must agree on; nothing that spawns anything:
-    PROTOCOL, MARKER, MAX_CODE, MAX_OUTPUT, CELL_TIMEOUT  version + limits
-    CellRequest   one request on the wire (python cell or typed verb call)
-    CellReply     typed body of one @@K@@ line
-    ExtendNotice  interim {"extend": seconds} line from a long cell
-    Cell          what the loops consume: stdout/stderr/result/final/envelope + journal view
-                  (changed/deltas), reads, runs, failed/rejected split
-    _json_result, _cap  the two normalizers Cell.from_reply needs
+  Everything both halves must agree on; nothing that spawns anything: PROTOCOL, MARKER, MAX_CODE, MAX_OUTPUT,
+  CELL_TIMEOUT (version + limits); CellRequest (one request on the wire); CellReply (typed body of one @@K@@ line);
+  ExtendNotice (interim {"extend": seconds}); Cell (stdout/stderr/result/final/envelope + journal view, reads, runs,
+  failed/rejected split); _json_result and _cap, the two normalizers Cell.from_reply needs.
 
 ENTRY POINTS
-  CellRequest(...).to_wire() -> dict   the one JSON line to the child; extra_obs prepends
-                                       parent-side entries to the child's _OBS before the cell
-  CellReply.from_wire(dict)            parse a reply; version checked by
-                                       process.Kernel._protocol_error on arrival
-  ExtendNotice.from_wire(dict)         deadline extension
-  Cell.failure(message, ...)           the one restart/error constructor
-  Cell.from_reply(reply, duration_ms=...)  the one success constructor; normalizes a typed
-                                       result into Cell.envelope
+  CellRequest(...).to_wire() -> dict   the one JSON line to the child; extra_obs prepends parent-side _OBS entries
+  CellReply.from_wire(dict)   parse a reply; version checked by process.Kernel._protocol_error on arrival
+  ExtendNotice.from_wire(dict)   deadline extension
+  Cell.failure(message, ...)   the one restart/error constructor
+  Cell.from_reply(reply, duration_ms=...)   the one success constructor; normalizes a typed result into Cell.envelope
 
 INVARIANTS
-  bump PROTOCOL on any field meaning change or removal. Child embeds the same number via
-  `__PROTOCOL__` in driver.py; parent compares it on the first message of a cell and restarts
-  on mismatch: a stale child is never read through the current shape.
-  Cell.rejected (typed verb answered {"ok": false}) != Cell.failed (exception, timeout, dead
-  kernel); the loop counts both as errors.
-  changed = path list; deltas = per-path unified diff; delta = joined text the card renders.
-  Never re-parse delta.
-  imports = envelope.normalize + stdlib only: no subprocess, no verbs; a test can build a Cell
-  without a child.
-
+  bump PROTOCOL on any field meaning change or removal; the child embeds it via __PROTOCOL__ in driver.py and the parent
+  compares it on the first message of a cell and restarts on mismatch: a stale child is never read through the current shape.
+  Cell.rejected (typed verb answered {"ok": false}) != Cell.failed (exception, timeout, dead kernel); the loop counts both as errors.
+  changed = path list; deltas = per-path unified diff; delta = joined text the card renders; never re-parse delta.
+  imports = envelope.normalize + stdlib only: no subprocess, no verbs; a test can build a Cell without a child.
 WHERE TO CHANGE
-  version number ............. PROTOCOL
-  new wire field ............. CellRequest/CellReply + driver.py's final emit({...}), bump PROTOCOL
-  new Cell field ............. Cell + CellReply + Cell.from_reply
-  output cap ................. MAX_OUTPUT, `_cap`
+  version number ... PROTOCOL   new wire field ... CellRequest/CellReply + driver.py's final emit({...}), bump PROTOCOL
+  new Cell field ... Cell + CellReply + Cell.from_reply   output cap ... MAX_OUTPUT, _cap
 """
 from __future__ import annotations
 

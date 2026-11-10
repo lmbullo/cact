@@ -1,29 +1,21 @@
 """env: deterministic environment card prepended to the first task message.
-
 WHAT IT IS
-  One cheap workspace probe: resolved root, git root (or none), capped top-level listing, and
-  task-mentioned paths that do not exist here plus the closest path that does.
-  render_environment -> compact `[env]` block; ToolLoop.run puts it before the task. Not a tool:
-  the model must not spend a turn asking where it is.
-
+  One workspace probe: resolved root, git root (or none), capped top-level listing, and
+  task-mentioned paths that do not exist plus the closest path that does.
+  render_environment -> `[env]` block; ToolLoop.run prepends it. Not a tool.
 ENTRY POINTS
   environment(root, task="", checks=None) -> dict   root, git_root, top, files, checks, task_paths
   render_environment(env) -> str        the `[env]` card, or "" when root is missing
-  resolve_path(root, given) -> dict|None  None when the path exists; else {given, use|missing}
-
+  resolve_path(root, given) -> dict|None  None when exists; else {given, use|missing}
 INVARIANTS
-  no mutation, no network, no model. git probe = short local `git rev-parse`; missing git,
-  timeout or non-repository -> None, never an error.
-  top/files/checks capped and skip generated trees, so node_modules does not bury real entries
-  or the gate plan.
-  a task path is reported only when missing: `tui/src/x.ts` under a workspace rooted at `tui`
-  -> use=`src/x.ts`; prevents the symlink repair the old mismatch provoked.
-  no unverified closest file: not found after stripping leading components -> missing=true.
-
+  no mutation, no network, no model; git probe failure, timeout or non-repository -> None.
+  top/files/checks capped and skip generated trees, so node_modules does not bury real entries.
+  a task path is reported only when missing; `tui/src/x.ts` under root `tui` -> use=`src/x.ts`.
+  no closest file after stripping leading components -> missing=true.
 WHERE TO CHANGE
-  card content ................ environment, render_environment
-  resolved task paths ......... _PATH, resolve_path
-  generated-tree skip list .... _SKIP
+  card content ......... environment, render_environment
+  resolved task paths .. _PATH, resolve_path
+  generated-tree skip .. _SKIP
 """
 from __future__ import annotations
 

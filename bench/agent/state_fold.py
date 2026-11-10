@@ -1,25 +1,16 @@
-"""state_fold: the fold: which turns a long run may drop + the one `[session state]` message.
-
+"""state_fold: the fold cut policy and the one `[session state]` message.
 WHAT IT IS
-  When real prompt tokens cross context_budget, StateLoop._compact replaces old turns with one
-  regenerated message built from the journal: changed files, diffs, what was read, check result,
-  plan. State, not a summary of what was said. This module owns the two pure pieces: where the
-  cut is legal, and the message text.
-
+  StateLoop._compact replaces old turns with one regenerated message built from the journal.
+  This module owns the two pure pieces: where the cut is legal, and the message text.
 ENTRY POINTS
-  cut_index(body, keep) -> int            where a fold may cut body (never mid tool exchange)
+  cut_index(body, keep) -> int                  where a fold may cut body (never mid tool exchange)
   session_state_message(loop, folded) -> dict   the `[session state]` message, one dict
-
 INVARIANTS
-  cut lands on an assistant message carrying tool_calls, or past the end: no role:"tool" result
-  is ever orphaned from the call that produced it.
-  message = state, not narrative: changed paths, current diff, coverage per file as
-  covered/total + first unread range, phase, plan, last check. A model reading it can act
-  without the dropped turns.
-  rebuilt from the journal on every fold: at most one fold stale; says how many messages went
-  and which fold ordinal this is.
+  cut lands on an assistant message carrying tool_calls, or past the end.
+  no role:"tool" result is ever orphaned from the call that produced it.
+  message is state: changed paths, current diff, coverage per file, phase, plan, last check.
+  rebuilt from the journal on every fold; says how many messages went and the fold ordinal.
   pure: reads loop fields, returns a dict; the caller mutates messages.
-
 WHERE TO CHANGE
   cut policy ...... cut_index, StateLoop.keep_messages
   fold trigger .... StateLoop._compact (last_prompt_tokens vs context_budget)

@@ -1,238 +1,66 @@
-"""tool_loop: ToolLoop: typed kernel verbs + the `python` escape hatch (`--mode tool`).
+"""tool_loop: ToolLoop, the turn machine: construction and the run driver.
 
 WHAT IT IS
-  The turn machine production loops extend. Model gets typed tools generated from verbs.VERBS +
-  PYTHON_TOOL (persistent-kernel escape hatch). A typed call -> Kernel.call(name, args); the
-  python call -> Kernel.run(code). Both return the same Cell; a Verifier (check_plan.py) decides
-  whether the task may finish and what the cheap `[check]` line says.
-  run() = sequence of turns; one turn = one reply with zero or more tool calls. Four explicit
-  state pieces, no ad-hoc locals:
-    FinishState   staged answer + accepted (terminal) one
-    TurnOutcome   what a turn decided: keep going, or end with a stop reason
-    CallRecord    one record per tool call in the turn, kept in `turns` and the trace
-    Tally         run counters (steps, calls, errors, repeats, llm_calls)
+  The class production loops extend: wires model, kernel and policy; run() drives turns (one reply = one turn).
+  typed call -> Kernel.call(name,args), python cell -> Kernel.run(code), both -> Cell; state: FinishState, TurnOutcome, CallRecord, Tally.
 
 ENTRY POINTS
-  CODE_TOOL ... default orchestration cell (name `code`)
-  PYTHON_TOOL ... same cell under the name `python`, for repl/bare and old callers
-  PLAN_TOOL ... durable plan tool; the plan renders in every state card
-  TASK_TOOL ... durable task/phase view
-  tools.TYPE_TOOLS .. typed specs generated from verbs.VERBS (default set)
-  TOOL_RULES ... system prompt: one code cell for pipelines, a typed tool for one action
-  stop vocabulary: DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, TRUNCATED,
-                   BAD_ARGS, LLM_FAILED, TOKEN_LIMIT, SKEPTIC_UNMET, NEEDS_INPUT
-                   (defined in stops.py, re-exported here, collected in STOPS)
-  FinishState()  .stage(v) / .accept(v) / .clear() / .staged / .terminal
-  CallRecord(index, name, call_id) .. .code/.args/.observation/.runs/.reads/.notice/.stop
-  TurnOutcome(stop, final, end)
-  ToolLoop(client, kernel, budget, rules, tools, goal, goal_label, goal_stops, obs_chars,
-           health, verifier, wrap_up_at=0.8, extra_tools=None, subagent=None,
-           skeptic=None, autonomy=False, docs=None, scope=None, code_mode=False)
-    .run(task_id, prompt, trace) -> RunResult
-  scope = limits.Scope: the harness filters provider tools from it, refuses a call outside it,
-  caps calls per turn, output per turn and the final report. Run economy
-  (completion/reasoning/content/args) = limits.TokenMeter.
-  hooks subclasses override: _reply(messages, rec, resp, finish, tally, seen, step) (reply ->
-  TurnOutcome; ReplLoop's fenced-block dialect is the only other implementation), _observe(cell,
-  steps) (cell -> text), _compact(messages) (context management), _goal_state() (goal ->
-  (ok, Check)), _on_run_start / _before_turn / _drift_count.
-
+  ToolLoop(client, kernel, budget=, rules=, tools=, goal=, goal_label=, goal_stops=, obs_chars=, health=, verifier=,
+           wrap_up_at=0.8, extra_tools=, subagent=, skeptic=, autonomy=, docs=, scope=, code_mode=);
+           .run(task_id, prompt, trace) -> RunResult;  stop vocabulary (stops.py): DONE, VERIFIED, STEP_LIMIT,
+           WALL_LIMIT, STAGED, GOAL_UNMET, TRUNCATED, BAD_ARGS, LLM_FAILED, TOKEN_LIMIT, SKEPTIC_UNMET, NEEDS_INPUT
+  FinishState() .stage/.accept/.clear/.staged/.terminal; CallRecord(index,name,call_id); TurnOutcome(stop,final,end).
 INVARIANTS
-  FinishState.staged set by final_answer in any cell (STAGED).
-  GREEN = post-plan gate (green_gate.py): after a mutating run's `checks` passes, exec and
-  checks are refused; at most one code cell may produce the final answer. A mutation clears it.
-  exec refuses a lint/typecheck/format gate absent from the plan: the plan is the gate.
-  a printing cell shows output and holds the answer; a silent cell holds it too: a model can
-  final_answer("short") and write the real handoff in the next message. The next reply with no
-  tool call accepts it (after the goal check, when one exists); for a silent stage that reply's
-  content wins over the short tool value. A non-final cell in a later turn clears it (a later
-  call in the same turn does not), as does a no-tool reply whose goal check rejects the finish.
-  a silent final_answer = terminal intent for its turn: remaining tool calls in the same
-  assistant message are NOT executed, but each still gets its paired role:"tool" message
-  (marked skipped), so the next request is valid.
-  _answer_calls appends exactly one role:"tool" message per tool_calls entry, even when dispatch
-  raises: an assistant tool_calls message is never orphaned.
-  turns = one record per turn with calls (one CallRecord per tool call). Top-level
-  code/observation/reads/notice mirror the last call that set them (pre-calls shape); runs
-  concatenates every call's runs.
-  record.stop derived once from the turn outcome, never overwritten branch by branch; a
-  continuing turn reports the last call-level stop (or none).
-  with a goal, finishing before the check passes is rejected (GOAL_UNMET). goal_stops=True ends
-  the run once a mutating cell passes the goal (VERIFIED).
-  a verifier (check_plan.Verifier) owns goal, cheap subset, scope filter, 20s throttle, check
-  cache, rendering. _goal_state asks it for the whole plan; after a mutating cell invalidate()
-  drops the cache; should_run/run refresh self.last_check (the `[check]` line of the next card).
-  It never ends the run; the full goal does. goal=/health= remain accepted for the benchmark and
-  smoke tests.
-  checks(name=None) parent-side, reuses the Verifier's specs and cache: never shells out a
-  second time for a command the cheap check already passed. A failing row is data; the automatic
-  cheap check and final_answer's GOAL_UNMET gate are unchanged.
-  a failing [check] = one line; its full text queued as the next _OBS entry (via
-  CellRequest.extra_obs), so the card names a real handle instead of dumping output.
-  a finish is never rejected for citation coverage: read() records ranges for the [read] card,
-  but reads through python run()/open() are equally valid and the ledger cannot see them; gating
-  the finish on it was inconsistent.
-  BAD_ARGS / TRUNCATED = nothing ran; the model is told why.
-  primary client.complete failure (LLMError) never raises out of run: the loop stops LLM_FAILED,
-  keeps whatever final/staged answer exists, and still writes the trace summary. _push already
-  turns its own LLMError into an empty summary text.
-  tally.steps = turns (primary completes); tally.llm_calls = every request incl. the
-  budget-forced _push, so llm_calls >= steps.
-  every run gets one wrap-up nudge at wrap_up_at of the step budget and one last-turn nudge at
-  max_steps - 1: a long run cannot discover more work after the budget is gone. Subclasses change
-  wording via WRAP_UP_NOTE / LAST_TURN_NOTE, never timing.
-  changed accumulates every file the kernel reports; worker.py records it as history.
-
+  run() never raises on a client.complete LLMError: stops LLM_FAILED, keeps the final/staged answer, writes the trace;
+  tally.steps = turns (primary completes), tally.llm_calls = every request, so llm_calls >= steps.
+  staged final_answer accepts on the next no-tool reply (after the goal check), a silent stage's content wins; a mutation,
+  a later non-final cell or a rejected finish clears it; a silent final_answer skips the rest of the turn but pairs each call.
+  GREEN = post-plan gate (green_gate.py): after a mutating run's checks pass, exec/checks are refused, one code cell may answer.
+  goal: finishing before the check passes -> GOAL_UNMET; goal_stops=True + passing mutation -> VERIFIED; the Verifier owns it.
+  a finish is never rejected for citation coverage; changed accumulates every file the kernel reports.
 WHERE TO CHANGE
-  finish protocol / stop reasons .... finish_flow.py (finish_reply, report_cell, reject),
-                                       stops.py, _answer_calls, _dispatch
-  post-plan / foreign gate .......... green_gate.py (GreenGate, is_foreign_gate)
-  per-call record shape ............. CallRecord.as_dict, _merge_calls
-  model-visible cell text ........... _observe (StateLoop overrides with state cards)
-  another reply dialect ............. _reply (ReplLoop overrides in repl.py)
-  budget / goal-check wording ....... BUDGET_NOTE, WRAP_UP_NOTE, LAST_TURN_NOTE, CHECK_NOUN,
-                                       REJECT_*_TAIL
-  budget reminder timing ............ WRAP_UP_AT, _before_turn
-  rules / code cell ................. TOOL_RULES, CODE_TOOL, PYTHON_TOOL
-  typed tool names/schemas/summaries  verbs.VERBS (tools.py follows); _dispatch routes python
-                                       to Kernel.run and every typed name to Kernel.call
-  task-done decision ................ the verifier passed by the caller (worker.py or an eval
-                                       case), or goal= for a bare callable
-  cheap check in the card ........... _refresh_health, last_check, check_plan.Verifier
+  turn seq/construction ... run, __init__, tool_specs.model_tools   opening msgs ... tool_turns._open_messages
+  finish/stop codes ... finish_flow.py, stops.py, tool_calls.py   wording ... tool_turns BUDGET_NOTE/CHECK_NOUN/WRAP_UP_NOTE
+  checks ... tool_health.py   plan/task/delegate/docs ... tool_subtools.py   schemas ... verbs.VERBS, tool_specs.py
 """
 from __future__ import annotations
 
-import json
 import time
-from dataclasses import replace
 from typing import Any
 
-from .check_plan import run_each
-from .check_run import Check, evaluate
-from .finish_flow import after_cell, asks_for_input, finish_reply, reject, report_cell
-from .green_gate import FOREIGN_GATE_NOTE, GreenGate, is_foreign_gate, is_plan_command
+from .finish_flow import asks_for_input
+from .green_gate import GreenGate
 from .kernel import Kernel
-from .kernel.protocol import Cell, CellReply
 from .limits import Scope, TokenMeter, effort_for
-from .records import CallRecord, FinishState, Tally, TurnOutcome
-from .stops import (BAD_ARGS, DONE, GOAL_UNMET, GREEN, LLM_FAILED, NEEDS_INPUT, SKEPTIC_UNMET,
-                    STAGED, STEP_LIMIT, STOPS, TOKEN_LIMIT, TRUNCATED, VERIFIED, WALL_LIMIT)
 from .llm import Client, LLMError
 from .loop import Budget, RunResult, _usage_add
-from .docs import DOCS_TOOL
-from .env import environment, render_environment
+from .records import FinishState, Tally, TurnOutcome
 from .state import RunState
-from .subagent import DELEGATE_TOOL
-from .tools import TOOL_NAMES, TYPE_TOOLS
-from .verbs import VERBS
+from .stops import (BAD_ARGS, DONE, GOAL_UNMET, GREEN, LLM_FAILED, NEEDS_INPUT, SKEPTIC_UNMET,
+                    STAGED, STEP_LIMIT, STOPS, TOKEN_LIMIT, TRUNCATED, VERIFIED, WALL_LIMIT)
+from .tool_calls import ToolCalls
+from .tool_health import ToolHealth
+from .tool_specs import CODE_TOOL, PLAN_TOOL, PYTHON_TOOL, TASK_TOOL, TOOL_RULES, model_tools
+from .tool_subtools import ToolSubTools
+from .tool_turns import ToolTurns
 
-# The stop vocabulary lives in stops.py; it is re-exported here for every existing caller.
+
 __all__ = ["BAD_ARGS", "DONE", "GOAL_UNMET", "GREEN", "LLM_FAILED", "NEEDS_INPUT",
            "SKEPTIC_UNMET", "STAGED", "STEP_LIMIT", "STOPS", "TOKEN_LIMIT", "TRUNCATED",
            "VERIFIED", "WALL_LIMIT", "CODE_TOOL", "PYTHON_TOOL", "PLAN_TOOL", "TASK_TOOL",
            "TOOL_RULES", "ToolLoop", "FinishState", "Tally", "TurnOutcome", "Budget",
            "RunResult", "asks_for_input"]
 
-PYTHON_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "python",
-        "description": (
-            "Execute Python in a persistent kernel. Variables, imports and data persist between calls. "
-            "The value of the last expression and anything printed are returned as the tool result. "
-            "Use the typed tools for reading, searching, editing and running programs; use python "
-            "for computation and for anything the typed tools do not cover. In typed modes the "
-            "process tool is exec; run() is available only in a python-only repl/bare run. "
-            "help() lists the verbs with their live signatures."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "code": {"type": "string", "description": "Python source to execute in the kernel."},
-            },
-            "required": ["code"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-CODE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "code",
-        "description": (
-            "Run one Python cell in the persistent kernel. This is the orchestration surface: "
-            "the typed verbs are already callable in the cell (read, search, map, outline, "
-            "edit, splice, write, delete, mkdir, apply, checks, status, git, exec, ...). Use a "
-            "cell for any multi-step, batch, filter or dependent sequence: keep intermediate "
-            "data in the cell and print only the result you need. Variables and imports persist "
-            "between cells. A typed tool is for one action; a cell is for a pipeline. Call help() "
-            "in the cell for live verb signatures."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "code": {"type": "string", "description": "Python source to execute in the kernel."},
-            },
-            "required": ["code"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-PLAN_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "plan",
-        "description": (
-            "Set or update the durable plan for this task. plan(items=['read the contract', "
-            "'change the symbol', 'run the checks']) replaces the plan; plan(done=[1, 2]) marks "
-            "1-based items done without replacing the text. The [plan] lines are rendered in "
-            "every state card, so the plan survives a long transcript."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "items": {"type": "array", "items": {"type": "string"}},
-                "done": {"type": "array", "items": {"type": "integer", "minimum": 1}},
-            },
-            "additionalProperties": False,
-        },
-    },
-}
-
-TASK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "task",
-        "description": (
-            "Return the durable task state: phase, plan, changed paths, last checks and open "
-            "items. This is the principal, not a transcript; call it when you need to know "
-            "where the run stands."
-        ),
-        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-}
-
-TOOL_RULES = """You are an autonomous coding agent. The task is a contract.
-
-ACT: typed tools for workspace I/O, mutation, process and git; the python cell for computation or a pipeline the typed tools cannot express. One call that does the job. Read before you write.
-OBSERVE: typed results are structured. Read [page] before [data]; follow next/has_more/complete. Every refusal carries error.use. Large output is on the _OBS handle; page it. A repeat read is a pointer unless repeat=true.
-CHANGE: tracked edits go through write, edit, splice, delete, mkdir or apply. Keep the diff small: one-line docstring on every public name, no unrelated edits. Read [diff] and [check] after a mutation. A failed check is a repair instruction; never weaken it.
-VERIFY: a check you wrote can repeat your own assumption. For a named shape or format, read the code that produces it and test a real value, not only your fixture.
-FINISH: only when the plan passes. Report changed paths, exact commands and results, and what is unverified. Reply with facts, not narration; no headings, no restating the task. No human answers: choose and report a defensible default."""
-
-
 # The question detector is the finish protocol's; it stays importable under both names.
 _asks_for_input = asks_for_input
 
 
-class ToolLoop:
+class ToolLoop(ToolTurns, ToolCalls, ToolSubTools, ToolHealth):
     """The turn machine: tool calls -> kernel cells -> paired tool results -> a staged finish.
 
-    Owns the finish protocol (staging, goal rejection, LLM_FAILED), the stop vocabulary, the
-    call/tool-message pairing and the budget. StateLoop and ReplLoop only override the reply
-    dialect and the observation rendering.
+    Owns the finish protocol (staging, goal rejection, LLM_FAILED), the stop vocabulary and the
+    run. StateLoop and ReplLoop override only the reply dialect and the observation rendering;
+    every other concern lives in one mixin beside this file.
     """
 
     # The shared turns policy is parameterised where a second loop (ReplLoop) words it
@@ -279,26 +107,9 @@ class ToolLoop:
         self.state = RunState()
         self._surprise = True
         self.rules = rules
-        if tools is None:
-            allow_run = bool(getattr(kernel, "allow_run", True))
-            cell_tool = CODE_TOOL if code_mode else PYTHON_TOOL
-            tools = [cell_tool, *[spec for spec in TYPE_TOOLS
-                                    if allow_run or not VERBS[spec["function"]["name"]].get("requires_run")]]
-        tools = list(tools)
-        if extra_tools:
-            tools.extend(extra_tools)
-        if subagent is not None:
-            tools.append(DELEGATE_TOOL)
-        if docs is not None:
-            tools.append(DOCS_TOOL)
-        if self.scope.allows("plan"):
-            tools.append(PLAN_TOOL)
-        if self.scope.allows("task"):
-            tools.append(TASK_TOOL)
-        extra_names = {spec["function"]["name"] for spec in (extra_tools or [])}
-        if extra_names - self.scope.tools:
-            self.scope = replace(self.scope, tools=self.scope.tools | extra_names)
-        self.tools = self.scope.filter_tools(tools)
+        self.scope, self.tools = model_tools(self.scope, kernel, tools, code_mode=code_mode,
+                                             extra_tools=extra_tools, subagent=subagent,
+                                             docs=docs)
         self.extra_names = {spec["function"]["name"] for spec in (extra_tools or [])}
         self.subagent = subagent
         self.skeptic = skeptic
@@ -320,525 +131,11 @@ class ToolLoop:
         self.check_cache: dict[str, str] = {}
         self.gate = GreenGate()
 
-    @property
-    def _gated(self) -> bool:
-        """True when a finish must satisfy a check (a Verifier or a bare goal callable)."""
-        return (self.verifier is not None and self.verifier.has_goal) or self.goal is not None
-
-    def _observe(self, cell, steps: int) -> str:
-        from .repl import observation
-
-        return observation(cell, self.obs_chars)
-
-    def _compact(self, messages: list[dict]) -> None:
-        return None
-
-    def _goal_state(self):
-        if self.verifier is not None:
-            return self.verifier.authoritative()
-        return evaluate(self.goal)
-
-    def _note_cell(self, cell) -> None:
-        return None
-
-    def _reject(self, check, prefix: str) -> str:
-        """The re-prompt for a rejected finish, worded with this loop's noun and tails."""
-        return reject(self, check, prefix)
-
-    def _on_run_start(self, messages: list[dict]) -> None:
-        """Hook: initialise per-run policy state (ReplLoop's prefix drift, for example)."""
-        self._last_turn = False
-        self._wrapped = False
-        self._task_prompt = str(messages[-1].get("content") or "") if messages else ""
-        self._skeptic_key: str | None = None
-        self._sub_usage: dict = {}
-
-    def _before_turn(self, messages: list[dict], tally: Tally) -> None:
-        """Add the budget reminders every loop needs: wrap-up, then one last-turn notice.
-
-        A loop that never says how many turns are left lets a model keep finding more work
-        after the task is green. These are deterministic, once-per-run messages at the
-        budget boundary; subclasses word them through WRAP_UP_NOTE / LAST_TURN_NOTE.
-        """
-        b = self.budget
-        if not self._last_turn and tally.steps >= max(1, b.max_steps - 1):
-            self._last_turn = True
-            messages.append({"role": "user", "content": self.LAST_TURN_NOTE})
-        elif self.wrap_up_at is not None and not self._wrapped:
-            threshold = max(1, int(b.max_steps * self.wrap_up_at))
-            if tally.steps >= threshold and tally.steps < max(1, b.max_steps - 1):
-                self._wrapped = True
-                messages.append({"role": "user",
-                                 "content": self.WRAP_UP_NOTE.format(left=b.max_steps - tally.steps)})
-
-    def _drift_count(self) -> int:
-        return 0
-
-    def _push(self, messages: list[dict], usage: dict | None = None) -> str:
-        msgs = messages + [{
-            "role": "user",
-            "content": self.BUDGET_NOTE,
-        }]
-        try:
-            resp = self.client.complete(msgs, None, self.scope.turn_tokens(self.budget.max_output_tokens),
-                                        effort=effort_for(self.scope, True))
-        except LLMError:
-            return ""
-        if usage is not None:
-            _usage_add(usage, resp["usage"])
-        return (resp.get("content") or "").strip()
-
-    # --- the turn machine --------------------------------------------------------------
-    def _turn_record(self, task_id: str, step: int, resp: dict, hit: int, miss: int) -> dict:
-        tool_calls = resp.get("tool_calls") or []
-        return {
-            "task": task_id,
-            "turn": step,
-            "latency_ms": round(resp["latency_ms"]),
-            "content": resp.get("content") or "",
-            "reasoning": resp.get("reasoning") or "",
-            "tool_calls": [tc.get("function", {}).get("name") for tc in tool_calls],
-            "code": None,
-            "observation": None,
-            "cache": {"hit": hit, "miss": miss},
-            # The provider's own usage for this turn: the TUI's live in/out and cache
-            # counters are folded from it (server.ts), and the trace keeps it for a
-            # later post-mortem.
-            "usage": dict(resp.get("usage") or {}),
-            "runs": [],
-            "finish": resp.get("finish"),
-            "card_chars": 0,
-            "card_budget": int(getattr(self, "card_budget", 0) or 0),
-        }
-
-    def _finish_reply(self, messages: list[dict], rec: dict, content: str, finish_reason,
-                      finish: FinishState) -> TurnOutcome:
-        """A reply with no tool call: continue, reject, or accept the finish (finish_flow)."""
-        return finish_reply(self, messages, rec, content, finish_reason, finish)
-
-    def _skeptic_review(self, candidate: str, check):
-        """One cached review per evidence digest; returns None when there is nothing to review."""
-        if not candidate:
-            return None
-        import hashlib
-
-        deltas = getattr(self, "deltas", {}) or {}
-        diff = "\n".join(str(deltas[path]) for path in sorted(deltas) if deltas[path])[:12000]
-        check_text = check.text() if check is not None else (
-            self.last_check.text() if self.last_check is not None else "")
-        key = hashlib.sha256(
-            (candidate + "\x00" + diff + "\x00" + ",".join(sorted(self.changed))).encode()
-        ).hexdigest()
-        if key == self._skeptic_key:
-            return None
-        self._skeptic_key = key
-        verdict = self.skeptic.review(self._task_prompt, candidate, diff=diff,
-                                      check_text=check_text, changed=sorted(self.changed))
-        _usage_add(self._sub_usage, verdict.usage)
-        return verdict
-
-    def _answer_calls(self, messages: list[dict], rec: dict, tool_calls: list[dict],
-                      finish_reason, finish: FinishState, tally: Tally, seen: set[str],
-                      step: int) -> TurnOutcome:
-        """Dispatch every tool call, pairing exactly one `role: "tool"` message with each."""
-        self._surprise = False
-        records: list[CallRecord] = []
-        if finish.staged is not None and finish.silent and not finish.content:
-            finish.content = (rec.get("content") or "").strip() or None
-        for index, call in enumerate(tool_calls):
-            fn = call.get("function") or {}
-            name = fn.get("name") or ""
-            call_id = call.get("id") or f"call_{step}_{index}"
-            record = CallRecord(index=index, name=name, call_id=call_id)
-            records.append(record)
-            try:
-                if finish.accepted or finish.silent:
-                    content = self._skip_call(record)
-                elif index >= self.scope.max_calls_per_turn:
-                    record.skipped = True
-                    record.notice = ("[observation] skipped: this task allows at most %d tool "
-                                     "calls per turn; split the work across turns."
-                                     % self.scope.max_calls_per_turn)
-                    content = record.notice
-                else:
-                    content = self._dispatch(fn, name, record, finish_reason, finish,
-                                             tally, seen, step)
-            except Exception as exc:  # noqa: BLE001 - the pairing below must always happen
-                tally.errors += 1
-                record.notice = (f"[observation] the tool call failed: {exc!r}. "
-                                 "Nothing ran.")
-                content = record.notice
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
-
-        rec["calls"] = [record.as_dict() for record in records]
-        rec["card_chars"] = sum(len(record.obs or "") for record in records)
-        self._merge_calls(rec, records)
-        if finish.accepted:
-            final = (finish.terminal or "").strip()
-            stop = VERIFIED if final == self.goal_label else DONE
-            return TurnOutcome(stop=stop, final=final, end=True)
-        return TurnOutcome(stop=next((r.stop for r in reversed(records) if r.stop), None))
-
-    def _skip_call(self, record: CallRecord) -> str:
-        """A call after an accepted/staged `final_answer`: not executed, but still answered."""
-        record.skipped = True
-        record.notice = ("[observation] skipped: final_answer in this turn is terminal "
-                         "intent, so this call did not run; the next no-tool reply is the handoff.")
-        return record.notice
-
-    def _dispatch(self, fn: dict, name: str, record: CallRecord, finish_reason,
-                  finish: FinishState, tally: Tally, seen: set[str], step: int) -> str:
-        """Run one tool call and return the text of its paired tool message."""
-        if name not in ("code", "python") and name not in TOOL_NAMES \
-                and name not in self.extra_names and name not in ("delegate", "docs", "plan", "task"):
-            record.notice = (f"[observation] unknown tool {name!r}; use the typed tools or python. "
-                             "help() lists the available verbs.")
-            return record.notice
-        if not self.scope.allows(name):
-            tally.errors += 1
-            record.stop = BAD_ARGS
-            record.notice = ("[observation] tool %r is outside this task's scope; allowed: %s"
-                             % (name, ", ".join(sorted(self.scope.tools))))
-            return record.notice
-        if finish_reason == "length":
-            record.stop = TRUNCATED
-            record.notice = "[observation] the call arguments were truncated by the output limit. Nothing ran. Split the work into smaller calls."
-            return record.notice
-        try:
-            args = json.loads(fn.get("arguments") or "{}")
-        except json.JSONDecodeError as exc:
-            record.stop = BAD_ARGS
-            record.notice = f"[observation] arguments were not valid JSON: {exc}. Nothing ran."
-            return record.notice
-        if not isinstance(args, dict):
-            record.stop = BAD_ARGS
-            record.notice = "[observation] arguments must be a JSON object. Nothing ran."
-            return record.notice
-
-        refusal = self.gate.refusal(name)
-        if refusal is not None:
-            record.stop, record.notice = refusal
-            return record.notice
-        if name == "exec" and self.verifier is not None and self._is_foreign_gate(args):
-            record.notice = FOREIGN_GATE_NOTE
-            return record.notice
-        if name == "delegate":
-            return self._delegate(args, record, tally)
-        if name == "docs":
-            return self._docs(args, record, tally)
-
-        if name in ("code", "python"):
-            code = args.get("code")
-            if not isinstance(code, str) or not code.strip():
-                record.stop = BAD_ARGS
-                record.notice = "[observation] the code argument was empty. Nothing ran."
-                return record.notice
-            key = code
-            record.code = code
-        else:
-            key = name + ":" + json.dumps(args, sort_keys=True, default=repr)
-            record.args = args
-
-        if key in seen:
-            tally.repeats += 1
-        else:
-            seen.add(key)
-        tally.calls += 1
-        if name == "plan":
-            return self._plan(args, record)
-        if name == "task":
-            return self._task(record)
-        if name == "checks":
-            cell = self._checks_cell(args)
-        elif name in ("code", "python"):
-            cell = self.kernel.run(code, check_cache=self._check_cache(),
-                                   extra_obs=self._take_extra_obs())
-        else:
-            cell = self.kernel.call(name, args, check_cache=self._check_cache(),
-                                    extra_obs=self._take_extra_obs())
-        record.runs = (record.runs or []) + (cell.runs or [])
-        record.reads = cell.reads or {}
-        self._note_cell(cell)
-        record.observation = {
-            "tool": name,
-            "exit": "raise" if cell.failed else "error" if cell.rejected else "ok",
-            "result": cell.result,
-            "stdout": cell.stdout,
-            "stderr": cell.stderr,
-            "restarted": cell.restarted,
-            "rejected": cell.rejected,
-            "duration_ms": cell.duration_ms,
-        }
-        if cell.failed or cell.rejected:
-            tally.errors += 1
-        self._surprise = self._surprise or bool(cell.failed or cell.rejected or cell.restarted)
-        git_changed = (name == "git"
-                       and str((args or {}).get("action") or "").lower() in ("add", "commit"))
-        if cell.mutated or git_changed:
-            if self.verifier is not None:
-                self.verifier.invalidate()
-            else:
-                self.check_cache = {}
-            self.last_check = None
-            self.last_check_handle = None
-            self._refresh_health(record, cell)
-        if cell.changed:
-            self.changed.update(cell.changed)
-            self.state.changed.update(cell.changed)
-            self.state.phase = "act"
-            self.gate.invalidate()
-        if name == "checks" and self.changed:
-            self.gate.note_checks(cell)
-        if self.last_check is not None:
-            self.state.checks = [{"name": self.last_check.cmd, "ok": bool(self.last_check.ok)}]
-            self.state.phase = "verify"
-        obs = self._observe(cell, step) + self.gate.suffix(name)
-        record.obs = obs
-
-        if cell.final is not None:
-            return report_cell(self, obs, cell, record, finish, step)
-
-        after_cell(self, cell, finish, step)
-        return obs
-
-    def _is_foreign_gate(self, args: dict) -> bool:
-        """True when `exec` runs a lint/typecheck/format gate the plan does not contain."""
-        specs = list(getattr(self.verifier, "specs", ()) or ()) if self.verifier is not None else []
-        return is_foreign_gate(args, specs)
-
-    def _is_plan_command(self, args: dict) -> bool:
-        """True when an `exec` argument is exactly one of the check plan's commands."""
-        specs = list(getattr(self.verifier, "specs", ()) or ()) if self.verifier is not None else []
-        return is_plan_command(args, specs)
-
-    def _plan(self, args: dict, record: CallRecord) -> str:
-        """Set or mark the durable plan; return the same `[plan]` lines the card renders."""
-        items = args.get("items")
-        done = args.get("done")
-        if items is not None and not isinstance(items, list):
-            record.stop = BAD_ARGS
-            return "[observation] plan(items=[...]) needs a list of strings. Nothing changed."
-        if done is not None and not isinstance(done, list):
-            record.stop = BAD_ARGS
-            return "[observation] plan(done=[...]) needs a list of 1-based indices. Nothing changed."
-        if items is not None:
-            self.state.set_plan(items, done)
-            self.state.phase = "plan"
-        elif done is not None:
-            self.state.mark(done)
-        lines = self.state.plan_lines()
-        text = "\n".join(lines) if lines else "[plan] empty; pass items=[...] to set one"
-        record.observation = {"tool": "plan", "ok": True, **self.state.summary()}
-        return text
-
-    def _task(self, record: CallRecord) -> str:
-        """Return the durable task/phase view; no kernel and no mutation."""
-        summary = self.state.summary()
-        lines = ["[task] phase=%s changed=%d checks=%d open=%d" % (
-            self.state.phase, len(self.state.changed), len(self.state.checks),
-            len(self.state.open))]
-        lines.extend(self.state.plan_lines())
-        record.observation = {"tool": "task", **summary}
-        return "\n".join(lines)
-
-    def _delegate(self, args: dict, record: CallRecord, tally: Tally) -> str:
-        """Run the read-only child and return one compact observation; add its usage."""
-        if self.subagent is None:
-            record.stop = BAD_ARGS
-            return "[observation] delegation is not enabled for this run."
-        prompt = str(args.get("prompt") or "").strip()
-        if not prompt:
-            record.stop = BAD_ARGS
-            return "[observation] delegate(prompt=...) needs the question to answer. Nothing ran."
-        task = str(args.get("task") or "delegate")
-        tally.calls += 1
-        result = self.subagent.run(task, prompt)
-        _usage_add(self._sub_usage, result.usage)
-        text = result.as_text()
-        record.observation = {"tool": "delegate", "stop": result.stop,
-                              "steps": result.steps, "usage": result.usage}
-        record.notice = text[:2000]
-        if not result.ok:
-            tally.errors += 1
-        return text
-
-    def _docs(self, args: dict, record: CallRecord, tally: Tally) -> str:
-        """Fetch one documentation page as a parent-side tool; no kernel and no shell."""
-        if self.docs is None:
-            record.stop = BAD_ARGS
-            return "[observation] docs() is not enabled for this run."
-        url = str(args.get("url") or "").strip()
-        if not url:
-            record.stop = BAD_ARGS
-            return "[observation] docs(url=...) needs a URL. Nothing ran."
-        tally.calls += 1
-        value = self.docs.fetch(url, int(args.get("max_chars") or 12_000))
-        record.observation = {"tool": "docs", **{k: v for k, v in value.items()
-                                                  if k in ("ok", "url", "title", "chars",
-                                                           "total_chars", "truncated", "error")}}
-        if not value.get("ok"):
-            tally.errors += 1
-            text = "[observation] docs failed: " + str((value.get("error") or {}).get("message"))
-            record.notice = text[:2000]
-            return text
-        body = str(value.get("text") or "")
-        text = (f"[docs] {value.get('title') or url} ({value.get('url')})\n"
-                f"{body}\n[page] chars={value.get('chars')}/{value.get('total_chars')} "
-                f"truncated={value.get('truncated')}; pass max_chars for more.")
-        record.notice = text[:2000]
-        return text
-
-    def _check_cache(self) -> dict:
-        return self.verifier.cache() if self.verifier is not None else self.check_cache
-
-    def _take_extra_obs(self) -> list[dict]:
-        """The parent-side observations queued for the next kernel request; empties the queue."""
-        extra = self._extra_obs
-        self._extra_obs = []
-        return extra
-
-    def _checks_cell(self, args: dict) -> Cell:
-        """`checks(name=None)`: the plan's rows, reusing every cached green spec.
-
-        Parent-side, like `docs`: it needs the Verifier the worker built, not the kernel. A
-        failing row is data, not a refusal; an unknown `name` is a refusal with the plan's
-        names. The synthetic Cell goes through the same observation renderer as a typed call.
-        """
-        started = time.perf_counter()
-        name = str(args.get("name") or "").strip() or None
-        specs = list(getattr(self.verifier, "specs", ()) or ()) if self.verifier is not None else []
-        payload: dict = {"ok": True, "kind": "checks", "rows": [], "passed": 0, "failed": 0}
-        rejected = False
-        if not specs:
-            payload["text"] = "no check plan is configured for this run"
-        elif name is not None and name not in [spec.name for spec in specs]:
-            rejected = True
-            payload.update({"ok": False, "kind": "checks", "error": {
-                "code": "unknown_check",
-                "message": "no check spec named %r" % name,
-                "use": "available: " + ", ".join(spec.name for spec in specs)}})
-            payload["text"] = "no check spec named %r; available: %s" % (
-                name, ", ".join(spec.name for spec in specs))
-        else:
-            rows = run_each(specs, self.verifier.cwd, cache=self.verifier.cache(), name=name)
-            passed = sum(1 for row in rows if row["ok"])
-            failed = len(rows) - passed
-            lines = ["[checks] %d spec(s): %d passed, %d failed" % (len(rows), passed, failed)]
-            for row in rows:
-                if row["ok"]:
-                    lines.append("- %s: ok exit=%s" % (row["name"], row["exit"]))
-                else:
-                    lines.append("- %s: FAIL exit=%s: %s" % (
-                        row["name"], row["exit"], row["first_line"] or "failed"))
-            payload.update({"rows": rows, "passed": passed, "failed": failed,
-                            "ok": failed == 0, "text": "\n".join(lines)})
-        reply = CellReply(tool="checks", stdout=str(payload.get("text") or ""),
-                          result=json.dumps(payload))
-        cell = Cell.from_reply(reply, duration_ms=int((time.perf_counter() - started) * 1000))
-        cell.rejected = rejected
-        return cell
-
-    def _refresh_health(self, record: CallRecord, cell) -> None:
-        """Refresh the cheap check after a mutation, at most once every 20s."""
-        if self.verifier is not None:
-            paths = sorted(cell.changed or ())
-            if not self.verifier.should_run(paths, time.perf_counter()):
-                return
-            try:
-                self.verifier.run(paths)
-            except Exception:  # noqa: BLE001 - a broken health check never stops the run
-                self.last_check = None
-            else:
-                self.last_check = self.verifier.last
-            self.check_cache = self.verifier.cache()
-            self._queue_check_obs(cell)
-            if self.last_check is not None:
-                record.check = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
-                self._surprise = self._surprise or not self.last_check.ok
-            return
-        if self.health is None:
-            return
-        now = time.perf_counter()
-        if now - self._health_at < 20.0:
-            return
-        self._health_at = now
-        try:
-            outcome = self.health(sorted(cell.changed))
-        except Exception:  # noqa: BLE001 - a broken health check never stops the run
-            outcome = None
-        if isinstance(outcome, tuple):
-            self.last_check, results = outcome
-            self.check_cache = {cmd: {"text": item.text(600), "ok": bool(item.ok)}
-                                for cmd, item in results.items() if item is not None}
-        else:
-            self.last_check = outcome
-        if isinstance(self.last_check, bool):
-            self.last_check = Check(cmd="health", state="passed" if self.last_check else "failed")
-        self._queue_check_obs(cell)
-        if self.last_check is not None:
-            record.check = {"ok": bool(self.last_check.ok), "cmd": self.last_check.cmd}
-
-    def _queue_check_obs(self, cell) -> None:
-        """A failing check's full text becomes the next `_OBS` entry; the card names its index."""
-        self.last_check_handle = None
-        if self.last_check is None or self.last_check.ok:
-            return
-        if getattr(cell, "obs_index", None) is None:
-            return
-        index = int(cell.obs_index) + 1 + len(self._extra_obs)
-        self._extra_obs.append({"stdout": self.last_check.text(), "stderr": "", "result": None})
-        self.last_check_handle = "_OBS[%d]" % index
-
-    def _merge_calls(self, rec: dict, records: list[CallRecord]) -> None:
-        """Mirror the pre-`calls` turn shape: last writer wins per field, runs concatenate."""
-        runs: list = []
-        for record in records:
-            runs.extend(record.runs or [])
-        rec["runs"] = runs
-        for key in ("code", "observation", "reads", "obs", "check"):
-            value = None
-            for record in records:
-                item = getattr(record, key)
-                if item is not None:
-                    value = item
-            if value is not None:
-                rec[key] = value
-        # The turn-level notice belongs to the finish protocol.
-        notices = [r.notice for r in records if r.stop in (STAGED, GOAL_UNMET) and r.notice]
-        if notices:
-            rec["notice"] = notices[-1]
-
-    def _reply(self, messages: list[dict], rec: dict, resp: dict, finish: FinishState,
-               tally: Tally, seen: set[str], step: int) -> TurnOutcome:
-        """Turn one reply into an outcome. The one seam ReplLoop overrides."""
-        content = resp.get("content") or ""
-        tool_calls = resp.get("tool_calls") or []
-        finish_reason = resp.get("finish")
-        if not tool_calls:
-            return self._finish_reply(messages, rec, content, finish_reason, finish)
-        messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
-        return self._answer_calls(messages, rec, tool_calls, finish_reason, finish,
-                                  tally, seen, step)
-
     def run(self, task_id: str, prompt: str, trace: Any = None) -> RunResult:
         """Drive the turns until a stop reason fires; always writes the summary record and returns."""
         b = self.budget
         t0 = time.perf_counter()
-        messages: list[dict] = []
-        if self.rules:
-            messages.append({"role": "system", "content": self.rules})
-        root = getattr(self.kernel, "root", None)
-        checks = []
-        if self.verifier is not None:
-            checks = [{"name": spec.name, "cmd": spec.cmd}
-                      for spec in getattr(self.verifier, "specs", ()) or ()]
-        card = (render_environment(environment(root, prompt, checks))
-                if root is not None else "")
-        messages.append({"role": "user", "content": (card + "\n\n" + prompt) if card else prompt})
-        self._on_run_start(messages)
-        self._task_prompt = prompt
-        self.state.task = prompt
-        self.state.env = card
+        messages, card = self._open_messages(prompt)
 
         tally = Tally()
         usage: dict = {}
@@ -899,26 +196,8 @@ class ToolLoop:
             _usage_add(usage, self._sub_usage)
             wall_ms = (time.perf_counter() - t0) * 1000.0
             attestation = {**self.state.summary(), "stop": stop, "steps": tally.steps}
-            if trace:
-                trace.write({
-                    "task": task_id,
-                    "summary": True,
-                    "stop": stop,
-                    "steps": tally.steps,
-                    "calls": tally.calls,
-                    "llm_calls": tally.llm_calls,
-                    "errors": tally.errors,
-                    "repeats": tally.repeats,
-                    "drift": self._drift_count(),
-                    "usage": usage,
-                    "wall_ms": round(wall_ms),
-                    "final": final,
-                    "error": error,
-                    "economy": self.meter.as_dict(),
-                    "state": self.state.summary(),
-                    "attestation": attestation,
-                })
-                trace.close()
+            self._write_summary(trace, task_id, stop, tally, usage, final, error, wall_ms,
+                                attestation)
 
         return RunResult(
             task=task_id,

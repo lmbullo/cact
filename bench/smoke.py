@@ -1,53 +1,25 @@
-"""Offline self-check for the agent and the evals: no network, no API key, no fixtures
-touched.
+"""smoke: offline self-check for the agent and the evals: no network, no API key, no fixtures touched.
 
 WHAT IT IS
-  The one command that tells a coding agent "the code still works" without spending tokens.
-  This file is the runner: it imports every module, then calls one check group per area, in
-  dependency order. The checks themselves live in `bench/smoke_checks/` (one module per
-  area, each with its own header) and share the harness in `bench/smoke_support.py`.
-
-    evals     the eval registry is intact and a fast loop subset passes
-    helpers   pure helpers: reply parsing, card digests, budgets, generated verb specs
-    index     the header index and `bench/guide.py --check`
-    env       the environment card and task-path resolution
-    structure the agent symbol index and the file-size gate
-    docs      every repository path a document names still exists
-    plans     the check plan, the Verifier, read coverage, run_check's three states
-    protocol  a stale child is restarted, the current PROTOCOL is accepted
-    files     the journalled file action space (read/write/edit/undo/diff/map/guide)
-    verbs     the typed verbs (map/read/search/splice/exec/outline/help) via Kernel.call
-    gates     process gates, recall, orphan reaping, apply/commit, the state card
-    revert    revert_check: a test that passes on HEAD, a dirty tree, a failed restore
-    serve     the TUI-server verb: the state dir, a fake /health, logs, and both refusals
-    handoff   a structured finish reaches the next task's history prefix
-    limits    the capability scope, per-turn ceilings and the output meter
-    turns     the turn machine: staged finishes, stop vocabulary, tool-call pairing
-    repl      the fenced-block dialect reuses that machine
-    wiring    every journal kind is tested and every verb has a smoke case
-    style     the tree lints clean under ruff.toml and every public name is documented
-
-  python3 bench/smoke.py        exits 0 when every check passes, 1 otherwise
+  The one command that says "the code still works" without spending tokens; this file is the runner: it imports every
+  module and calls one check group per area in dependency order. Checks live in bench/smoke_checks/ (one module per area),
+  harness in bench/smoke_support.py. groups: evals, helpers, index, env, structure, docs, plans, protocol, files, verbs,
+  gates, revert, serve, handoff, limits, turns, repl, wiring, style.
 
 ENTRY POINTS
-  python3 bench/smoke.py   the only entry point; `main()` returns the exit code
+  python3 bench/smoke.py   the only entry point; main() returns the exit code
   bench/smoke_support.py   check(), summary(), workspace(), kernel_for() and the fakes
-  bench/smoke_checks/*.py  one `run(...)` per area; the runner decides the order
+  bench/smoke_checks/*.py  one run(...) per area; the runner decides the order
 
 INVARIANTS
-  - Runs in a temporary directory; nothing under the repo is written, no task is graded, no
-    trace is recorded.
-  - It is a *contract* test: a failure here means the interface an agent relies on changed
-    (kernel prelude, Cell fields, envelopes), not that a model misbehaved.
-  - Keep it fast (a few seconds). Network or model calls belong in bench/live.py.
-  - The kernel groups share ONE temp workspace and ONE kernel child: `files` then `verbs`
-    then `gates`, in that order, because later checks reuse files earlier ones created.
+  runs in a temporary directory; nothing under the repo is written, no task is graded, no trace is recorded.
+  contract test: a failure means the interface an agent relies on changed (prelude, Cell fields, envelopes),
+  not that a model misbehaved. Keep it fast (a few seconds); network or model calls belong in bench/live.py.
+  the kernel groups share ONE temp workspace and ONE kernel child: files -> verbs -> gates, in that order.
 
 WHERE TO CHANGE
-  A new kernel helper or Cell field ....... bench/smoke_checks/files.py or verbs.py
-  A new eval case or registry count ....... bench/smoke_checks/evals.py
-  A new check group ....................... add bench/smoke_checks/<area>.py and call it here
-  The harness, fakes or fixtures ........... bench/smoke_support.py
+  new kernel helper or Cell field ... bench/smoke_checks/files.py or verbs.py   new eval case ... evals.py
+  new check group ... add bench/smoke_checks/<area>.py and call it here   harness/fakes ... bench/smoke_support.py
 """
 
 from __future__ import annotations

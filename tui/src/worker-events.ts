@@ -1,40 +1,27 @@
-/**
- * worker-events.ts: one `@@TUI@@` line from python/worker.py becomes one journal record.
+/** worker-events.ts: one `@@TUI@@` line from python/worker.py becomes one journal record.
  *
  * WHAT IT IS
- *  The stateless half of server.ts's worker-message handling. `parseWorkerLine` turns a stdout
- *  line into a WorkerMessage; `journalWorkerEvent` turns every kind that keeps no state on the
- *  Task — `cell.start`, `cell.end`, `check`, `log`, and an unknown kind — into exactly one event,
- *  handed to the caller's `append` (server.ts passes one that adds `seq`/`ts` and writes the
- *  journal). `cell.end` is the compact per-call record `{cell, tool, ok, verb_kind, code, page,
- *  chars, duration_ms, notes}` that bench/task_journal.py prefers over the payload. `capString`
- *  and `capValue` are the caps every journaled payload passes through.
+ * The stateless half of server.ts's worker-message handling: parseWorkerLine turns a stdout line into a WorkerMessage;
+ * journalWorkerEvent turns every kind that keeps no state on the Task (cell.start, cell.end, check, log, unknown) into
+ * exactly one event for the caller's `append` (server.ts adds seq/ts and writes it); cell.end = {cell,tool,ok,verb_kind,
+ * code,page,chars,duration_ms,notes}.
  *
  * ENTRY POINTS
- *  EVENT_PREFIX                      the marker python/worker.py prefixes its JSON lines with
- *  parseWorkerLine(line)             line -> WorkerMessage, or null when it is not one of ours
- *  journalWorkerEvent(msg, line, append)  appends exactly one JournalEvent for the pure kinds
- *  capString(value, limit)           a string capped at `limit` chars, unchanged otherwise
- *  capValue(value)                   args/data capped by string length, item count and depth
- *  JournalEvent                      Omit<TaskEvent, "seq" | "ts">
+ * EVENT_PREFIX = the marker python/worker.py prefixes its JSON lines with
+ * parseWorkerLine(line) -> WorkerMessage | null;  journalWorkerEvent(msg, line, append) appends one JournalEvent for the pure kinds
+ * capString(value, limit) = a string capped at limit chars, unchanged otherwise
+ * capValue(value) = args/data capped by string length, item count and depth;  JournalEvent = Omit<TaskEvent, "seq" | "ts">
  *
  * INVARIANTS
- *  - Exactly one event per message: no kind may reach both its own branch and the `log` fallback,
- *    because bench/task_journal.py counts calls and rejections by reading these lines back.
- *  - Importable without side effects, which is why this file reads only types: no task, no file,
- *    no socket. `tests/worker-events.test.ts` journals a real wire line through it.
- *  - The task-mutating kinds stay in server.ts `handleWorkerLine`: `turn` folds progress, `error`
- *    sets `Task.error`, `final` installs the authoritative counters.
- *  - `cell.end` carries no payload body: `text` and `args` are absent by construction; only the
- *    notes are capped, because those are free text the agent wrote.
- *  - An unknown kind journals the raw line as `log`, so a worker newer than this server still
- *    leaves a readable journal instead of dropping the line.
+ * exactly one event per message: no kind reaches both its own branch and the `log` fallback (task_journal counts calls this way).
+ * importable without side effects: this file reads only types (no task, no file, no socket); tests/worker-events.test.ts journals a wire line.
+ * task-mutating kinds stay in server.ts handleWorkerLine: turn folds progress, error sets Task.error, final installs the counters.
+ * cell.end carries no payload body: text and args are absent by construction; only the notes are capped (free text the agent wrote).
+ * an unknown kind journals the raw line as `log`, so a newer worker still leaves a readable journal.
  *
  * WHERE TO CHANGE
- *  A worker message kind ......... python/worker.py (source of truth) + types.ts WorkerMessage
- *  What a kind journals .......... journalWorkerEvent
- *  A kind that mutates the task .. server.ts handleWorkerLine
- *  The caps ...................... capString / capValue
+ * a worker message kind ... python/worker.py (source of truth) + types.ts WorkerMessage   what a kind journals ... journalWorkerEvent
+ * a kind that mutates the task ... server.ts handleWorkerLine   the caps ... capString / capValue
  */
 import type { TaskEvent, WorkerMessage } from "./types";
 

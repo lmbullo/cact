@@ -1,56 +1,27 @@
-"""task_journal: read a TUI task journal back — tasks/<id>.json + events/<id>.jsonl -> summary.
+"""task_journal: read a TUI task journal back: tasks/<id>.json + events/<id>.jsonl -> summary.
 
 WHAT IT IS
-  Post-hoc analysis for one task in a TUI state directory
-  (`~/.local/state/code-tui/workspaces/<sha256-of-cwd,16 hex>/`). Counts the typed call mix
-  (`tools`), the kernel verbs the model used, which files it wrote, steps, tokens, stop reason
-  — and the escape hatch: how often `exec` stood in for a typed verb (`exec_verb_dupes`), ran
-  `python3 -c` or a shell string, how many observation characters reached the model
-  (`obs_chars`, `obs_chars_per_turn`) and how many card characters were delivered against
-  the turn budget (`card_chars`, `card_chars_per_turn`, `card_budget`), and the turn of the
-  first mutating cell (`first_mutation_turn`). The bookkeeping keys measure the tax: `out_tokens` and
-  `reasoning_tokens`, `gate_cells` (an exec cell whose commands are all exact plan specs),
-  `narrow_cells` (the same program with extra args, e.g. one test file), `git_read_cells`
-  (status/log/diff/show) and `git_write_cells` (add/commit/push), with `git_cells` the total,
-  and `verify_turns` (turns after the first mutation that ran no mutation).
-  `checks_calls`/`status_calls`/`docs_calls` count
-  parent-side tools from `turn.tool_calls`, because those calls emit no `cell.start`. The
-  causal keys say *why* behavior changed: the turn the typed-dupe
-  `note` first appeared (`dupe_note_turn`), the dupes after it (`dupes_after_note`), and how
-  often a read/map/search resumed the page the previous result left open (`paged_followups`).
-  (No benchmark CLI runs any more: `bench/eval.py` is the eval front end; this is the reader
-  for the journals the TUI records.)
+  Post-hoc analysis of one task in a TUI state dir (~/.local/state/code-tui/workspaces/<sha256(cwd)[:16]>/): typed call
+  mix, verbs, files written, steps, tokens, stop reason, escape metrics. keys: tools, exec_verb_dupes, obs_chars
+  (_per_turn), card_chars (_per_turn), card_budget, first_mutation_turn, out/reasoning_tokens, gate_cells, narrow_cells,
+  git_read_cells/git_write_cells/git_cells, verify_turns, checks_calls/status_calls/docs_calls, dupe_note_turn,
+  dupes_after_note, paged_followups. bench/eval.py is the eval CLI; this module reads the journals it grades.
 
 ENTRY POINTS
-  python3 bench/task_journal.py <state-dir> <task-id>
-  python3 bench/task_journal.py --compare <state-dir> <task-a> <task-b>  the two rows + deltas
-  python3 bench/task_journal.py --recent [N]  every workspace's latest tasks, newest first
-  load(state_dir, task_id) -> (task, turns)
-  summarize(state_dir, task_id) -> dict
-  compare(state_dir, task_ids) -> int
+  python3 bench/task_journal.py <state-dir> <task-id>   |   --compare <state-dir> <a> <b>   |   --recent [N]
+  load(state_dir, task_id) -> (task, turns);  summarize(state_dir, task_id) -> dict;  compare(state_dir, task_ids) -> int;
   recent(state_root, limit) -> list[dict]
 
 INVARIANTS
-  - Read-only: it never writes into the state dir.
-  - A TUI run's counts come from its `cell.start` records (one per call: `tool` + `args`), not
-    from the python `turn.code` the TUI never emits. `sum(tools.values()) == cells`, by
-    construction and asserted; that one line would have caught the regex counters reading zero.
-  - A new TUI run also writes one compact `cell.end` per call (`ok`, `code`, `page`, `chars`,
-    `notes`, no bodies). When present, `obs_chars`, `rejected` and `dupe_note_turn` read those
-    records; the archived `turn.observation` shape remains the fallback. `restarts` reads the
-    observation's boolean `restarted`, never the phrase "empty namespace" in delivered text.
-  - The `turn.code` regex path survives only for the archived journal shape (turns with
-    `calls`/`code` and no `cell.start`); on a TUI run `VERBS` is just the tool mix.
-  - Malformed journal lines are skipped, not fatal: a killed worker leaves a partial file.
-  - The escape metrics read `cell.start` events, so a folded or digested cell still counts:
-    the number is about the call the model made, not about what the card kept.
-
+  read-only: never writes into the state dir; malformed journal lines are skipped (a killed worker leaves a partial file).
+  a TUI run's counts come from cell.start (tool+args), not turn.code; sum(tools.values()) == cells, asserted.
+  cell.end (ok, code, page, chars, notes) feeds obs_chars, rejected, dupe_note_turn; turn.observation is the fallback;
+  restarts reads the boolean `restarted`, never the phrase in delivered text; the turn.code regex path is archived only.
+  escape metrics read cell.start, so a folded or digested cell still counts: the number is the call, not the card.
 WHERE TO CHANGE
-  New kernel verb ........ VERBS
-  New escape metric ...... EXEC_DUPES, MUTATING_VERBS, _escape, summarize()
-  New bookkeeping metric . _plan_specs, _plan_cells, _git_cells, _verify_turns, _token_sum
-  New parent-side metric . _tool_call_count, summarize()
-  New metric ............. summarize()
+  new kernel verb ... VERBS   new escape metric ... EXEC_DUPES, MUTATING_VERBS, _escape, summarize()
+  new bookkeeping metric ... _plan_specs, _plan_cells, _git_cells, _verify_turns, _token_sum
+  new parent-side metric ... _tool_call_count, summarize()   new metric ... summarize()
 """
 from __future__ import annotations
 

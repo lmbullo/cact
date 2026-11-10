@@ -31,33 +31,16 @@ MAX_LINES = 250
 # The current large modules. Each line is a split that is still outstanding; the gate only
 # blocks a new file above the budget or a file reappearing after its split.
 ALLOW = frozenset({
-    "bench/agent/kernel/run_prelude.py",
-    "bench/agent/tool_loop.py",
-    "tui/src/client.tsx",
-    "bench/agent/kernel/prelude_verbs.py",
-    "bench/agent/kernel/prelude_read.py",
-    "tui/src/server.ts",
     "bench/task_journal.py",
     "bench/smoke_checks/verbs.py",
-    "bench/agent/kernel/driver.py",
-    "tui/python/worker.py",
-    "bench/agent/verbs.py",
-    "bench/agent/kernel/prelude_journal.py",
-    "tui/src/list-model.ts",
     "bench/evals/loops.py",
-    "bench/agent/kernel/prelude_index.py",
     "bench/smoke_checks/helpers.py",
     "bench/live.py",
-    "bench/agent/kernel/process.py",
     "bench/agent/headers.py",
-    "tui/src/log-view.tsx",
     "bench/smoke_checks/turns.py",
-    "tui/src/board-view.tsx",
     "bench/remote.py",
     "bench/evals/live.py",
-    "bench/agent/check_plan.py",
     "bench/smoke_checks/files.py",
-    "bench/agent/repl.py",
     "tui/tests/log.test.tsx",
 })
 

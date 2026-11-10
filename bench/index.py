@@ -15,8 +15,7 @@ INVARIANTS
   - The header walk is `agent/headers.py`; this module does not invent a second file walk.
   - A Python symbol is public when its name does not start with `_`; a class contributes its
     public methods as `Class.method`. A parse failure yields no symbols, never an exception.
-  - TS/TSX contribute exported declarations by a narrow regex; a missed symbol is a gap, not
-    a false row.
+  TS/TSX exports come from a narrow regex; a missed symbol is a gap, not a false row.
   - The output is deterministic: modules sorted by path, symbols by line.
 
 WHERE TO CHANGE
@@ -126,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         problems = headers.problems(str(base))
         for row in problems:
-            print("%s missing %s" % (row["path"], ", ".join(row["missing"])))
+            print("%s  %s (%d header lines)"
+                  % (row["path"], row["reason"], row["header_lines"]))
         print("index: %d header problem(s)" % len(problems))
         return 1 if problems else 0
     data = build(base)

@@ -1,34 +1,24 @@
 """smoke support: the check counter and the offline fakes every smoke group shares.
-
 WHAT IT IS
-  The harness `python3 bench/smoke.py` runs on, kept out of the runner so the check groups
-  under `smoke_checks/` can import it without a cycle:
-    check(name, ok, detail)   print `ok`/`FAIL`, record a failure, keep going
-    FAILED                    the failure list `summary()` reports
-    workspace()               a temp directory with the fixture tree the kernel checks use
-    kernel_for(root, **kw)    a started Kernel that is always stopped, even on a failure
-    _reply/_call/_cell        one scripted model reply, tool call, or kernel Cell
-    FakeClient, FakeKernel    the offline loop driver: scripted replies, scripted cells
-    _run_loop(...)            ToolLoop over the two fakes -> (result, client, kernel)
-    _paired_messages(...)     the assistant tool ids and the tool messages answering them
-
+  The harness `python3 bench/smoke.py` runs on, kept out of the runner so `smoke_checks/` groups
+  import it without a cycle: check(), the failure list, a fixture workspace, the offline fakes.
 ENTRY POINTS
-  from bench.smoke_support import check, kernel_for, _reply, _call, _cell, _run_loop
-  python3 bench/smoke.py   the only entry point; it imports this module
-
+  check(name, ok, detail); FAILED; workspace(); kernel_for(root, **kw)  started Kernel always stopped
+  _reply/_call/_cell        one scripted model reply, tool call, or kernel Cell
+  FakeClient, FakeKernel    the offline loop driver: scripted replies, scripted cells
+  _run_loop(...)            ToolLoop over the two fakes -> (result, client, kernel)
+  _paired_messages(...)     the assistant tool ids and the tool messages answering them
 INVARIANTS
-  - Nothing here touches the repo, the network or a real model. `workspace()` writes only
-    under tempfile.mkdtemp, and `kernel_for` runs a real (local) kernel child in that root.
-  - `check` never raises: one failed assertion must not hide the checks after it. FAILED is
-    module state, so the runner calls `summary()` once at the end.
-  - A fake answers exactly what it was scripted for and raises when the script runs out, so
-    an extra turn is a failure, not a hang.
-
+  nothing here touches the repo, the network or a real model: workspace() writes only under
+  tempfile.mkdtemp and kernel_for runs a real local kernel child in that root.
+  check() never raises: one failed assertion must not hide later checks; FAILED is module state,
+  so the runner calls summary() once at the end.
+  a fake answers exactly what it was scripted for and raises when the script runs out, so an
+  extra turn is a failure, not a hang.
 WHERE TO CHANGE
-  A new shared fake or fixture .................. this module
-  A new check group ............................. bench/smoke_checks/, then call it in
-                                                  bench/smoke.py::main
-  The pass/fail line or exit code ............... check(), summary()
+  a new shared fake or fixture ..... this module
+  a new check group ................ bench/smoke_checks/, then call it in bench/smoke.py::main
+  the pass/fail line or exit code ... check(), summary()
 """
 from __future__ import annotations
 

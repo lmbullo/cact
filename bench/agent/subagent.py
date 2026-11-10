@@ -1,29 +1,21 @@
 """subagent: a delegated, read-only agent with its own context and kernel.
-
 WHAT IT IS
-  The `delegate` tool: parent sends one scoped question; a fresh child loop explores in a
-  separate kernel and returns a short answer + its own token count. The parent's context never
-  sees the child's reads: exploration is what makes a long run expensive; delegation makes it one
-  observation. Subagent builds the child; DELEGATE_TOOL = provider spec; Skeptic (skeptic.py) is
-  a second use of the same machinery (a reviewer that must falsify a finish).
-
+  The `delegate` tool: the parent sends one scoped question; a fresh child loop explores in a
+  separate kernel and returns a short answer + its own token count, so the parent's context never
+  sees the child's reads. Skeptic (skeptic.py) is a second use of the same machinery.
 ENTRY POINTS
   DELEGATE_TOOL                     provider tool spec the parent exposes
   Subagent(client, budget, workspace, *, rules=None, tools=None)
     .run(task, prompt) -> SubagentResult   answer, stop, steps, usage, error
   SubagentResult.as_text()          the observation the parent receives
-
 INVARIANTS
-  child read-only: Kernel(writable=False) under bwrap; tool list filtered to python +
-  read/search/map/outline/recall. No mutation, no exec, no nested delegate: no recursion, no
-  bypass of the parent's journal.
-  child own budget (max_steps, max_total_tokens, max_wall_s) + own Tally. Usage returned, never
-  dropped: the parent adds it to the run's usage.
-  child failure = normal observation (ok: false), never an exception into the parent; the parent
-  can retry with a narrower prompt.
-  stop = child's loop stop name. answer = child's final, or its last message when it hit a
-  budget: a partial finding stays useful.
-
+  child read-only: Kernel(writable=False) under bwrap; tools filtered to python +
+  read/search/map/outline/recall; no mutation, exec or nested delegate, so no journal bypass.
+  child has its own budget (max_steps, max_total_tokens, max_wall_s) and Tally; usage is returned,
+  never dropped, and the parent adds it to the run's usage.
+  child failure = normal observation (ok: false), never an exception into the parent.
+  stop = child's loop stop name; answer = child's final, or its last message when it hit a budget,
+  so a partial finding stays useful.
 WHERE TO CHANGE
   child permissions ...... _child_tools, _RULES
   child budgets .......... Subagent.__init__ defaults

@@ -1,37 +1,27 @@
 """remote: a Daytona sandbox, used by bench for a disposable machine per run.
-
 WHAT IT IS
-  The one adapter between `bench` and Daytona. `bench` is stdlib-only, so the SDK is
-  imported lazily: importing this module never requires `daytona`, and every entry point
-  answers with a structured refusal when the SDK or the key is missing. A sandbox is a
-  throwaway Linux box for a run that must not touch the host - an eval case, an untrusted
-  repo, or a check that needs a clean tree - not the normal runtime of the TUI loop.
+  The one adapter between `bench` and Daytona; the SDK imports lazily, so importing never requires
+  `daytona` and every entry point refuses structurally without the SDK or key; writes nothing in the repo.
 
 ENTRY POINTS
   status() -> {sdk, key, hint}
   create(image=None, snapshot=None, env=None, auto_stop=30, auto_delete=120) -> Sandbox
   create_snapshot(name=None, base_image=None, on_logs=None) -> {name, id, created}
-    the base box: python:3.12 + bun, reused by name on later runs
-  Sandbox.code(src) / .run(argv_or_str, cwd, env, timeout) / .upload(bytes, path)
-    .download(path) / .upload_tree(src, dest, exclude) / .download_tree(src, dest, exclude)
-    / .delete() / .id
-  python3 -m bench.remote --check      offline: is the SDK installed and the key found
-  python3 -m bench.remote --self-test  create, run, upload/download, delete (spends credit)
+  Sandbox.code(src) / .run(argv_or_str, cwd, env, timeout) / .upload(bytes, path) / .download(path)
+    / .upload_tree(src, dest, exclude) / .download_tree(src, dest, exclude) / .delete() / .id
+  python3 -m bench.remote --check (SDK + key), --self-test (create/run/transfer/delete; spends)
 
 INVARIANTS
-  - The key comes from `DAYTONA_API_KEY`, else `~/.config/code-tui/{env,.env}` - the same
-    files `tui/src/launcher.ts` loads. It is never read from the repo and never logged.
-  - `create()` always sets an auto-stop interval, so a crash in the caller cannot leave a
-    sandbox billing indefinitely. `delete()` is idempotent.
-  - `run()` takes argv, never a shell line: it is joined with `shlex.join` and executed with
-    `cwd`, so a caller's argument cannot become shell syntax by accident.
-  - Nothing here writes inside the repo, imports `bench.agent`, or needs the TUI.
+  key from DAYTONA_API_KEY, else ~/.config/code-tui/{env,.env} (the files launcher.ts loads); never
+  read from the repo, never logged.
+  create() always sets an auto-stop interval so a caller crash cannot bill forever; delete() is idempotent.
+  run() takes argv, never a shell line: joined with shlex.join and executed with cwd, so a
+  caller's argument cannot become shell syntax.
 
 WHERE TO CHANGE
-  Key discovery / environment ... api_key()
-  Sandbox sizing and lifetime ... create()
-  The reusable base snapshot .... create_snapshot(), SNAPSHOT_NAME / BUN_VERSION
-  Transfers .................... upload_tree / download_tree
+  key / environment ............ api_key();  sandbox sizing and lifetime ... create()
+  the reusable base snapshot .... create_snapshot(), SNAPSHOT_NAME / BUN_VERSION
+  transfers .................... upload_tree / download_tree
 """
 from __future__ import annotations
 

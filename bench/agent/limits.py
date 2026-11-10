@@ -1,43 +1,27 @@
 """limits: the capability set and output meter the harness grants one run.
 
 WHAT IT IS
-  Scope = model action space, not a prompt suggestion: allowed typed verbs, program spawn,
-  calls/turn, per-turn output ceiling, final-report ceiling. ToolLoop filters provider tools from
-  it and refuses a call outside it; the model cannot reach a capability the task did not grant.
-  TokenMeter counts what the model emitted (completion, reasoning, content, tool arguments) per
-  turn and per run: output tokens are the cost the prompt cannot see.
+  Scope = model action space, not a prompt suggestion: allowed typed verbs, program spawn, calls/turn, per-turn output
+  ceiling, final-report ceiling. TokenMeter counts what the model emitted per turn and per run (the cost the prompt cannot see).
 
 ENTRY POINTS
-  Scope(tools=None, allow_exec=True, max_calls_per_turn=8, max_turn_tokens=8192,
-        max_report_chars=4000, effort="low", effort_policy="fixed", inline_finish=False)
-    .allows(name) -> bool             the one capability check the loop uses
-    .filter_tools(specs) -> list      provider specs this scope permits
-    .turn_tokens(budget_output) -> int  per-turn max_tokens
-    .clip_report(text) -> str         final-report ceiling
-  TokenMeter().add(usage, content, tool_calls) -> dict   one per-turn row
-    .as_dict() -> dict                run totals + reasoning_share
-  effort_for(scope, surprise) -> str | None   fixed effort, or low only on a surprise
+  Scope(tools=None, allow_exec=True, max_calls_per_turn=8, max_turn_tokens=8192, max_report_chars=4000, effort="low",
+        effort_policy="fixed", inline_finish=False);  .allows(name) -> bool;  .filter_tools(specs) -> list;
+        .turn_tokens(budget_output) -> int;  .clip_report(text) -> str
+  TokenMeter().add(usage, content, tool_calls) -> dict (one per-turn row);  .as_dict() -> dict (run totals + reasoning_share)
+  effort_for(scope, surprise) -> str | None = fixed effort, or low only on a surprise.
 
 INVARIANTS
-  enforcement = 2 layers: provider tools filtered before the model sees them; _dispatch refuses
-  a name the model still invents. Filtering alone is not a limit.
-  allow_exec=False removes exec even when tools names it; the process gate does not substitute
-  for a capability gate.
-  max_turn_tokens=0 -> use the run budget, never unlimited: the provider always receives a
-  finite max_tokens. Default 8192 = ceiling, not target.
-  effort_for -> None only for the adaptive policy on a non-surprising turn; the client then
-  omits reasoning_effort (provider's cheapest setting). Fixed policy always returns scope.effort.
-  inline_finish=True = production one-call finish: a final_answer cell runs the goal check in the
-  same turn and accepts immediately when it passes, even if the cell printed; full printed text
-  stays on _OBS. Default False keeps the staged protocol and its tests as the benchmark contract.
-  TokenMeter reads provider usage; never estimates. Missing field = 0, so an offline fake still
-  produces a row.
-
+  enforcement = 2 layers: provider tools filtered before the model sees them and _dispatch refuses an invented name.
+  allow_exec=False removes exec even when tools names it; the process gate does not substitute for a capability gate.
+  max_turn_tokens=0 -> the run budget, never unlimited: the provider always receives a finite max_tokens; 8192 = ceiling, not target.
+  effort_for -> None only for the adaptive policy on a non-surprising turn (client omits reasoning_effort); fixed returns scope.effort.
+  inline_finish=True = one-call finish: a final_answer cell runs the goal check in the same turn and accepts when it passes,
+  even if the cell printed (text stays on _OBS); False keeps the staged protocol as the benchmark contract.
+  TokenMeter reads provider usage, never estimates; a missing field = 0, so an offline fake still produces a row.
 WHERE TO CHANGE
-  default action space ....... Scope.tools, Scope.allow_exec
-  per-turn output ceiling .... Scope.max_turn_tokens, config.scope
-  reasoning policy ........... Scope.effort_policy, effort_for
-  meter fields ............... TokenMeter.add, as_dict
+  default action space ... Scope.tools, Scope.allow_exec   per-turn output ceiling ... Scope.max_turn_tokens, config.scope
+  reasoning policy ... Scope.effort_policy, effort_for   report ceiling ... Scope.max_report_chars, .clip_report
 """
 from __future__ import annotations
 

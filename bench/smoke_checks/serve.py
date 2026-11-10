@@ -1,32 +1,26 @@
-"""serve: the TUI-server verb — where the state root is, what server.json says, and when it refuses.
+"""serve: the TUI-server verb: where the state root is, what server.json says, when it refuses.
 
 WHAT IT IS
-  One fixture state root and one kernel child, five cases over the whole contract:
+  One fixture state root and one kernel child, five cases:
     no server.json            -> ok:false, code "no_server", a `use` naming start
-    a live pid + /health      -> the status fields parse (pid, port, healthy, model, effort,
-                                 concurrency, checks, stale, changed, queue)
+    a live pid + /health      -> status parses pid, port, healthy, model, effort, concurrency, checks, stale, changed, queue
     server.log                -> logs tails the last `tail` lines and reports shown/total
     a running task            -> stop refuses with "busy" and the live pid is untouched
-    the worker's own ancestor -> stop refuses because that pid hosts this very worker
+    the worker's own ancestor -> stop refuses because that pid hosts this worker
 
 ENTRY POINTS
   run(check)   called by bench/smoke.py::main after revert; builds and drops its own fixtures
 
 INVARIANTS
-  - No case may spawn a real server: `status`/`logs` only read, and every `stop`/`start` case
-    asserts a refusal so nothing is signalled. `/health` is a fake HTTP server inside this
-    process, answering a canned payload.
-  - The state root comes from CODE_TUI_STATE_ROOT through `Kernel(env=...)`, so the case proves
-    the documented formula instead of a test-only path: it computes the expected state dir as
-    <root>/workspaces/<sha256(realpath(cwd))[:16]> and compares.
-  - The live pid is a sibling sleeping process, never this process: this process is an ancestor
-    of the kernel child, which is the separate case at the end.
+  no case spawns a real server: status/logs only read and every stop/start case asserts a
+  refusal; /health is a fake in-process HTTP server returning a canned payload.
+  the state root comes from CODE_TUI_STATE_ROOT through Kernel(env=...); the expected dir is
+  <root>/workspaces/<sha256(realpath(cwd))[:16]>.
+  the live pid is a sibling sleeping process, never this process.
 
 WHERE TO CHANGE
-  The state-dir formula .......... kernel/run_prelude.py::_serve_state (launcher.ts, server.ts
-                                    and stop.ts carry the same formula)
-  The refusal codes .............. the same fragment: no_server, no_log, busy, unknown_action
-  The reported fields ............ kernel/run_prelude.py::_serve_facts
+  state-dir formula .. kernel/run_prelude.py::_serve_state (launcher.ts, server.ts, stop.ts carry
+  the same formula);  refusal codes .. no_server, no_log, busy, unknown_action;  fields .. _serve_facts
 """
 from __future__ import annotations
 

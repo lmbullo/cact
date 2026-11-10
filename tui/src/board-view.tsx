@@ -1,53 +1,32 @@
-/**
- * Board view: the masthead, the task sections and one line per task.
+/** Board view: the masthead, the task sections and one line per task.
  *
  * WHAT IT IS
- *  The presentational half of the board: a `TopBar` (brand, workspace, model and live
- *  counts), a `Rule` (the one hairline in the app, carrying the status note above the
- *  prompt), a `SectionHeader` (status dot, word and count, no rule of its own), a `TaskRow`
- *  (`#handle`, prompt, right-aligned steps/tokens/cache and wall time) and `EmptyState`.
+ * The presentational half of the board: TopBar, Rule (the one hairline), SectionHeader, TaskRow, LogHeader, EmptyState.
  *
  * ENTRY POINTS
- *  TopBar({workspace, model, effort, running, total, connected, stale, width})
- *  Rule({width, note})                    the hairline above the prompt box
- *  SectionHeader({status, count})         `● running  1`
- *  TaskRow({task, selected, width, now, onSelect})  one task, one line, click or key selects
- *  LogHeader({task, width, now, check})  the run log's status line: state, then how it ended
- *  EmptyState({width})                    the first screen, before any task exists
+ * TopBar({workspace, model, effort, running, total, connected, stale, width})
+ * Rule({width, note})  hairline above the prompt box   SectionHeader({status, count})  `● running  1`
+ * TaskRow({task, selected, width, now, onSelect})  one task, one line, click or key selects
+ * LogHeader({task, width, now, check})  the run log's status line: state, then how it ended
+ * EmptyState({width})  the first screen, before any task exists
  *
  * INVARIANTS
- *  - Every row is exactly one line high with `flexShrink: 0`: the parent decides how many
- *    rows fit (list-model.followSelection), so a row must never grow or wrap.
- *  - Status text and dots come from theme.STATUS, so the board and the log cannot disagree.
- *  - The section label already carries the state, so a row never repeats the status word:
- *    a column of prompts reads as prose, not as a table with a redundant column.
- *  - Selection is a `›` marker plus ink contrast, not a background fill and not a second
- *    marker on the right (keeps the palette calm and the row quiet).
- *  - The handle is the short `#suffix` of the task id; the full id stays in the state root
- *    and the HTTP API, where diagnosis needs it.
- *  - Telemetry (steps, tokens in/out, the run's price, cache rate, wall time) is right-aligned
- *    and the prompt gives up room, so the eye can scan one column of numbers without the prompt
- *    jittering the layout. Every number comes from list-model.taskCounters/taskUsage/taskCost,
- *    which is also what the log header formats: a row and a log cannot disagree about a task.
- *  - A row is one line at any width: once the prompt is gone, the tail sheds its wall time (the
- *    least load-bearing part) and then clips, so a 60-column frame never wraps a row.
- *  - The log header is the single source of the run's state: dot, word and handle come from
- *    `Task.status`, once. The log body never repeats them (log-view.isSilent) and the header
- *    does not repeat the prompt either — that block is the first thing in the log, in full.
- *  - The header also owns how a settled run ended — `Task.stop`, `Task.errors` and the last
- *    failed `check` — so the closing summary block carries only the cell count. A live run
- *    prints none of it: there is no stop reason yet and the counters must not move.
+ * every row is exactly one line high (flexShrink: 0); the parent decides how many fit (list-model.followSelection).
+ * status text and dots come from theme.STATUS; the section label carries the state, so a row never repeats the status word.
+ * selection = a `›` marker plus ink contrast, not a background fill and not a second marker; the handle is the `#suffix`.
+ * telemetry (steps, tokens, price, cache, wall) is right-aligned from list-model.taskCounters/taskUsage/taskCost; a row and a log agree.
+ * a row sheds its wall time, then clips, once the prompt is gone: a 60-column frame never wraps a row.
+ * the log header is the single source of the run's state: Task.status once, plus Task.stop/Task.errors/last check when settled;
+ * a live run prints no stop reason, and the closing block carries only the cell count.
  *
  * WHERE TO CHANGE
- *  The top bar's contents or priority .... TopBar
- *  Row contents or wording ............... TaskRow, SectionHeader, LogHeader
- *  Section grouping or ordering .......... list-model.buildRows / orderTasks (not here)
- *  Colours ............................... theme.ts
+ * top bar contents/priority ... TopBar   row contents/wording ... TaskRow, SectionHeader, LogHeader   colours ... theme.ts
+ * section grouping/ordering ... list-model.buildRows / orderTasks (not here)
  */
 import { TextAttributes } from "@opentui/core";
 import type { RGBA } from "@opentui/core";
 import { C, STATUS, clip, shortPath } from "./theme";
-import { taskCounters, taskDuration, taskHandle, taskProgress } from "./list-model";
+import { taskCounters, taskDuration, taskHandle } from "./list-model";
 import type { CheckState, Task, TaskStatus } from "./types";
 
 /**
@@ -142,62 +121,7 @@ export function SectionHeader({ status, count }: { status: TaskStatus; count: nu
   );
 }
 
-/**
- * One task row: the `›` marker, the short handle, the prompt, then right-aligned telemetry.
- * The prompt absorbs the slack so steps/tokens/cache and wall time line up down the board,
- * and the row never repeats the status word — its section already said it.
- */
-export function TaskRow(props: {
-  task: Task;
-  selected: boolean;
-  width: number;
-  now: number;
-  onSelect: (id: string) => void;
-}) {
-  const { task, selected, width, now, onSelect } = props;
-  const handle = `#${taskHandle(task.id)}`;
-  const marker = selected ? "›" : " ";
-  const progress = taskProgress(task);
-  const age = taskDuration(task, now);
-  const errors = task.errors && task.errors > 0 ? `${task.errors} err` : "";
-  // The box pads one column each side, so the row shares `width - 2`:
-  // `marker handle  prompt …    telemetry  errors`.
-  const content = Math.max(0, width - 2);
-  const lead = 1 + 1 + handle.length + 2; // marker, space, handle, two-space gap
-  const limit = Math.max(0, content - lead); // the most the tail may take, prompt or not
-  const errorPart = errors ? `  ${errors}` : "";
-  const telemetry = (withAge: boolean) =>
-    [progress, withAge ? age : ""].filter(Boolean).join("  ");
-  // The prompt gives up room first; on a frame too narrow even for that, the tail sheds the
-  // wall time before anything is clipped — one line at 60 columns, never a wrapped row.
-  // The error count rides only when the frame can hold it: at that width the counters are all
-  // that is left, and gluing a clipped `3 err` onto them would read as one number.
-  const errText = errorPart.length > limit ? "" : errorPart;
-  let shown = telemetry(Boolean(age));
-  if (shown.length + errText.length > limit && age) shown = telemetry(false);
-  if (shown.length + errText.length > limit) {
-    shown = clip(shown, Math.max(0, limit - errText.length));
-  }
-  const right = `${shown}${errText}`;
-  const room = content - lead - right.length - 1; // one column of air before the numbers
-  const prompt = room >= 6 ? clip(task.prompt, room) : "";
-  const fill = Math.max(0, content - lead - prompt.length - right.length);
-  return (
-    <box
-      style={{ height: 1, width: "100%", flexShrink: 0, paddingLeft: 1, paddingRight: 1 }}
-      onMouseDown={() => onSelect(task.id)}
-    >
-      <text>
-        <span fg={selected ? C.accent : C.quiet}>{marker}</span>
-        <span fg={selected ? C.faint : C.quiet}>{` ${handle}  `}</span>
-        <span fg={selected ? C.text : C.dim}>{prompt}</span>
-        <span>{" ".repeat(fill)}</span>
-        <span fg={C.quiet}>{shown}</span>
-        {errText ? <span fg={C.red}>{errText}</span> : null}
-      </text>
-    </box>
-  );
-}
+export { TaskRow } from "./board-task";
 
 /**
  * The run log's status line, and the log's one source of truth for the run's state: the dot,

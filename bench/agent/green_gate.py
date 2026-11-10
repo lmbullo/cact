@@ -1,32 +1,24 @@
-"""green_gate: one cell to finish after the check plan passes; a refusal otherwise.
+"""green_gate: stop the verification tail after a passing check plan.
 
 WHAT IT IS
-  Production inline-finish gate. After a green `checks`, exactly one code cell may carry
-  `final_answer`; mutation reopens the gate; a foreign gate command is refused with the plan.
+  Post-plan gate: after a green `checks`, further `exec` and `checks` are refused. Code cells and
+  typed mutations stay open; a mutation closes the gate and the next checks decides again.
 
 ENTRY POINTS
-  GreenGate()  .passed / .cells / .invalidate() / .note_checks(cell) / .refusal(name) /
-               .suffix(name)   gate state + one-line decisions
-  exec_commands(args) -> list[str]        command lines an `exec` argument would run
-  is_plan_command(args, specs) -> bool   one of them is exactly a plan command
-  is_foreign_gate(args, specs) -> bool   one of them is a gate the plan lacks
-  EXEC_REFUSAL, CELL_REFUSAL, FOREIGN_GATE_NOTE, PASS_NOTE ... exact model-facing text
+  GreenGate()  .passed / .cells / .invalidate() / .note_checks(cell) / .refusal(name) / .suffix(name)
+  exec_commands(args) -> list[str]; plan_command(args, specs); is_plan_command(args, specs);
+  is_foreign_gate(args, specs)
+  EXEC_REFUSAL, FOREIGN_GATE_NOTE, PASS_NOTE ... exact model-facing text
 
 INVARIANTS
-  passed opens only on a `checks` payload with ok=true AND >=1 row; empty plan is never green;
-  a mutation closes it; nothing else does.
-  refusal never crashes and never stops the run: refusal() -> (GREEN, notice); caller writes it
-  to CallRecord; the model may still reply with the report.
-  cells = code cells spent after the pass; exactly one may carry the finish; resets only on a
-  fresh passing `checks` (note_checks).
-  is_foreign_gate compares whole words per command line; a plan command is never foreign, so
-  running the plan is always allowed.
+  passed opens only on a checks payload with ok=true and >=1 row; a mutation closes it.
+  only exec/checks are refused; code/python are never refused; cells counts them for the record.
+  is_foreign_gate compares whole words per command; a plan command is never foreign.
 
 WHERE TO CHANGE
-  refusal wording ............... EXEC_REFUSAL / CELL_REFUSAL / FOREIGN_GATE_NOTE,
-                                  GreenGate.refusal, GreenGate.suffix
-  foreign-gate test ............. GATE_WORDS, is_foreign_gate
-  open/close ................... GreenGate.note_checks / invalidate (called from tool_loop.py)
+  refusal text ... EXEC_REFUSAL / FOREIGN_GATE_NOTE / GreenGate.refusal / .suffix
+  foreign gate ... GATE_WORDS / is_foreign_gate
+  open/close .... GreenGate.note_checks / invalidate (called from tool_calls.py)
 """
 from __future__ import annotations
 
@@ -37,8 +29,6 @@ from .stops import GREEN
 EXEC_REFUSAL = ("[runtime] the check plan already passes for this tree; no more "
                 "processes or gates. Reply with the final report, or call "
                 "final_answer(...) inside a silent code cell.")
-CELL_REFUSAL = ("[runtime] the check plan already passes; this is the final "
-                "turn. Reply with the report now.")
 FOREIGN_GATE_NOTE = ("[observation] that command is a gate outside this task's check "
                      "plan; the plan is authoritative. Run checks() instead of adding "
                      "a lint/typecheck/format gate.")
@@ -47,7 +37,7 @@ GATE_WORDS = frozenset({"typecheck", "tsc", "lint", "clippy", "fmt", "format", "
 
 
 class GreenGate:
-    """The post-plan gate state: whether the plan passed, and how many cells have spent it."""
+    """The post-plan gate state: whether the plan passed, and how many code cells ran after it."""
 
     def __init__(self) -> None:
         """Start closed: nothing is known to pass until a `checks` says so."""
@@ -69,15 +59,14 @@ class GreenGate:
             self.cells = 0
 
     def refusal(self, name: str) -> tuple[str, str] | None:
-        """`(GREEN, notice)` when `name` is refused under a passing plan; None when it may run."""
+        """`(GREEN, notice)` when `name` is a verification call under a passing plan."""
         if not self.passed:
+            return None
+        if name in ("code", "python"):
+            self.cells += 1
             return None
         if name in ("exec", "checks"):
             return GREEN, EXEC_REFUSAL
-        if name in ("code", "python"):
-            self.cells += 1
-            if self.cells > 1:
-                return GREEN, CELL_REFUSAL
         return None
 
     def suffix(self, name: str) -> str:
@@ -98,12 +87,20 @@ def exec_commands(args: dict) -> list[str]:
     return commands
 
 
+def plan_command(args: dict, specs):
+    """The check spec an `exec` argument exactly runs, or None."""
+    commands = [" ".join(command.split()) for command in exec_commands(args)]
+    if len(commands) != 1 or not specs:
+        return None
+    for spec in specs:
+        if " ".join(str(spec.cmd).split()) == commands[0]:
+            return spec
+    return None
+
+
 def is_plan_command(args: dict, specs) -> bool:
     """True when an `exec` argument is exactly one of the check plan's commands."""
-    if not specs:
-        return False
-    wanted = {" ".join(str(spec.cmd).split()) for spec in specs}
-    return any(" ".join(command.split()) in wanted for command in exec_commands(args))
+    return plan_command(args, specs) is not None
 
 
 def is_foreign_gate(args: dict, specs) -> bool:

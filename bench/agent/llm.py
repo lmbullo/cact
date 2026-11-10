@@ -1,8 +1,8 @@
 """llm: the model client: one chat-completions POST, retries, an on-disk reply cache.
 
 WHAT IT IS
-  Client.complete() posts the OpenAI-shaped body to {base}/chat/completions (DeepSeek by
-  default), returns a flat dict. No streaming: one turn = one blocking call.
+  Client.complete() posts the OpenAI-shaped body to {base}/chat/completions (DeepSeek by default)
+  and returns a flat dict.  No streaming: one turn = one blocking call.
 
 ENTRY POINTS
   LLMError
@@ -13,18 +13,14 @@ ENTRY POINTS
       -> {content, reasoning, tool_calls, usage, latency_ms, finish, local_cache}
 
 INVARIANTS
-  cache key = sha256(request body + model); file bench/.cache/llm/<key>.json. Hit returns
-  local_cache=True, latency_ms=0 (a local hit in traces). BENCH_LLM_CACHE moves the directory;
-  cache=False disables it (the TUI).
-  retries: 4 attempts, linear sleep 1.5s x attempt, only for 429/5xx and network errors. Anything
-  else raises LLMError with response detail; callers turn that into a stop reason.
-  tools passed through verbatim; the loops own the specs.
-  finish == "length" -> reply truncated; the loops treat it as TRUNCATED. Do not swallow it.
+  cache key = sha256(request body + model); file bench/.cache/llm/<key>.json.  A hit returns
+  local_cache=True and latency_ms=0.  BENCH_LLM_CACHE moves the directory; cache=False disables it.
+  retries: 4 attempts, linear sleep 1.5s x attempt, only for 429/5xx and network errors; anything
+  else raises LLMError with response detail, which callers turn into a stop reason.
+  tools pass through verbatim (the loops own the specs); finish == "length" means truncated and the loops treat it as TRUNCATED.
 
 WHERE TO CHANGE
-  provider quirks (headers, body fields) ... Client.complete
-  retry policy ............................ the loop inside Client.complete
-  cache semantics ......................... key computation + CACHE_DIR
+  provider quirks (headers, body fields) .. Client.complete;  retry policy .. its loop;  cache semantics .. key + CACHE_DIR
 """
 from __future__ import annotations
 

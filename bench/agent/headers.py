@@ -1,47 +1,27 @@
-"""headers: the header index: every module's contract as data; one implementation, both halves.
+"""headers: every module's contract as data; the kernel `guide()` verb and the CLI gate.
 
 WHAT IT IS
-  Every source module opens with WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE.
-  This module turns those headers into structure, so "which module owns this?" is a query,
-  not a full-source read:
-    index(root)     every source file as a row: path, language, lines, title, sections
-    guide(root, q)  ranked rows + rendered text; also the `guide()` kernel verb
-    render(rows)    the text a model reads
-    problems(root)  rows whose header is missing a section (the gate)
-    SECTIONS        the four names, in order
-  Kernel cells cannot import bench (cwd=task workspace, interpreter=bare `python3 -c`).
-  kernel/prelude.py ships this file's source as KERNEL_HEADERS, execs it into a private
-  _HEADERS namespace, exposes `guide()`; verb and `python3 bench/guide.py` run identical code.
+  Header = WHAT IT IS / ENTRY POINTS / INVARIANTS / WHERE TO CHANGE; this module parses it.
+  index(root) rows: path, language, lines, header_lines, title, sections, missing.
 
 ENTRY POINTS
   python3 bench/guide.py [--query TEXT | --module PATH | --json | --check]
   guide(root=None, query=None, path=None, limit=None, chars=20000, offset=0, headers=0) -> dict
-  index(root=None) -> list[dict];  problems(root=None)
-  header(path) -> (header text, line count);  split(text) -> (title, sections)
-  render(rows, chars=20000) -> str
+  index(root=None) -> list[dict];  problems(root=None);  in_scope(path) -> bool
+  header(path) -> (text, lines);  split(text) -> (title, sections);  render(rows, chars=20000)
 
 INVARIANTS
-  read-only: opens source, returns dicts; no writes, no network, no bench import, no state
-  between calls. Same tree -> same answer.
-  documented = docstring / leading block comment with >=1 section; problems() demands all four.
-  Unparsable or half-written module -> empty header, never an exception.
-  SKIP_DIRS = contract surface: node_modules, __pycache__, fixture trees (fixtures, *_fixtures,
-  *_hidden), generated/archived evidence (bench/ws, bench/traces, bench/archive, bench/.tmp,
-  bench/.cache), dist, build, any dot-directory. Those are inputs/outputs, not maintained code.
-  guide(query) scoring: term x3 in path+title, x1 elsewhere; sort by score then path; cap at
-  limit. Deterministic.
-  headers=N inlines full headers of the top N hits: one call = owner + contract.
-  unknown path -> ok:false/not_found + nearest paths (list: existing ones rendered, rest noted);
-  no-match query -> ok:true + note (a miss is an answer about the index; the note names the fallback).
-  render truncates each section at chars, always keeps the path line.
-  _OPEN pins builtins.open at import: the kernel prelude's journaling open() runs after this
-  source and must not reroute a header read through the mutation journal.
+  read-only: no writes, no network, no bench import, no state; unparsable -> empty header, no raise.
+  MAX_HEADER=24; HEADER_ALLOW={path: lines} shrink-only; in_scope = bench/*.py, bench/agent/**,
+  tui/src/**, tui/python/**; other paths ungated.  kernel/prelude.py execs this source.
+  SKIP_DIRS skips node_modules, __pycache__, fixtures, traces/ws, dist, build, dot-dirs.
+  guide: x3 path+title, x1 else; score then path; miss -> ok:false/not_found; no match -> note.
+  render truncates at chars; _OPEN pins builtins.open: the journal must not reroute reads.
 
 WHERE TO CHANGE
-  header grammar (sections, delimiters) ... SECTIONS, _SECTION_RE, _QUOTES, split()
-  indexed files .......................... SKIP_DIRS, LANGUAGES, _walk()
-  ranking, limits, truncation ............ guide(), render()
-  CLI .................................... bench/guide.py
+  grammar .... SECTIONS, _SECTION_RE, _QUOTES, split()   walk ... SKIP_DIRS, LANGUAGES, _walk()
+  budget ..... MAX_HEADER, HEADER_ALLOW, in_scope(), problems()
+  ranking .... guide(), render();  kernel verb ... kernel/prelude.py;  CLI ... bench/guide.py
 """
 from __future__ import annotations
 
@@ -57,6 +37,12 @@ SKIP_DIRS = frozenset({
 })
 LANGUAGES = {".py": "python", ".ts": "ts", ".tsx": "tsx", ".js": "javascript"}
 READ_LIMIT = 400_000
+MAX_HEADER = 24
+_SCOPE_DIRS = ("bench/agent/", "tui/src/", "tui/python/")
+# Shrink-only: a module whose header is not yet <= MAX_HEADER lines is listed here with its
+# current line count. Convert it, then delete the row; never add one and never raise a count.
+# An entry that reaches MAX_HEADER lines is reported as stale until it is removed.
+HEADER_ALLOW = {}
 _QUOTES = ('"' * 3, "'" * 3)
 _SECTION_RE = re.compile(
     r"^[ \t]*(WHAT IT IS|ENTRY POINTS|INVARIANTS|WHERE TO CHANGE)[ \t]*$", re.M)
@@ -88,6 +74,14 @@ def header(path):
         return "", lines
     rows = [line.strip().lstrip("*").strip() for line in match.group(1).splitlines()]
     return "\n".join(rows), lines
+
+
+def in_scope(path):
+    """True when `path` has a header budget: bench/*.py, bench/agent/**, tui/src/**, tui/python/**."""
+    text = str(path).replace(os.sep, "/")
+    if text.startswith("bench/") and text.endswith(".py") and text.count("/") == 1:
+        return True
+    return text.startswith(_SCOPE_DIRS)
 
 
 def split(text):
@@ -128,6 +122,7 @@ def index(root=None):
             "path": os.path.relpath(full, base).replace(os.sep, "/"),
             "language": LANGUAGES[os.path.splitext(full)[1]],
             "lines": lines,
+            "header_lines": len(text.splitlines()) if text else 0,
             "title": title,
             "sections": sections,
             "missing": [name for name in SECTIONS if not sections.get(name)],
@@ -136,9 +131,21 @@ def index(root=None):
 
 
 def problems(root=None):
-    """Rows whose header is missing a section. Empty means the tree conforms."""
-    return [{"path": row["path"], "missing": row["missing"]}
-            for row in index(root) if row["missing"]]
+    """Rows breaking the header contract, each with `header_lines`; empty means conforming."""
+    gaps = []
+    for row in index(root):
+        count = row["header_lines"]
+        allowed = HEADER_ALLOW.get(row["path"])
+        gated = in_scope(row["path"])
+        over = gated and count > (MAX_HEADER if allowed is None else allowed)
+        stale = gated and allowed is not None and count <= MAX_HEADER
+        reason = "missing sections" if row["missing"] else (
+            "header over %d lines" % MAX_HEADER if over else "stale allowlist entry")
+        if row["missing"] or over or stale:
+            gaps.append({"path": row["path"], "missing": row["missing"],
+                         "header_lines": count, "budget": MAX_HEADER,
+                         "allowed": allowed, "reason": reason})
+    return gaps
 
 
 def render(rows, chars=20000):

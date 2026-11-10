@@ -1,30 +1,26 @@
 """snapshot: freeze a tree into a sha256 manifest, clone it, diff against it.
 
 WHAT IT IS
-  `freeze(src, dst)` copies a tree and writes `dst.manifest.json`; `changed(run)` reports
-  added/modified/deleted relative to that manifest; `clone(src, dst)` copies without a
-  manifest for throwaway runs. `bench/ws/tui-base` is frozen this way from a working tree; the
-  committed copies live under `bench/archive/results/ws/` and the directory itself is generated
-  output.
+  freeze(src, dst) copies a tree and writes dst.manifest.json; changed(run) reports
+  added/modified/deleted relative to that manifest; clone(src, dst) copies without a manifest for
+  throwaway runs.  bench/ws/tui-base is frozen this way from a working tree; committed copies live
+  under bench/archive/results/ws/.
 
 ENTRY POINTS
   python3 -m bench.snapshot freeze SRC DST     clone, then write DST.manifest.json
   python3 -m bench.snapshot clone  SRC DST     copy only (no manifest)
   python3 -m bench.snapshot diff   DST         added/modified/deleted vs DST.manifest.json
   manifest(root, write=True) -> dict           {"root": ..., "files": {rel: sha256[:16]}}
-  clone(src, dst)                              copy, ignoring generated dirs, symlinking node_modules
-  changed(run) -> {"added", "modified", "deleted"}
+  clone(src, dst)  copy, ignoring generated dirs, symlinking node_modules;  changed(run) -> {added, modified, deleted}
 
 INVARIANTS
-  - Hashes are truncated to 16 hex chars; the manifest is the reference state, so a frozen
-    workspace must never be edited in place — clone it first (`snapshot.clone`).
-  - `IGNORE_PARTS` is the one list of generated directories, used by both the copytree
-    filter and `_files`; a new generated directory goes there once or every diff is noise.
-  - Symlinks are skipped: a symlinked fixture will not appear in the manifest.
+  hashes are truncated to 16 hex chars; the manifest is the reference state, so a frozen workspace is never edited in place -- clone it first.
+  IGNORE_PARTS is the one list of generated directories, used by the copytree filter and _files; a
+  new generated directory goes there once or every diff is noise.
+  symlinks are skipped and do not appear in the manifest.
 
 WHERE TO CHANGE
-  Ignore rules ......... IGNORE_PARTS
-  Manifest format ...... `manifest`, `changed` (used by bench/live.py)
+  ignore rules .. IGNORE_PARTS;  manifest format .. manifest, changed (used by bench/live.py)
 """
 from __future__ import annotations
 

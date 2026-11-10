@@ -1,29 +1,19 @@
-"""stops: the stop vocabulary: the only names a RunResult, turn record or trace summary may carry.
-
+"""stops: the stop vocabulary: names a RunResult, turn record or trace summary may carry.
 WHAT IT IS
-  One constant per way a run (or one call) can end, plus STOPS, the tuple that pins the set.
-  Nothing executes. Shared vocabulary of the finish protocol (finish_flow.py), the post-plan gate
-  (green_gate.py) and the turn machine (tool_loop.py), which re-exports every name so
-  `from .tool_loop import DONE` keeps working.
-
+  One constant per way a run or one call can end, plus STOPS, the tuple that pins the set.
+  Nothing executes; tool_loop.py re-exports every name.
 ENTRY POINTS
   DONE, VERIFIED, STEP_LIMIT, WALL_LIMIT, STAGED, GOAL_UNMET, TRUNCATED, BAD_ARGS,
   LLM_FAILED, TOKEN_LIMIT, SKEPTIC_UNMET, GREEN, NEEDS_INPUT ... one string per stop reason
   STOPS ... every stop name, in reader order
-
 INVARIANTS
-  a new stop reason = this module + STOPS in the same edit; smoke_checks/turns.py pins the exact
-  set, so a name in only one place fails the gate.
-  a stop is data: written to CallRecord.stop / turn record / trace summary, never printed as the
-  only explanation; the `notice` beside it carries readable text.
-  GREEN = the one call-level name: post-plan gate refusal (green_gate.py), not a run end. STAGED,
-  GOAL_UNMET, SKEPTIC_UNMET, NEEDS_INPUT continue the run.
-
+  a new stop reason = this module + STOPS in the same edit; smoke_checks/turns.py pins the set.
+  a stop is data: CallRecord.stop / turn record / trace summary; `notice` carries readable text.
+  GREEN = the one call-level name (post-plan gate refusal); STAGED, GOAL_UNMET, SKEPTIC_UNMET,
+  NEEDS_INPUT continue the run.
 WHERE TO CHANGE
-  new stop reason ......... this module, then the returning branch (finish_flow.py for the finish
-                            protocol, tool_loop.ToolLoop.run for the budget)
-  readers of the vocabulary records.py (CallRecord.stop), tool_loop.ToolLoop.run,
-                            bench/task_journal.py, TUI stop display (tui/src)
+  new stop reason ......... this module, then finish_flow.py or tool_loop.ToolLoop.run
+  vocabulary readers ...... records.py, tool_loop.ToolLoop.run, bench/task_journal.py, tui/src
 """
 from __future__ import annotations
 

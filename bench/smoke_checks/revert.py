@@ -1,7 +1,7 @@
-"""revert: `revert_check` answers "does this test fail without the fix?" — and stays safe.
+"""revert: revert_check answers "does this test fail without the fix?" and stays safe.
 
 WHAT IT IS
-  One temp git repo, its own kernel child, and five cases over the whole contract:
+  One temp git repo, its own kernel child, five cases:
     a fix that fails on HEAD     -> broken_test false, restored true, the file is the fixed one
     a test that passes on HEAD   -> broken_test true (it verifies nothing about the change)
     a dirty unrelated path       -> refusal naming it, and nothing is swapped
@@ -12,20 +12,15 @@ ENTRY POINTS
   run(check)   called by bench/smoke.py::main after gates; builds and drops its own repo
 
 INVARIANTS
-  - It writes only under tempfile.mkdtemp; `git init`/`commit` run through `-c user.email` /
-    `-c user.name`, so it needs no global config and cannot touch a real repo.
-  - The two versions of `calc.py` differ in LENGTH on purpose: a bytecode cache validates on the
-    source's size and mtime, and two same-size versions swapped inside one second would let a
-    stale `.pyc` answer for the original. This is a real property of the verb, not a test trick.
-  - Every case asserts the bytes on disk after the call: `restored` is the verb's claim and the
-    file is the proof, which is the whole point of the verb.
-  - The read-only case runs last and lifts its own chmod: it deliberately leaves the file
-    unwritable for the length of one call.
+  writes only under tempfile.mkdtemp; git init/commit run through -c user.email / -c user.name, so
+  it needs no global config and cannot touch a real repo.
+  the two versions of calc.py differ in LENGTH: a bytecode cache validates on size and mtime, so two
+  same-size versions swapped inside one second would let a stale .pyc answer.
+  every case asserts the bytes on disk after the call; restored is the claim, the file is the proof.
+  the read-only case runs last and lifts its own chmod.
 
 WHERE TO CHANGE
-  The swap/restore contract .......... kernel/prelude_verbs.py::revert_check (_revert_run,
-                                       _revert_git, _revert_dirty, _revert_digest)
-  The refusal codes .................. the same fragment: untracked, dirty_tree, restore_failed
+  swap/restore contract .. kernel/prelude_verbs.py::revert_check (_revert_run, _revert_git, _revert_dirty, _revert_digest);  refusal codes .. untracked, dirty_tree, restore_failed
 """
 from __future__ import annotations
 

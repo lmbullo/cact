@@ -1,28 +1,19 @@
 """gates: process gates, recall, restart reaping, apply/commit and the state card.
-
 WHAT IT IS
-  The checks that watch the boundaries: splice's typed path and undo, a quoted `>` treated as
-  an argument, redirection/sed/git-checkout/mutating-spawn refusals and the one refusal that
-  still carries `exit_code`, mutations allowed in scratch and refused in the workspace, a
-  plan check answered from `check_cache`, recall() with its handle and across a restart, the
-  orphan group reaped on restart, apply/commit, the read cap, and the state card's coverage
-  claims (digested, raw, blank line, fold) plus final_answer in both shapes.
-
+  Boundary checks: typed splice/undo, quoted `>` as argument, redirection/sed/git-checkout/
+  mutating-spawn refusals, scratch vs workspace mutations, plan cache, recall handles, orphan
+  reaping, apply/commit, read cap, state-card claims, final_answer in both shapes.
 ENTRY POINTS
   run(check, root, kernel)   called by bench/smoke.py::main after verbs
-
 INVARIANTS
-  - The refusal checks assert that the mutation did NOT happen, not only that it was refused.
-  - The orphan check starts a real `sleep` in its own session and expects the restart to
-    reap it; that is the one place a failing check can leave a process behind, so it is
-    reaped by the kernel, never by this process.
-  - The state-card checks build Cells by hand: no kernel call, no file open.
-
+  refusal checks assert the mutation did NOT happen, not only that it was refused.
+  the orphan check starts a real `sleep` and expects restart to reap it; kernel reaps it.
+  state-card checks build Cells by hand: no kernel call, no file open.
 WHERE TO CHANGE
-  A gate or hint ......................... kernel/run_prelude.py `_mutating_command` / `_HINT`
-  Orphan reaping ......................... kernel/process.py `_reap_orphans`
-  The state card ......................... bench/agent/state_card.py `render_observation`
-  final_answer ........................... kernel/driver.py
+  gate/hint ......... kernel/run_prelude.py `_mutating_command` / `_HINT`
+  orphan reaping .... kernel/process.py `_reap_orphans`
+  state card ........ bench/agent/state_card.py `render_observation`
+  final_answer ...... kernel/driver.py
 """
 from __future__ import annotations
 

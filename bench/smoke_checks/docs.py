@@ -1,54 +1,26 @@
-"""docs: the checked documents stay pointers, never dead links and never copies of each other.
+"""docs: checked documents stay pointers, never dead links or copies.
 
 WHAT IT IS
-  Two offline checks over the documents an agent reads before editing: `AGENTS.md`, `README.md`,
-  `docs/*.md`, `tui/README.md`, `bench/HARD.md`, plus the generated `docs/agent/` pages.
-    paths   every backticked path a document names resolves in the tree, so a rename cannot
-            leave a pointer that costs the next agent a wasted `read`.
-    unique  no paragraph of one document is copied verbatim into another. Each fact has one
-            owner (AGENTS.md: invariants/recipes/failures; README.md: identity and evals;
-            docs/run.md: invocation; docs/architecture.md: runtime shape; tui/README.md: the wire
-            contract; HARD.md: measured evidence; docs/agent/: generated module facts), and
-            duplicated prose drifts until one copy lies, which an agent cannot detect by reading
-            either copy.
-    agent   the generated `docs/agent/` set is byte-identical to what the module headers render,
-            every indexed source module appears on exactly one page, and no page exceeds its
-            100-line budget.
+  Offline checks over DOCS:  paths every backticked path resolves;  unique no paragraph of one
+  document is copied verbatim into another;  agent docs/agent is byte-identical to the headers
+  and covers each module once within 100 lines.
 
 ENTRY POINTS
-  run(check)                        called by bench/smoke.py::main after `index`
-  DOCS                              the documents that are checked
+  run(check), DOCS                  group entry after `index`; the documents that are checked
   _agent_docs()                     agent-page drift, coverage and line-budget report
   _references(text)                 backticked spans that look like a repository path
   _resolves(ref, doc_dir, paths)    whether a reference names something in the tree
-  _paragraphs(text)                 the comparison unit for the unique check
-  _copies(docs)                     (text, path, path) for every paragraph two documents share
+  _paragraphs(text), _copies(docs)  comparison unit; paragraph pairs two documents share
 
 INVARIANTS
-  - Only path-shaped spans are checked: a span needs a `/`, and its last segment must carry a
-    dot (a file) or end with `/` (a directory). Field lists (`ok/op/kind`) and fractions
-    (`3/5`) are prose, not paths.
-  - A reference resolves if it exists from the repo root, from the document's own directory
-    (`src/...` in `tui/README.md`), or as a suffix of any tracked path: headings and prose say
-    `kernel/prelude.py` where the real path is `bench/agent/kernel/prelude.py`.
-  - Trees in `_GENERATED` are excluded twice: a reference that points into one (`bench/ws/`,
-    `bench/evals/results/`, `bench/archive/results/`, `tui/node_modules/`) is skipped, and so is
-    the walk that collects the paths. Those directories are generated or append-only evidence,
-    absent in a fresh clone, and not part of the contract. Committed trees are checked like any
-    other path, including `bench/archive/legacy/`: a rename there is still a dead pointer.
-  - The unique check compares whole paragraphs after whitespace normalisation and only above
-    `_DUP_CHARS`, so a shared sentence (`You are the reader.`) or a shared code block is not a
-    copy. It is exact: paraphrased duplication is a review call, not a gate.
-  - Read-only: it reads the documents and lists the tree; it writes nothing and needs no key.
-  - The generated agent pages are regenerated from `bench/agent/headers.py` and
-    `bench/index.py`; the gate compares bytes, so a header edit without regeneration fails.
+  only path-shaped spans: `/` plus a dot or trailing `/` in the last segment; field lists and
+  fractions are prose; a ref resolves from the root, the document dir, or a path suffix.
+  _GENERATED trees are skipped as refs and in the walk; archive/legacy is still checked;
+  unique compares normalised paragraphs of >= _DUP_CHARS (200), exact copies only; read-only,
+  no key; a header edit without pages regeneration fails the byte comparison.
 
 WHERE TO CHANGE
-  The documents that are checked ....... DOCS
-  What counts as a path reference ...... _references()
-  Agent-page drift and coverage ........ _agent_docs(); generator in bench/agent/pages.py
-  Which trees are generated ............ _GENERATED (not this file's callers)
-  The copy threshold ................... _DUP_CHARS, _paragraphs()
+  DOCS; _references(); _agent_docs() and bench/agent/pages.py; _GENERATED; _DUP_CHARS.
 """
 from __future__ import annotations
 

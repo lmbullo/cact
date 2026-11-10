@@ -1,44 +1,25 @@
-/**
- * Theme: the palette, the status vocabulary and the text helpers.
+/** Theme: the palette, the status vocabulary and the text helpers.
  *
  * WHAT IT IS
- *  The values every view shares: the editorial palette (`C`), the one-word status table, the
- *  prompt-row cap, and the pure helpers that turn a payload into terminal text (`clip`,
- *  `oneLine`, `lineCount`, `toolArgs`, `wrapText`). No JSX, no state, no I/O.
+ * The values every view shares: the editorial palette (C), the one-word status table, the prompt-row cap, and the pure
+ * helpers that turn a payload into terminal text. No JSX, no state, no I/O.
  *
  * ENTRY POINTS
- *  C                        RGBA palette; explicit hex, so the host terminal scheme cannot change
- *                           the ink. There is no background role: the terminal's own colour is
- *                           the ground, and nothing in the app paints over it.
- *  STATUS                   TaskStatus -> {word, mark, color}; one word and one dot per row
- *  PROMPT_MAX_ROWS          how tall the prompt grows before it scrolls internally
- *  clip(text, width)        collapse to one line and ellipsize to a width
- *  oneLine(text)            collapse whitespace, drop CRs
- *  lineCount(text)          non-empty line count, for the `(+42L)` tail
- *  wrapText(text, width)    keep every line: word-wrap a log block (the prompt, the summary)
- *  toolArgs(code)           the arguments of a python cell's first call, for the run log
- *  shortPath(path)          `$HOME` -> `~`, so the top bar stays one line
- *  elapsed(ms)              compact duration: `0.8s`, `12s`, `2m04s`, `1h02m`
+ * C = RGBA palette (hex literals, no background role); STATUS = TaskStatus -> {word, mark, color}; PROMPT_MAX_ROWS.
+ * clip(text, width) collapse to one line + ellipsize;  oneLine(text) collapse whitespace, drop CRs;  lineCount(text) non-empty lines.
+ * wrapText(text, width) word-wrap, keeps every line (prompt, summary);  toolArgs(code) first call's arguments.
+ * shortPath(path) `$HOME` -> `~`;  elapsed(ms) compact duration `0.8s`, `12s`, `2m04s`, `1h02m`;  SUMMARY_MAX_LINES.
  *
  * INVARIANTS
- *  - Pure functions only: a view may call them in render, and they are cheap enough for that.
- *  - Palette values are hex literals, never ansi() slots (see the README's TUI contract).
- *  - No background colour anywhere: the screen is drawn on whatever the terminal is set to,
- *    so a light theme, a dark theme or a wallpaper-tinted one all read the same way.
- *  - Colour is the exception, not the decoration: `accent` for the brand, the prompt cursor
- *    and the selection marker; the three status hues for a dot or a single word; everything
- *    else is the grey ramp (`text` -> `dim` -> `faint` -> `quiet`) so prose stays readable.
- *  - `clip` always collapses whitespace first, so a multi-line payload never breaks a row.
- *  - `wrapText` never loses a line: it only breaks long ones, and past `SUMMARY_MAX_LINES`
- *    it reports the overflow instead of dropping it silently.
- *  - `elapsed` never returns a negative or a fractional second past 10s; the bar is not a stopwatch.
+ * pure functions only: a view may call them in render and they are cheap enough for that.
+ * palette values are hex literals, never ansi() slots; no background colour anywhere (the terminal paints the ground).
+ * colour is the exception: accent for brand/cursor/selection, three status hues for a dot or one word, the rest is the grey ramp.
+ * clip collapses whitespace first, so a multi-line payload never breaks a row; wrapText never loses a line, past SUMMARY_MAX_LINES it reports overflow.
+ * elapsed never returns a negative or fractional second past 10s; the bar is not a stopwatch.
  *
  * WHERE TO CHANGE
- *  A colour ......................... C
- *  A status word, dot or colour ..... STATUS
- *  How a payload is shortened ........ clip / oneLine / lineCount / toolArgs
- *  How a final summary wraps ......... wrapText / SUMMARY_MAX_LINES
- *  The top bar's duration grammar .... elapsed
+ * a colour ... C   a status word/dot/colour ... STATUS   payload shortening ... clip/oneLine/lineCount/toolArgs
+ * summary wrap ... wrapText/SUMMARY_MAX_LINES   duration grammar ... elapsed
  */
 import { RGBA } from "@opentui/core";
 import type { TaskStatus } from "./types";

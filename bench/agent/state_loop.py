@@ -1,71 +1,27 @@
-"""state_loop: StateLoop: ToolLoop + state-card observations. Production default
-(`CODE_TUI_MODE=state`, `--mode state`, config.build).
+"""state_loop: StateLoop: ToolLoop + state-card observations; production default (CODE_TUI_MODE=state).
 
 WHAT IT IS
-  Same action space as ToolLoop (typed verbs + `python` escape hatch); a cell's result renders as
-  a state card, not a transcript. Card: state_card.render_observation. This module: the loop that
-  calls it, per-turn card budget, coverage ledger, fold.
-  Pieces by module:
-    state_card.py    the card: [s], [obs]/[page], [data], [note]/[error], [stderr]/[stdout],
-                     [result], [read]
-    state_text.py    clipping, digesting, the _OBS[n] pointer, per-key [data] clip
-    state_ranges.py  merge_ranges / gaps / covered / delivered_ranges
-    here             the loop, the coverage ledger, the fold
-  coverage: every read() records delivered line ranges in Cell.reads; renderer turns that + the
-  text it rendered into (card, visible ranges); card prints `[read] path ranges/total (unread:
-  holes)`. Guidance, not a finish gate: reads through run()/open() are valid and untracked; the
-  loop never opens a workspace file to check.
-  fold: when the provider's real prompt count crosses context_budget, old turns are replaced by
-  one regenerated `[session state]` message built from the journal (changed files, diffs,
-  coverage, check results).
+  Same action space as ToolLoop (typed verbs + `python`); a cell result is a state card, not a transcript.
+  state_card.py renders the card; state_text.py clips/digests/_OBS[n]; state_ranges.py ranges; state_fold.py fold.
+  fold: real prompt tokens cross context_budget -> old turns replaced by one `[session state]` message from the journal.
 
 ENTRY POINTS
-  STATE_RULES = TOOL_RULES + the state-card contract; `[plan]` = durable RunState plan, set by
-                the `plan` tool
-  CARD_BUDGET ... per-turn card budget a StateLoop gets by default
-  StateLoop(..., output_budget, context_budget, keep_messages)
-    ._observe(cell, steps) -> str    render_observation + turn card budget + coverage
-    ._compact(messages)              fold old turns into one `[session state]` message
-    verifier / last_check            cheap check rendered as the `[check]` line
-  re-exported for existing callers, defined in split modules:
-    render_observation ......................... state_card.py
-    clip / compact_stream / clip_card / digest_card / digest / data_block ... state_text.py
-    merge_ranges / gaps / covered / numbered_lines / numbered_lines_by_path /
-    delivered_ranges ........................... state_ranges.py
-    session_state_message / cut_index .......... state_fold.py
-
+  STATE_RULES = TOOL_RULES + the card contract (keep in sync with _observe); `[plan]` = durable RunState plan
+  from the `plan` tool; CARD_BUDGET = default per-turn card budget; verifier / last_check = the `[check]` line.
+  StateLoop(..., output_budget, context_budget, keep_messages); ._observe(cell, steps) -> str; ._compact(messages).
+  re-exported: render_observation; clip/compact_stream/clip_card/digest_card/digest/data_block; merge_ranges/gaps/
+  covered/numbered_lines/numbered_lines_by_path/delivered_ranges; session_state_message/cut_index.
 INVARIANTS
-  typed observation delivered whole. Cell.envelope = the normalized contract
-  (bench/agent/envelope.py); the card renders page/data, never applies the output digest (the
-  verb already paged). Only python/exec output is digested, and the digest names its _OBS[n].
-  structured data never dropped by a size gate: every field rendered; a large value clipped and
-  named in one `[data] clipped:` note, so closest/context, dirs_matched, argv/results and a
-  refusal's signature/valid reach the model.
-  coverage = data, never a guess. Loop opens no file, inverse-parses nothing: a verbatim typed
-  card delivered exactly Cell.reads; a digested python/exec card delivered only the numbered
-  lines the card kept.
-  restart never silent: Cell.restarted -> explicit `[state] kernel restarted` line on top of the
-  kernel's stderr message; a lost namespace never looks like a normal cell.
-  card budget per turn: first card gets the whole card_budget; the rest share what is left; a
-  clipped card recomputes its visible ranges. An error or check line is never cut.
-  _compact cuts only on an assistant tool-call boundary: no tool result orphaned from its call.
-  chg: and [diff] both come from the kernel journal (kernel/prelude.py::_commit):
-  Cell.changed = path list, Cell.deltas = per-path unified diff, Cell.delta = joined text for the
-  card. _note_cell reads structured deltas; never re-parses the text.
-  [check] = ToolLoop's last_check (Verifier cheap subset, refreshed after a mutating cell at most
-  every 20s); card renders one line: `pass`, or `<spec> : <first failing line>` with full output
-  named as the _OBS[n] handle ToolLoop queued.
-  compaction triggers on real prompt token count at context_budget (config sets 85% of the 1M
-  window), never a character estimate; cuts only on a tool-call boundary.
-
+  typed observation delivered whole: card renders page/data, only python/exec output is digested to _OBS[n].
+  structured data never dropped by size: every field rendered, a large value clipped and named in `[data] clipped:`.
+  coverage = data, never a guess: the loop opens no file; a card delivered exactly Cell.reads (digested: kept lines).
+  restart never silent: Cell.restarted -> `[state] kernel restarted` line above the kernel's stderr message.
+  card budget per turn: first card whole, rest share what is left; an error or check line is never cut.
+  _compact cuts only on an assistant tool-call boundary; trigger = real prompt tokens at context_budget (85% of window).
+  chg:/[diff] come from Cell.changed/deltas/delta (kernel _commit), never re-parsed; [check] = last_check cheap run.
 WHERE TO CHANGE
-  card layout / error-line selection .... state_card.render_observation, state_text._ERROR_LINE
-  read ranges / what counts as read ..... state_ranges.delivered_ranges, _observe (keep them
-                                          data; never re-read the file)
-  compaction policy ..................... _compact, state_fold.cut_index, keep_messages,
-                                          context_budget, config.COMPACT_AT / COMPACT_AT_TOKENS
-  fold message text ..................... state_fold.session_state_message
-  model-facing card contract ........... STATE_RULES (keep in sync with _observe)
+  card layout / error line ... state_card.render_observation, state_text._ERROR_LINE   read ranges ... state_ranges.delivered_ranges, _observe
+  compaction ... _compact, state_fold.cut_index, keep_messages, context_budget, config.COMPACT_AT   fold text ... state_fold.session_state_message
 """
 from __future__ import annotations
 
