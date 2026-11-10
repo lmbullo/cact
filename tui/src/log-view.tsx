@@ -2,8 +2,8 @@
  *
  * WHAT IT IS
  * PromptView opens the log with the task's prompt; EventView renders one TaskEvent as one `key=value` row, each value
- * clipped to the columns its key leaves; LogView stacks rows in a sticky-bottom scrollbox. Kinds: cell.start, turn
- * (only a rejected/staged-finish notice), final (closing summary), error, stderr, log; lifecycle kinds, cell.end, check silent.
+ * clipped to the columns its key leaves; LogView stacks rows in a sticky-bottom scrollbox. Kinds: turn (only a
+ * rejected/staged-finish notice), final (closing summary), error, stderr, log; lifecycle kinds, cell.start/end, check silent.
  *
  * ENTRY POINTS
  * PromptView({task, width, origin})  opening block `kind=prompt chars=N` + prompt   lastCheck(events)  newest verdict
@@ -12,18 +12,18 @@
  *
  * INVARIANTS
  * state has one source: board-view.LogHeader renders Task.status live (counters, stop reason, last failed check); the body never repeats it.
- * a row is machine-first: no glyphs or sentences, only field=value (`kind`,`tool`,`args`,`code`,`notice`,`text`,`cells`,`lines`).
- * truncation is per field (theme.ts clip adds `…`), never per row: a long value cannot push its key or a later field off.
+ * the body is the two things the reader keeps: the prompt it started from and the summary it ended with; tool calls are silent.
+ * a row is machine-first (field=value only); truncation is per field (`theme.clip` adds `…`), never per row.
  * only the prompt and the final summary wrap, whole and unclipped, capped at SUMMARY_MAX_LINES then `(+N more lines)`.
  * a turn row shows only with a notice; an unknown kind prints `kind=` only; a finished task gets no `kind=waiting` row.
  * no row contains `─` (the prompt box owns the only hairline); a start time gives every row a dim `+12s` gutter.
- * a closing row carries only the cell count: one fact, one place.
+ * a closing row carries only its kind: the summary below it is the fact.
  * WHERE TO CHANGE
  * kind switch ... EventView + types.ts   silent kinds ... isSilent   last verification ... lastCheck
  * fields ... `fields(...)` in EventView/PromptView   clip ... FIELD_CAP/DEFAULT_CAP/KvRow
  * column/gutter/scroll ... INDENT, `since`, LogView's <scrollbox> props
  */
-import { C, lineCount, oneLine, toolArgs, wrapText } from "./theme";
+import { C, lineCount, oneLine, wrapText } from "./theme";
 import type { CheckState, Task, TaskEvent, TaskStatus } from "./types";
 import {
   INDENT,
@@ -53,8 +53,8 @@ export function lastCheck(events: TaskEvent[]): CheckState | null {
 }
 
 /**
- * One event, one row — except the final event, which is its `kind=final cells=N` row plus the
- * agent's summary wrapped over as many rows as it needs. The full payload still reaches the model.
+ * One event, one row — except the final event, which is its `kind=final` row plus the agent's
+ * summary wrapped over as many rows as it needs. The full payload still reaches the model.
  */
 export function EventView({
   event,
@@ -74,17 +74,6 @@ export function EventView({
 
   if (isSilent(event)) return null;
 
-  if (kind === "cell.start") {
-    // A typed call shows its tool and its JSON arguments; a code cell shows its first call's
-    // arguments only. Either way: no cell index, no counters, no colour.
-    const typed = event.tool && event.tool !== "code" && event.tool !== "python";
-    const body = typed
-      ? oneLine(JSON.stringify(event.args ?? {}))
-      : toolArgs(event.code ?? "");
-    const row = fields(["kind", "cell"], ["tool", event.tool ?? "code"], [typed ? "args" : "code", body]);
-    return <KvRow gutter={gutter} fit={fit} fields={row} color={C.dim} />;
-  }
-
   // A turn is normally silent (tool output is never rendered), but the loop records a
   // `notice` when it rejects or stages a finish: that reason must stay visible.
   if (kind === "turn") {
@@ -99,18 +88,19 @@ export function EventView({
     // The values take their colour from the task's status once the run has settled, and only
     // from the event when it has not: the header already spells the state out.
     const color = finalColor(status ?? String(data.status ?? ""));
-    // Only the cell count: the header above already prints the stop reason, the error count and
-    // the last check's verdict, and a number or a word never appears twice on this screen.
-    const row = fields(["kind", "final"], ["cells", data.calls !== undefined ? String(data.calls) : undefined]);
+    // Only the kind: the header above already prints the stop reason, the error count and the
+    // last check's verdict, and the summary below is the fact the reader came for.
+    const row = fields(["kind", "final"]);
 
     // The summary is the editor's note and closes the bracket the prompt opened: same row shape,
-    // one blank row, the same INDENT column, wrapped to the pane and never clipped.
+    // one blank row, the same INDENT column, the same body ink, wrapped to the pane and never
+    // clipped. It is the one thing a trusted loop reports back, so it is set like the prompt.
     const { lines, dropped } = wrapText(event.text ?? "", Math.max(8, fit - INDENT.length));
 
     return (
       <box style={{ flexDirection: "column", flexShrink: 0, paddingTop: 1, paddingBottom: 1 }}>
         <KvRow gutter={gutter} fit={fit} fields={row} color={color} />
-        {lines.length > 0 ? bodyRows(lines, dropped, C.dim) : null}
+        {lines.length > 0 ? bodyRows(lines, dropped, C.text) : null}
       </box>
     );
   }

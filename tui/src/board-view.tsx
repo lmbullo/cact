@@ -87,19 +87,23 @@ export function TopBar(props: {
   );
 }
 
-/** The one hairline; the optional `note` is sacrificed to keep the line on one row. */
-export function Rule({ width, note }: { width: number; note?: string }) {
+/**
+ * The one hairline; the optional `note` and `lead` sit at its left end and are sacrificed to
+ * keep the line on one row. `lead` is the live spinner, so the prompt box shows work at the
+ * top-left of its frame.
+ */
+export function Rule({ width, note, lead }: { width: number; note?: string; lead?: string }) {
   // Keep the hint visible: shrink the rule instead of letting the note run off-screen,
   // and clip the note itself when the status and scroll counters together outgrow it.
-  const hint = note ? ` ${clip(note, Math.max(0, width - 1))}` : "";
-  const line = "─".repeat(Math.max(0, width - hint.length));
-  return note ? (
+  const leadPart = lead ? `${lead} ` : "";
+  const hint = note ? ` ${clip(note, Math.max(0, width - 1 - leadPart.length))}` : "";
+  const line = "─".repeat(Math.max(0, width - leadPart.length - hint.length));
+  return (
     <text fg={C.rule}>
+      {leadPart ? <span fg={C.accent}>{leadPart}</span> : null}
       {line}
-      <span fg={C.faint}>{hint}</span>
+      {hint ? <span fg={C.faint}>{hint}</span> : null}
     </text>
-  ) : (
-    <text fg={C.rule}>{line}</text>
   );
 }
 
@@ -132,12 +136,13 @@ export { TaskRow } from "./board-task";
  * task has no stop reason yet, so its line keeps exactly the shape it had before this existed.
  *
  * The live counters (steps, tokens in/out, the run's price, duration, cache hit rate, context
- * window) sit on the right and are the only place those numbers are printed — the log body
- * never repeats them and the board row formats the same `taskCounters` parts. The prompt is not
- * repeated (the log opens with it in full), and `esc/enter: back` is never dropped — a log you
- * cannot leave is a trap. The extras are dropped from the tail as the terminal narrows, so the
- * order is by priority: the reason is fixed, the failing check keeps a third of the line, then
- * the hint, then the counters from the tail.
+ * window) follow the left cluster and are the only place those numbers are printed — the log
+ * body never repeats them and the board row formats the same `taskCounters` parts. Everything
+ * on the row is anchored left: nothing is pushed to the terminal's right edge. The prompt is
+ * not repeated (the log opens with it in full), and `esc/enter: back` is never dropped — a log
+ * you cannot leave is a trap. The extras are dropped from the tail as the terminal narrows, so
+ * the order is by priority: the reason is fixed, the failing check keeps a third of the line,
+ * then the hint, then the counters from the tail.
  */
 export function LogHeader(props: {
   task: Task;
@@ -188,11 +193,13 @@ export function LogHeader(props: {
   }
   const right = joined(rightParts);
 
-  // What the counters left over is the check's, clipped to it; the gap soaks up the rest.
-  const room = content - left.length - reasonRoom - right.length - 3;
+  // What the counters left over is the check's, clipped to it.
+  // Reserve the fixed gap and the check part's own two-column prefix as well.
+  const room = content - left.length - reasonRoom - right.length - 4;
   const checkText = failure && room > 1 ? clip(failure, room) : "";
   const checkPart = checkText ? `  ${checkText}` : "";
-  const gap = Math.max(1, content - left.length - reasonRoom - checkPart.length - right.length);
+  // Everything is anchored left: a fixed two-column gap, never the rest of the line.
+  const gap = 2;
   return (
     <box style={{ height: 1, flexShrink: 0, flexDirection: "row", paddingLeft: 1, paddingRight: 1 }}>
       <text>

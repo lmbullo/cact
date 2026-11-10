@@ -8,6 +8,7 @@
  * ENTRY POINTS
  *  useBoardViewState(options) -> { toast, notify, promptRow, promptRows, setPromptRow,
  *                                  setPromptRows, measurePrompt, selectTask, openLog, closeLog }
+ *  useSpinner(active) -> one braille frame while a run is live, else ""
  *
  * INVARIANTS
  *  - `selectTask` always clears the event buffer and its `seq` watermark: a new task may reuse
@@ -20,10 +21,10 @@
  * WHERE TO CHANGE
  *  Selection and view ... selectTask, openLog, closeLog
  *  Toast lifetime ........ notify, toastTimer (3500 ms)
- *  Prompt measure ........ measurePrompt, promptRow, promptRows
+ *  Prompt and spinner .... measurePrompt, promptRow, promptRows, SPINNER_FRAMES, useSpinner
  */
 import type { TextareaRenderable } from "@opentui/core";
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { TaskEvent } from "./types";
 
 /** What `useBoardViewState` needs: the boxes and refs its callbacks read and write. */
@@ -66,6 +67,23 @@ export interface BoardViewState {
   openLog: (id: string | null) => void;
   /** Back to the task list; stop streaming events for the task we leave. */
   closeLog: () => void;
+}
+
+/** The braille spinner frames, one per interval tick. */
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** One animated spinner cell while `active`, or "" when nothing is running. */
+export function useSpinner(active: boolean): string {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setFrame(0);
+      return;
+    }
+    const timer = setInterval(() => setFrame((index) => (index + 1) % SPINNER_FRAMES.length), 100);
+    return () => clearInterval(timer);
+  }, [active]);
+  return active ? SPINNER_FRAMES[frame]! : "";
 }
 
 /** Own the selection, the view switch, the toast and the prompt measure for one board. */

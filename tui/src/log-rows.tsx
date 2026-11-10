@@ -15,8 +15,8 @@
  * INVARIANTS
  *  - Truncation is per field (theme.clip adds `…`), never per row: a long value cannot push its
  *    key or a later field off the line.
- *  - Only the prompt and the final summary wrap, whole and unclipped, capped then counted.
- *  - A lifecycle kind, `cell.end` and `check` are silent: the header already says the state.
+ *  - Only the prompt and the final summary wrap, whole, unclipped, capped then counted.
+ *  - Lifecycle kinds, `cell.start/end` and `check` are silent: the header says the state.
  *  - No row contains `─`: the prompt box owns the only hairline.
  *
  * WHERE TO CHANGE
@@ -35,8 +35,6 @@ export const INDENT = "    ";
 
 /** The largest a field's value may grow on its own; the row's share usually clips it sooner. */
 export const FIELD_CAP: Record<string, number> = {
-  args: 80,
-  code: 80,
   notice: 80,
   text: 120,
   prompt: 120,
@@ -79,10 +77,13 @@ export function fields(...entries: Array<[string, string | number | undefined | 
  * would print the same fact twice — and print `queued` forever above a run that left it behind.
  * A `check` event is the same rule: it is how the run's verification ended, which the header
  * says in one row (lastCheck), not something the run's timeline prints.
+ * `cell.start` is the loop's transcript — which verb ran with which arguments. The loop is
+ * trusted and tool calls are not what the reader keeps: the body stays the prompt, a notice
+ * when the loop refused a finish, an error, and the final summary.
  * A turn is silent unless it carries a notice (see noticeOf).
  */
 export function isSilent(event: TaskEvent): boolean {
-  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.end" || event.kind === "check") {
+  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.start" || event.kind === "cell.end" || event.kind === "check") {
     return true;
   }
   if (event.kind === "turn") return noticeOf(event) === "";

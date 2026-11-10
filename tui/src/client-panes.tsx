@@ -8,7 +8,8 @@
  * ENTRY POINTS
  *  PromptBox(props)    the one prompt box, rendered outside the view switch
  *  HeaderBar(props)    the log header wrapper; zero rows on the board, one on the log
- *  RuleAbove(props)    the one hairline: status note + prompt overflow marker
+ *  RuleAbove(props)    the prompt box's top line: live spinner + status note
+ *  RuleBelow(props)    the prompt box's bottom line
  *  ContentPane(props)  board rows, the empty state, or the live log of the open task
  *
  * INVARIANTS
@@ -140,11 +141,23 @@ export function HeaderBar({
   );
 }
 
-/** The one hairline above the prompt: the status note plus the prompt's overflow marker. */
-export function RuleAbove({ width, note }: { width: number; note: string }) {
+/**
+ * The prompt box's top line: the live spinner, then the status note and the overflow marker,
+ * all anchored left against the rule.
+ */
+export function RuleAbove({ width, note, spinner }: { width: number; note: string; spinner?: string }) {
   return (
     <box style={{ height: 1, flexShrink: 0 }}>
-      <Rule width={width} note={note} />
+      <Rule width={width} note={note} lead={spinner} />
+    </box>
+  );
+}
+
+/** The prompt box's bottom line: the same hairline, closing the box on the terminal's last row. */
+export function RuleBelow({ width }: { width: number }) {
+  return (
+    <box style={{ height: 1, flexShrink: 0 }}>
+      <Rule width={width} />
     </box>
   );
 }

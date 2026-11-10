@@ -7,7 +7,7 @@
  * ENTRY POINTS
  * C = RGBA palette (hex literals, no background role); STATUS = TaskStatus -> {word, mark, color}; PROMPT_MAX_ROWS.
  * clip(text, width) collapse to one line + ellipsize;  oneLine(text) collapse whitespace, drop CRs;  lineCount(text) non-empty lines.
- * wrapText(text, width) word-wrap, keeps every line (prompt, summary);  toolArgs(code) first call's arguments.
+ * wrapText(text, width) word-wrap, keeps every line (prompt, summary).
  * shortPath(path) `$HOME` -> `~`;  elapsed(ms) compact duration `0.8s`, `12s`, `2m04s`, `1h02m`;  SUMMARY_MAX_LINES.
  *
  * INVARIANTS
@@ -18,7 +18,7 @@
  * elapsed never returns a negative or fractional second past 10s; the bar is not a stopwatch.
  *
  * WHERE TO CHANGE
- * a colour ... C   a status word/dot/colour ... STATUS   payload shortening ... clip/oneLine/lineCount/toolArgs
+ * a colour ... C   a status word/dot/colour ... STATUS   payload shortening ... clip/oneLine/lineCount
  * summary wrap ... wrapText/SUMMARY_MAX_LINES   duration grammar ... elapsed
  */
 import { RGBA } from "@opentui/core";
@@ -145,30 +145,3 @@ export function elapsed(ms: number): string {
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/**
- * A cell parsed down to the one line the log shows: only the arguments of the
- * call, since the log keeps tool calls to their bare arguments.
- */
-export function toolArgs(code: string): string {
-  const lines = code
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return "(empty cell)";
-  const flat = oneLine(lines[0]!);
-  const call = flat.match(/^([A-Za-z_][\w.]*)\s*\(/);
-  if (!call) return flat;
-  const start = call[0].length;
-  let depth = 1;
-  let end = start;
-  for (; end < flat.length; end++) {
-    const ch = flat[end];
-    if (ch === "(") depth += 1;
-    else if (ch === ")") {
-      depth -= 1;
-      if (depth === 0) break;
-    }
-  }
-  return flat.slice(start, end).trim();
-}

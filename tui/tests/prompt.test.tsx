@@ -114,16 +114,16 @@ test("enter inserts a newline and the prompt grows row by row", async () => {
 });
 
 /**
- * The rows of the prompt box: from the row carrying the caret marker to the bottom of the
- * screen (the prompt is the last thing on it). Continuation rows are indented to line up
- * under the text.
+ * The rows of the prompt body: from the row carrying the caret marker to the box's bottom
+ * hairline. Continuation rows are indented to line up under the text.
  */
 function promptBlock(frame: string): string[] {
   const rows = frame.split("\n");
   const start = rows.findIndex((line) => line.includes("\u203a"));
   expect(start).toBeGreaterThan(-1);
-  const block = rows.slice(start);
-  while (block.length > 0 && block[block.length - 1].trim() === "") block.pop();
+  const end = rows.findIndex((line, index) => index > start && line.includes("\u2500"));
+  expect(end).toBeGreaterThan(start);
+  const block = rows.slice(start, end);
   expect(block.length).toBeGreaterThan(0);
   return block;
 }

@@ -11,8 +11,8 @@
  *                          focusRow, scroll, visible, note }
  *
  * INVARIANTS
- *  - Layout is always [log header, log only] / content / hairline / prompt; the prompt box
- *    never moves between views, so it never remounts.
+ *  - Layout is always [log header, log only] / content / prompt top line / prompt /
+ *    prompt bottom line; the prompt box never moves between views, so it never remounts.
  *  - The window follows the selection through `followSelection` and never recentres.
  *  - The note is quiet chrome: connected and nothing to say = "", and the order only shows
  *    while it differs from the default board.
@@ -67,7 +67,7 @@ export interface LayoutInput {
 export interface BoardLayout {
   /** Width of the hairline; one column short of the terminal so it never wraps. */
   ruleWidth: number;
-  /** Height of the prompt box, capped at PROMPT_MAX_ROWS. */
+  /** Height of the prompt body (between its two lines), capped at PROMPT_MAX_ROWS. */
   promptHeight: number;
   /** The "2/5" cursor marker, or "" while the prompt fits. */
   overflow: string;
@@ -116,9 +116,9 @@ export function boardLayout({
   const showingLog = view === "log" && selectedTask !== null;
   const logTask = showingLog ? selectedTask : null;
 
-  // Top bar, the breath under it, the hairline, the prompt, and the log's status line
-  // when it is showing.
-  const rowBudget = Math.max(1, height - 3 - promptHeight - (showingLog ? 1 : 0));
+  // Top bar, the breath under it, the prompt's top and bottom lines, the prompt body, and
+  // the log's status line when it is showing.
+  const rowBudget = Math.max(1, height - 4 - promptHeight - (showingLog ? 1 : 0));
   const focusRow = selectedRowIndex(listRows, selected);
   // Carry the window from the previous render; it only moves when the reader moves the
   // selection (one row at an edge) or the followed task's index changes under it.

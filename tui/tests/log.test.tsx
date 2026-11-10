@@ -1,32 +1,30 @@
 /**
- * Live log: the prompt it started from, one line per event, and the agent's summary in full.
+ * Live log: the prompt it started from, then the agent's summary in full. Nothing between.
  *
  * WHAT IT IS
  *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
  *  over the WebSocket exactly as python/worker.py emits them. The frame must open with the whole
- *  prompt, show one line per event, keep a long `run(...)` argument on a bounded row, keep the
- *  prompt box where it was, and close on the summary block with the agent's whole summary wrapped
- *  below it in the same column the prompt used.
+ *  prompt, add no row for the loop's transcript (tool calls, lifecycle, checks), keep the prompt
+ *  box where it was, and close on the summary block wrapped below a `kind=final` row in the same
+ *  column the prompt used.
  *
  *  The run's state is rendered exactly once — by the log header, from `Task.status` — so the
  *  body must never repeat the status word and the lifecycle events must add no row at all. The
  *  header also says how a settled run ended (stop reason, error count, last failed check), which
- *  is why the closing summary block carries only its cell count.
+ *  is why the closing summary block carries only its kind.
  *
  * ENTRY POINTS
  *  App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)`
- *  captureCharFrame() for text, captureSpans() when a span (not a row) is the subject
+ *  captureCharFrame() for text
  *
  * INVARIANTS
  *  - Event fixtures mirror the `emit({...})` payloads of python/worker.py; a new kind added
  *    there without a case here means the panel can drop it silently.
- *  - A row is machine-first: only `field=value` tokens (kind, tool, args, code, notice, text,
- *    cells, lines) and one elapsed gutter. No glyphs, no prose, so a row can be grepped; the
- *    tests read the same fields a reader would.
- *  - Truncation is per field: a long argument is clipped inside its own value and never pushes
- *    its key or a later field off the row, so the digest assertions are load-bearing. The two
- *    exceptions are the opening prompt and the final summary, which are wrapped, never clipped,
- *    and asserted whole.
+ *  - A row is machine-first: only `field=value` tokens (kind, notice, text, lines) and one
+ *    elapsed gutter. No glyphs, no prose, so a row can be grepped; the tests read the same
+ *    fields a reader would.
+ *  - Tool calls are the loop's transcript, not the reader's: a `cell.start` renders no row, so
+ *    the body stays the prompt, a notice, an error and the summary.
  *  - Exactly one status word per log is the invariant: the header's. The same holds for the
  *    counters (steps, tokens in/out, cache rate, context window): the header prints them once
  *    and the closing block repeats none of them. How the run ended — the stop reason, the error
@@ -37,8 +35,8 @@
  *
  * WHERE TO CHANGE
  *  How an event renders .... src/log-view.tsx (EventView)
- *  Which kinds are silent .. src/log-view.tsx (isSilent)
- *  The opening block ........ src/log-view.tsx (PromptView)
+ *  Which kinds are silent .. src/log-rows.tsx (isSilent)
+ *  The opening block ........ src/log-rows.tsx (PromptView)
  *  The status line .......... src/board-view.tsx (LogHeader)
  *  The last verdict .......... src/log-view.tsx (lastCheck) + the `check` event
  *  A new event kind ........ python/worker.py emit(), src/types.ts, a case here
@@ -86,9 +84,9 @@ const settle = async () => {
   await new Promise((r) => setTimeout(r, 60));
 };
 
-test("live log renders one line per event and truncates long payloads", async () => {
+test("live log opens on the prompt and closes on the summary", async () => {
   const setup = await testRender(<App httpUrl={httpUrl} workspace="/tmp/ws" />, { width: 80, height: 24 });
-  const { mockInput, captureCharFrame, captureSpans, waitFor, flush, dispose } = setup;
+  const { mockInput, captureCharFrame, waitFor, flush, dispose } = setup;
 
   await waitFor(() => captureCharFrame().includes("eeee5555"));
   await flush();
@@ -115,19 +113,28 @@ test("live log renders one line per event and truncates long payloads", async ()
   expect(logFrame).toContain("kind=waiting");
   expect(logFrame).toContain("status=running");
 
-  // The live log keeps the board's prompt box: one hairline above it, the terminal's edge
-  // below it, and the prompt anchored at the bottom of the screen.
+  // The live log keeps the board's prompt box: a hairline above and below it, so the prompt
+  // sits inside a closed frame at the bottom of the screen.
   const logRows = logFrame.split("\n");
   const promptRow = logRows.findIndex((line) => line.includes("task for /tmp/ws"));
   expect(promptRow).toBeGreaterThan(0);
   expect(logRows[promptRow - 1]).toContain("─");
-  expect(promptRow).toBe(logRows.length - 2);
+  expect(logRows[promptRow + 1]).toContain("─");
+  expect(promptRow).toBe(logRows.length - 3);
 
-  // Exactly one horizontal rule in the whole frame: the one above the prompt.
+  // Exactly two horizontal rules in the whole frame: the prompt box's top and bottom lines.
   const rules = logRows
     .map((line, index) => ({ line, index }))
     .filter(({ line }) => line.includes("─"));
-  expect(rules.map(({ index }) => index)).toEqual([promptRow - 1]);
+  expect(rules.map(({ index }) => index)).toEqual([promptRow - 1, promptRow + 1]);
+
+  // A live run puts the spinner at the top-left of the prompt box's frame.
+  expect(logRows[promptRow - 1]!.trimStart()).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] /);
+
+  // Everything on the log's status line is anchored left: the hint follows the handle with
+  // the fixed two-column gap, not pushed to the terminal's right edge.
+  const headerRow = logRows.find((line) => line.includes("● running"))!;
+  expect(headerRow).toMatch(/#eeee5555 {2}esc\/enter: back/);
 
   const push = async (seq: number, event: Record<string, unknown>) => {
     sockets.at(-1)!.send(JSON.stringify({ type: "event", taskId: task.id, event: { seq, ts: 1, ...event } }));
@@ -135,42 +142,25 @@ test("live log renders one line per event and truncates long payloads", async ()
     await flush();
   };
 
-  // A short tool call reads as its fields on one row: kind, tool, and the cell's arguments.
-  await push(1, { kind: "cell.start", cell: 1, code: "read('a.py')" });
+  // Tool calls are the loop's transcript: the loop is trusted, so a `cell.start` adds no row.
+  // A typed call and a python cell, one long enough to have needed clipping, all leave the
+  // body exactly as it was — the prompt, then the waiting row.
+  const beforeCalls = captureCharFrame();
+  await push(1, { kind: "cell.start", cell: 1, tool: "read", args: { path: "a.py" } });
+  await push(2, { kind: "cell.start", cell: 2, tool: "code", code: `run(${JSON.stringify("x".repeat(400))})` });
+  await push(3, { kind: "cell.start", cell: 3, tool: "exec", args: { argv: ["bun", "test"] } });
   let frame = captureCharFrame();
-  const cellLine = frame.split("\n").find((line) => line.includes("a.py"))!;
-  expect(cellLine).toContain("kind=cell");
-  expect(cellLine).toContain("tool=code");
-  expect(cellLine).toContain("code='a.py'");
-  expect(cellLine).not.toContain("read");
-  // One row only: the next row is not a continuation of the code.
-  expect(cellLine.trimEnd().endsWith("a.py'") || cellLine.includes("'a.py'")).toBe(true);
-
-  // Tool calls are monochrome: the arguments use the dim ink, never a saturated accent.
-  const callLine = captureSpans().lines.find((line) =>
-    line.spans.some((span) => span.text.includes("a.py")),
-  );
-  expect(callLine).toBeTruthy();
-  const argSpan = callLine!.spans.find((span) => span.text.includes("a.py"))!;
-  expect(argSpan.fg.toInts().slice(0, 3)).toEqual([0xbd, 0xae, 0x93]);
-  expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xd3, 0x86, 0x9b]);
-  expect(argSpan.fg.toInts().slice(0, 3)).not.toEqual([0xa9, 0xb6, 0x65]);
-
-  // A long tool call is truncated with an ellipsis inside its own field instead of wrapping.
-  const longCode = `run(${JSON.stringify("x".repeat(400))})`;
-  await push(2, { kind: "cell.start", cell: 2, code: longCode });
-  frame = captureCharFrame();
-  const longLine = frame.split("\n").find((line) => line.includes("code=\""))!;
-  expect(longLine).toContain("…");
-  expect(longLine.length).toBeLessThanOrEqual(80);
+  // The body between the two prompt-box lines is unchanged; the spinner above it may tick.
+  const body = (whole: string) => {
+    const rows = whole.split("\n");
+    const top = rows.findIndex((line) => line.includes("─"));
+    const bottom = rows.findIndex((line, index) => index > top && line.includes("─"));
+    return rows.slice(top + 1, bottom).join("\n");
+  };
+  expect(body(frame)).toBe(body(beforeCalls));
+  expect(frame).not.toContain("kind=cell");
+  expect(frame).not.toContain("a.py");
   expect(frame).not.toContain("x".repeat(120));
-
-  // A multi-line cell still renders exactly one row.
-  await push(3, { kind: "cell.start", cell: 3, code: "print(1)\nprint(2)\nprint(3)\nprint(4)" });
-  frame = captureCharFrame();
-  const multi = frame.split("\n").filter((line) => line.includes("kind=cell") && line.includes("code=1"));
-  expect(multi.length).toBe(1);
-  expect(multi[0]).toContain("code=1");
 
   // A turn is not rendered at all: no output, no line counts.
   const stdout = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
@@ -240,8 +230,9 @@ test("live log renders one line per event and truncates long payloads", async ()
   // One status word on the whole log: the header's.
   expect(finalRows.filter((line) => line.includes("✓ done"))).toEqual([header]);
   const finalLine = finalRows.find((line) => line.includes("kind=final"))!;
-  expect(finalLine).toContain("cells=3");
-  // The stop reason moved up to the header: the closing block never repeats it.
+  // The closing head is the kind only: the cell count was tool telemetry, and the summary below
+  // it is the fact the reader came for.
+  expect(finalLine).not.toContain("cells");
   expect(finalLine).not.toContain("stop=");
   expect(finalLine).not.toContain("errors");
   expect(finalLine).not.toContain("7 steps");

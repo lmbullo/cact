@@ -25,14 +25,14 @@ module=tui/src/client-layout.ts symbols=LayoutInput,BoardLayout,boardLayout
 entry=boardLayout(input) -> { ruleWidth, promptHeight, overflow, showingLog, logTask, rowBudget, | focusRow, scroll, visible, note }
 module=tui/src/client-main.tsx symbols=main
 entry=main()  createCliRenderer + createRoot(<App/>); resolves when the renderer closes
-module=tui/src/client-panes.tsx symbols=PromptBoxProps,PromptBox,HeaderBar,RuleAbove,ContentPane
-entry=PromptBox(props)    the one prompt box, rendered outside the view switch | HeaderBar(props)    the log header wrapper; zero rows on the board, one on the log | RuleAbove(props)    the one hairline: status note + prompt overflow marker | ContentPane(props)  board rows, the empty state, or the live log of the open task
+module=tui/src/client-panes.tsx symbols=PromptBoxProps,PromptBox,HeaderBar,RuleAbove,RuleBelow,ContentPane
+entry=PromptBox(props)    the one prompt box, rendered outside the view switch | HeaderBar(props)    the log header wrapper; zero rows on the board, one on the log | RuleAbove(props)    the prompt box's top line: live spinner + status note | RuleBelow(props)    the prompt box's bottom line | ContentPane(props)  board rows, the empty state, or the live log of the open task
 module=tui/src/client-probe.ts symbols=probeServer,publishedUrl,sameServerRead
 entry=probeServer(url, workspace)                 one /health read -> ServerInfo | null | publishedUrl(stateDir, workspace, current)  the port server.json publishes, when it is new | sameServerRead(current, fresh)              do two reads agree on the drawn fields?
 module=tui/src/client-socket.ts symbols=ServerLinkOptions,ServerLink,useServerLink
 entry=useServerLink(options) -> { tasks, server, connected, baseUrl, socketEpoch, bumpSocketEpoch }
-module=tui/src/client-view.ts symbols=BoardViewStateOptions,BoardViewState,useBoardViewState
-entry=useBoardViewState(options) -> { toast, notify, promptRow, promptRows, setPromptRow, | setPromptRows, measurePrompt, selectTask, openLog, closeLog }
+module=tui/src/client-view.ts symbols=BoardViewStateOptions,BoardViewState,useSpinner,useBoardViewState
+entry=useBoardViewState(options) -> { toast, notify, promptRow, promptRows, setPromptRow, | setPromptRows, measurePrompt, selectTask, openLog, closeLog } | useSpinner(active) -> one braille frame while a run is live, else ""
 module=tui/src/client.tsx symbols=App
 entry=App({httpUrl, workspace})  top bar, log header, list or log, prompt box, toast | main()                     createCliRenderer + createRoot(<App/>); re-exported, not run here
 module=tui/src/clipboard.ts symbols=copyText
@@ -59,8 +59,8 @@ module=tui/src/source-hash.ts symbols=SOURCE_FILES,fileHash,fileHashes,combineHa
 entry=SOURCE_FILES                  server.ts, worker-events.ts, detect-checks.ts | bootSource(root, files, now)  boot: {source: {hash, files, hashedAt}, hashes} | compareSource(root, boot)     read time: {stale, changed}; a missing file counts as changed | fileHash(root, file)          one file's sha256, or "missing" | combineHash(files, hashes)    the one digest that stands for the whole set
 module=tui/src/stop.ts symbols=-
 entry=(no exports) — side-effect entry point, imported by tui/bin/code-stop.
-module=tui/src/theme.ts symbols=C,STATUS,PROMPT_MAX_ROWS,SUMMARY_MAX_LINES,clip,oneLine,lineCount,wrapText,shortPath,elapsed,toolArgs
-entry=C = RGBA palette (hex literals, no background role); STATUS = TaskStatus -> {word, mark, color}; PROMPT_MAX_ROWS. | clip(text, width) collapse to one line + ellipsize;  oneLine(text) collapse whitespace, drop CRs;  lineCount(text) non-empty lines. | wrapText(text, width) word-wrap, keeps every line (prompt, summary);  toolArgs(code) first call's arguments. | shortPath(path) `$HOME` -> `~`;  elapsed(ms) compact duration `0.8s`, `12s`, `2m04s`, `1h02m`;  SUMMARY_MAX_LINES.
+module=tui/src/theme.ts symbols=C,STATUS,PROMPT_MAX_ROWS,SUMMARY_MAX_LINES,clip,oneLine,lineCount,wrapText,shortPath,elapsed
+entry=C = RGBA palette (hex literals, no background role); STATUS = TaskStatus -> {word, mark, color}; PROMPT_MAX_ROWS. | clip(text, width) collapse to one line + ellipsize;  oneLine(text) collapse whitespace, drop CRs;  lineCount(text) non-empty lines. | wrapText(text, width) word-wrap, keeps every line (prompt, summary). | shortPath(path) `$HOME` -> `~`;  elapsed(ms) compact duration `0.8s`, `12s`, `2m04s`, `1h02m`;  SUMMARY_MAX_LINES.
 module=tui/src/types.ts symbols=TaskStatus,Task,CheckState,TaskEvent,SourceFingerprint,ServerInfo,CheckSpec,Snapshot,WsMessage,WorkerMessage
 entry=Task, TaskStatus, TaskEvent, CheckState, ServerInfo, SourceFingerprint, CheckSpec, Snapshot, WsMessage, WorkerMessage
 module=tui/src/worker-events.ts symbols=EVENT_PREFIX,JournalEvent,capString,capValue,parseWorkerLine,journalWorkerEvent
@@ -72,7 +72,7 @@ entry=detectChecks from ../src/detect-checks; env is the second argument, never 
 module=tui/tests/list.test.tsx symbols=-
 entry=App from ../src/client; Bun.serve stub bound to 127.0.0.1:0 (port never fixed) | testRender(<App httpUrl=... workspace="/tmp/ws" />, {width: 100, height: 24}) | snapshot(tasks) / `tasks` ... the fixtures the stub serves
 module=tui/tests/log.test.tsx symbols=-
-entry=App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)` | captureCharFrame() for text, captureSpans() when a span (not a row) is the subject
+entry=App from ../src/client; Bun.serve stub with `sockets[]` and `push(seq, event)` | captureCharFrame() for text
 module=tui/tests/order.test.tsx symbols=-
 entry=orderTasks(tasks, order) / bandOrder(order) / nextOrder(order) / orderLabel(order) | App from ../src/client; Bun.serve stub bound to 127.0.0.1:0 (port never fixed) | mockInput.pressKey("o", { ctrl: true }) ...... one Ctrl-O press
 module=tui/tests/pricing.test.tsx symbols=-

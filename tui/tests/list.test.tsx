@@ -165,12 +165,12 @@ test("scrolling keeps the marker on one screen row and moves the window one row"
   expect(rows.filter((line) => line.includes("● running")).length).toBe(0);
   expect(rows.find((line) => line.includes("extra000"))).toContain("› #extra000");
   expect(markerRow("extra000")).toBe(ruleRow() - 1);
-  expect(rows.find((line) => line.includes("─"))).toContain("rows 2–9/");
+  expect(rows.find((line) => line.includes("─"))).toContain("rows 3–9/");
 
   // One more Down advances the window by one row and leaves the marker on the same row.
   await step();
   rows = captureCharFrame().split("\n");
-  expect(rows.find((line) => line.includes("─"))).toContain("rows 3–10/");
+  expect(rows.find((line) => line.includes("─"))).toContain("rows 4–10/");
   expect(rows.find((line) => line.includes("extra001"))).toContain("› #extra001");
   expect(markerRow("extra001")).toBe(ruleRow() - 1);
 

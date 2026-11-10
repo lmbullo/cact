@@ -80,8 +80,11 @@ additionally `chdir`s into it.
 ## 3. Board contract
 
 There is no background colour anywhere. The app draws on whatever the terminal is set to — dark,
-light, translucent — and only the ink is fixed. The screen is a masthead, the task sections, one
-hairline and the prompt; nothing is boxed, nothing is filled.
+light, translucent — and only the ink is fixed. The screen is a masthead, the task sections and
+a prompt box closed by a hairline above and below it; nothing is filled. The prompt is the whole of the
+human's part: you write a task and `Ctrl+Enter` queues it, then you read the run's final summary.
+The loop is autonomous — it asks no questions, needs no approvals and is not corrected mid-run —
+so the only thing that comes back is that summary.
 
 One row per task: a `›` selection marker, the task's short handle (`#4f7c1`), the prompt, then
 right-aligned telemetry — `steps`, tokens in and out, the run's price — and the wall time.
@@ -177,10 +180,11 @@ anchored until the marker crosses an edge, so the list never recentres under the
 whose status change moves it between bands keeps its screen row, so a live finish does not push
 the board up. When the board is taller than the window, the hairline also reports the visible
 range (`rows 12–31/40`). The prompt box grows one row per newline or wrapped row, up to five,
-then scrolls vertically and the hairline above it shows the cursor position (`3/5`). `Ctrl+Enter`
+then scrolls vertically and its top line shows the cursor position (`3/5`). `Ctrl+Enter`
 queues; `Escape` clears the prompt, then the highlight; `Enter` on an empty prompt opens the
-highlighted task. The same hairline reports `reconnecting`, the last toast, or `no api key`, in
-that priority; the prompt is the last row of the screen, so the terminal's own edge closes it.
+highlighted task. The top line anchors its note left and spins a braille spinner at the far
+left while a run is live; the bottom line closes the box on the terminal's last row. The same
+top line reports `reconnecting`, the last toast, or `no api key`, in that priority.
 A task that hits its step or wall cap but still produces a summary is `partial`, not `failed`;
 its final text stays in the log.
 
@@ -191,9 +195,11 @@ reminder; it never invents a fake section or an empty table.
 
 `Enter` on an empty prompt opens the selected task's log. Every row is machine-first: one dim
 elapsed gutter, then `key=value` fields and nothing else — no glyphs, no sentences, no decorative
-prose. The fields are the journal's own names, so a row can be pasted into a grep. The task's
-prompt opens the log as a wrapped body under a `kind=prompt` row, and the agent's final summary
-closes it as a wrapped body under a `kind=final` row.
+prose. The fields are the journal's own names, so a row can be pasted into a grep. The body is
+the two ends of the run: the task's prompt opens the log as a wrapped body under a `kind=prompt`
+row, and the agent's final summary closes it as a wrapped body under a `kind=final` row. Tool
+calls are the loop's transcript, not the reader's: a `cell.start` draws no row. The loop is
+trusted, and a tool call is not a fact anyone acts on; the summary is.
 
 The run's state has exactly one source: the status line at the top, drawn from `Task.status`.
 The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no status field on the
@@ -204,37 +210,32 @@ as journal history; they are not rendered.
 ```
  ▌ code  ~/some/project                       deepseek-flash · low · 1 running
 
- ● running  #4f7c1        esc/enter: back · 3 steps · ↑421k ↓8.0k · 11s · $0.07 · 62% cache · ctx 421k/1.0M
+ ● running  #4f7c1  esc/enter: back · 3 steps · ↑421k ↓8.0k · 11s · $0.07 · 62% cache · ctx 421k/1.0M
 
   0ms kind=prompt chars=118 model=deepseek-flash effort=low
 
       add a retry with exponential backoff and jitter to the fetch helper, and cover the
       503 path with a test
 
-  1.5s kind=cell tool=read args={"path":"src/client.tsx"}
-  3.0s kind=cell tool=exec args={"argv":["bun","test"]}
-  4.5s kind=cell tool=code code='a.py'
-  6.0s kind=turn notice=[finish] final_answer rejected: the project check still fails
+  1.5s kind=turn notice=[finish] final_answer rejected: the project check still fails
 
-  7.5s kind=final cells=3
+  7.5s kind=final
 
       Retry added to the fetch helper; the backoff path is covered by a test.
-
-      changed
-      - src/fetch.ts: three attempts, exponential backoff, jitter
-      - tests/fetch.test.ts: a 503 then a success
-
-      verified
-      - bun test (19 tests)
-───────────────────────────────────────────────────────────────────────────────────────────────────
+      chg: src/fetch.ts, tests/fetch.test.ts
+      gates: test ok(0), typecheck ok(0)
+      defer: retry the 503 path under a cold cache
+      untested: the browser fetch path
+⠋ ─────────────────────────────────────────────────────────────────────────────────────────────────
  › task for /home/you/some/project…
+───────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 The log is the same screen with its content pane swapped: the masthead, the breath under it, a
-status line, the rows, and the one hairline over the prompt. The status line carries the dot,
-the status word, the short handle, then how the run ended, then `esc/enter: back` and the live
-counters; the hint is never dropped and the counters disappear from the tail as the terminal
-narrows. It does not repeat the prompt — the log opens with that in full, right below.
+status line, the rows, and the prompt box's two lines. The status line anchors everything left:
+the dot, the status word, the short handle, how the run ended, `esc/enter: back` and the live
+counters follow in a fixed two-column gap; the hint is never dropped and the counters disappear
+from the tail as the terminal narrows. It does not repeat the prompt — the log opens with that in full, right below.
 
 Once the run has settled, the line also answers "how did this end?" at a glance, from the task
 JSON and the journal alone: the stop reason (`Task.stop` — `DONE`, `TRUNCATED`, `LLM_FAILED`,
@@ -263,17 +264,20 @@ Row fields by kind (`src/log-view.tsx`, `EventView`):
 
 | kind | fields |
 |---|---|
-| `cell.start` | `kind=cell tool=<tool> args=<json>` for a typed call, `code=<first call's arguments>` for a python cell |
 | `turn` | `kind=turn notice=<the rejected or staged finish, one line>` and `lines=N` when it was several |
-| `final` | `kind=final cells=N`, then the summary body |
+| `final` | `kind=final`, then the summary body |
 | `error` | `kind=error text=<one line>` and `lines=N` when it was several |
 | `stderr` | `kind=stderr …` |
 | `log` | `kind=log …` |
 | anything else | `kind=<kind>` only; the payload is never dumped |
 | no rows yet | `kind=waiting status=queued|running` |
 
+`cell.start`, `cell.end`, `check` and the lifecycle kinds render no row at all; their journal
+entry stays in the machine log. A `cell.start` is the loop's transcript — which verb ran with
+which arguments — and it is deliberately not drawn.
+
 Truncation is per field, not per row: each value is clipped to the columns its own key leaves
-(`FIELD_CAP`, then what is left of the pane), so a 300-char argument can neither push its key nor
+(`FIELD_CAP`, then what is left of the pane), so a long notice can neither push its key nor
 a later field off the line, and `…` marks the cut. The two exceptions are the opening prompt and
 the final summary: they are wrapped whole by `theme.wrapText` into the shared `INDENT` column,
 never clipped, and past `SUMMARY_MAX_LINES` (400) the rest is reported as `(+N more lines)`. The
@@ -451,13 +455,13 @@ never re-imports itself.
 
 Each task's journal is append-only JSONL with `seq`, `ts`, `kind`, and kind-specific fields.
 Kinds: `queued`, `started`, `pid`, `cell.start`, `cell.end`, `turn`, `check`, `log`, `stderr`,
-`error`, `final`, `finished`. The lifecycle kinds, `cell.start`, `cell.end` and `check` are
-journal history only: their live state is `Task.status` (and `Task.pid`), which the board and
-the log status line render, so the TUI draws them nowhere. `turn` (with a `notice`), `log`,
-`stderr`, `error` and `final` are what the log body shows. `cell.start` is the call about to
-run; `cell.end` is its compact result for analysis — `{cell, tool, ok, verb_kind, code, page,
-chars, duration_ms, notes}` with no payload body — and `bench/task_journal.py` prefers it for
-`obs_chars`, `rejected` and `dupe_note_turn`. The mapping from a worker message to its line is
+`error`, `final`, `finished`. The lifecycle kinds, `check` and the cell kinds are journal history
+only: the TUI draws them nowhere. Lifecycle state is `Task.status` (and `Task.pid`), which the
+board and the log status line render. `cell.start` is the call about to run and `cell.end` its
+compact result for analysis — `{cell, tool, ok, verb_kind, code, page, chars, duration_ms,
+notes}` with no payload body; `bench/task_journal.py` prefers it for `obs_chars`, `rejected` and
+`dupe_note_turn`. They are the loop's transcript, and the log body stays the prompt, a notice,
+an error and the final summary. The mapping from a worker message to its line is
 `src/worker-events.ts` (`journalWorkerEvent`), so one `cell.end` message is one event by
 construction, and a kind it does not know falls back to a `log` of the raw line. `check` is one
 verification run — `{ok, name, line}`, where `name` is the plan entry (`typecheck`, `test`, ...)

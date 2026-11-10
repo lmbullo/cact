@@ -30,10 +30,10 @@ import { copyText } from "./clipboard";
 import { boardLayout } from "./client-layout";
 import { useBoardModel } from "./client-board";
 import { useServerLink } from "./client-socket";
-import { useBoardViewState } from "./client-view";
+import { useBoardViewState, useSpinner } from "./client-view";
 import { useBoardKeys } from "./client-input";
 import { useCopyGesture, useEventBackfill, useTaskActions } from "./client-actions";
-import { ContentPane, HeaderBar, PromptBox, RuleAbove } from "./client-panes";
+import { ContentPane, HeaderBar, PromptBox, RuleAbove, RuleBelow } from "./client-panes";
 import { main } from "./client-main";
 
 export { main };
@@ -129,6 +129,8 @@ export function App({
     selectTask: ui.selectTask,
     selectedRef,
   });
+  // A run is live somewhere: the prompt box's top line spins while work is in flight.
+  const spinner = useSpinner(board.runningCount > 0);
   const { queue, cancelSelected } = useTaskActions({
     baseUrl: link.baseUrl,
     notify: ui.notify,
@@ -224,7 +226,7 @@ export function App({
         now={board.now}
         onSelect={ui.selectTask}
       />
-      <RuleAbove width={layout.ruleWidth} note={`${layout.note}${layout.overflow}`} />
+      <RuleAbove width={layout.ruleWidth} note={`${layout.note}${layout.overflow}`} spinner={spinner} />
       <PromptBox
         width={width}
         height={layout.promptHeight}
@@ -236,6 +238,7 @@ export function App({
         measurePrompt={ui.measurePrompt}
         queue={queue}
       />
+      <RuleBelow width={layout.ruleWidth} />
     </box>
   );
 }

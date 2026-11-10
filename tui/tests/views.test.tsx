@@ -87,13 +87,14 @@ test("one prompt box is kept between the board and a run log", async () => {
   await waitFor(() => captureCharFrame().includes("task for /tmp/ws"));
   await flush();
 
-  // The board has exactly one prompt box, anchored at the bottom under the one hairline:
-  // there is no second rule below it, because the terminal's own edge closes the screen.
+  // The board has exactly one prompt box, closed by a hairline above and below it at the
+  // bottom of the screen.
   let rows = boardRows();
   const boardPrompt = rows.findIndex((line) => line.includes("task for /tmp/ws"));
   expect(boardPrompt).toBeGreaterThan(0);
   expect(rows[boardPrompt - 1]).toContain("\u2500");
-  expect(boardPrompt).toBe(rows.length - 2);
+  expect(rows[boardPrompt + 1]).toContain("\u2500");
+  expect(boardPrompt).toBe(rows.length - 3);
   expect(rows.filter((line) => line.includes("\u203a task for")).length).toBe(1);
 
   // Open the run log: the same prompt box is still the only one on screen.
@@ -105,7 +106,8 @@ test("one prompt box is kept between the board and a run log", async () => {
   const logPrompt = rows.findIndex((line) => line.includes("task for /tmp/ws"));
   expect(logPrompt).toBe(boardPrompt);
   expect(rows[logPrompt - 1]).toContain("\u2500");
-  expect(logPrompt).toBe(rows.length - 2);
+  expect(rows[logPrompt + 1]).toContain("\u2500");
+  expect(logPrompt).toBe(rows.length - 3);
   expect(rows.filter((line) => line.includes("\u203a task for")).length).toBe(1);
 
   // The box grows while a run is streaming, exactly like it does on the board.
@@ -119,9 +121,10 @@ test("one prompt box is kept between the board and a run log", async () => {
   rows = boardRows();
   const one = rows.findIndex((line) => line.includes("one"));
   expect(rows[one + 1]).toContain("two");
-  // Still bottom-anchored: the prompt is the last thing on screen, the hairline above it.
+  // Still bottom-anchored: two prompt rows inside the two hairlines.
   expect(rows[one - 1]).toContain("\u2500");
-  expect(rows.length - 2).toBe(one + 1);
+  expect(rows[one + 2]).toContain("\u2500");
+  expect(rows.length - 4).toBe(one);
 
   // Leaving the log (the watched task disappears) keeps the same box: same text,
   // same two rows, nothing remounted.
@@ -134,7 +137,8 @@ test("one prompt box is kept between the board and a run log", async () => {
   const oneAfter = rows.findIndex((line) => line.includes("one"));
   expect(rows[oneAfter + 1]).toContain("two");
   expect(rows[oneAfter - 1]).toContain("\u2500");
-  expect(rows.length - 2).toBe(oneAfter + 1);
+  expect(rows[oneAfter + 2]).toContain("\u2500");
+  expect(rows.length - 4).toBe(oneAfter);
 
   await dispose();
 });
