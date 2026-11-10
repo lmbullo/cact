@@ -33,8 +33,8 @@ from bench.agent import headers as header_index
 from bench.agent import pages as agent_pages
 
 ROOT = Path(__file__).resolve().parents[2]
-DOCS = ("AGENTS.md", "README.md", "docs/README.md", "docs/run.md", "docs/architecture.md",
-        "tui/README.md", "bench/HARD.md") + agent_pages.DOCS
+DOCS = ("AGENTS.md", "README.md", "LOOP.md", "docs/README.md", "docs/run.md",
+        "docs/architecture.md", "tui/README.md", "bench/HARD.md") + agent_pages.DOCS
 _DUP_CHARS = 200
 # Generated or tool-managed trees: absent in a fresh clone, so a pointer into one may dangle.
 _GENERATED = frozenset({

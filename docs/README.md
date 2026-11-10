@@ -15,6 +15,7 @@ not a missing document.
 | an agent under test | `../bench/evals/fixtures.py` / `../bench/evals/oracle.py` | graded input and hidden answer, one per file — never both in one |
 | replaying a retired suite | `../bench/archive/legacy/` | the archived suites, their fixtures and `SPEC.md` records |
 | an agent subsystem map | `agent/README.md` | generated subsystem -> page -> entry points; each page covers every module once |
+| what the loop used to cost vs now | `../LOOP.md` | the measured q1 and live-suite bill, task completion and the failed experiments |
 
 `python3 bench/guide.py` is the module map for `bench/` and `tui/`; do not restate it in
 Markdown. A module's contract is its four-section header, which `bench/guide.py --check` gates.
