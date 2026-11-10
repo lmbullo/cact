@@ -26,9 +26,11 @@ module under `bench/` and `tui/` with that line. What a header cannot say is whi
 | `tui/node_modules/`, TUI state root | output, gitignored | install tree, `~/.local/state/code-tui/` |
 
 `bench/agent/kernel/` is the one package split by lifecycle rather than by feature: `protocol.py`
-(the wire), `driver.py` (child loop), five `prelude_*.py` fragments, `prelude.py` (assembled
-`PRELUDE`), `run_prelude.py` (exec/git + gates), `process.py` (the parent-side supervisor). To
-change a verb, the header of the fragment that owns it says so.
+(the wire), `driver.py` (child loop, over `driver_*.py`), five `prelude_*.py` fragment assemblers,
+`prelude.py` (assembled `PRELUDE`), `run_prelude.py` (assembled `RUN_PRELUDE` over the
+`run_prelude_*.py` fragments: exec/git/serve + the mutation and spawn gates), `process.py` (the
+parent-side supervisor, over `process_*.py`). To change a verb, the header of the fragment that
+owns it says so.
 
 ## 2. How one cell flows
 
@@ -86,6 +88,14 @@ What the diagram does not show:
   that predates `cell.end` still reads the run; the journal reader (`bench/task_journal.py`)
   prefers `cell.end` for `obs_chars`, `rejected` and `dupe_note_turn`, and counts `restarts`
   from the observation's boolean `restarted` rather than searching delivered text.
+- **Call shaping.** Before dispatch, `call_shape.repair` rewrites one generic model shape to the
+  typed signature: `exec(command=)` to `shell`, `exec(code=)` to the python cell, an argv
+  `[shell, -c, ...]` to `shell`, `read(_OBS[n])` to `page`, `git add -A` to `git add`, and a
+  single `edit(path, old, new)` to `edit(edits=[...])`; trailing text after the JSON object is
+  dropped with a note. A call whose target is outside the scope is left for the kernel's
+  `bad_args`; each rewrite prefixes one `[shape]` line. An `exec` that exactly runs one plan
+  command becomes `checks(<name>)`, and `read` also coerces a JSON-list or space/comma-separated
+  path string (`_coerce_paths`).
 - **Results are dicts that also answer attributes.** `exec(...)` and `run()` return
   `result['stdout']` (or `result.stdout`); `read(raw=True)[:n]` and `read(...)['content']` work,
   so a natural model mistake does not cost a cell. The canonical keys are the contract.
@@ -155,14 +165,20 @@ Cheap entries are health checks: they re-run after a mutating cell in their `sco
 the full output behind the queued `_OBS[n]`). They never end a run. The whole plan is the goal:
 `final_answer` is rejected (`GOAL_UNMET`) until every entry passes, then the task lands `done`
 with `verified: <names> passed`. The agent calls the plan with `checks(name=None)`; it returns
-one `{name, ok, exit, first_line}` row per spec and reuses the Verifier's cache, so a green spec
-is never spawned twice. `status()` covers tree state (branch, capped short status, ahead/behind,
-and the journal's add/del summary).
+one `{name, ok, exit, first_line, detail?}` row per spec and reuses the Verifier's cache, so a
+green spec is never spawned twice. `detail` is the last count/result line of a passing run
+(`Check.summary`), so a suite row names its own totals. `status()` covers tree state (branch,
+capped short status, ahead/behind, and the journal's add/del summary).
 
 Production passes `goal_stops=False`, so a passing health check after a mutation is evidence, not
 a verdict: the model keeps working until it calls `final_answer` and the whole plan accepts that
-claim. A failing check only rejects the finish. `StateLoop._compact` folds the message list once
-the provider's real prompt token count reaches `config.COMPACT_AT_TOKENS` (85% of the 1M window);
+claim. A failing check only rejects the finish. Once a `checks` payload has `ok` and at least one
+row, `GreenGate` (`green_gate.py`) opens: a later `exec` or `checks` is refused with `GREEN` and
+the observation carries a pass line, while code cells and typed mutations still run (they count
+for the record); any reported change closes the gate until the next `checks`. An `exec` that runs
+a lint/typecheck/format gate outside the plan is answered as a plan-authority note, not run.
+`StateLoop._compact` folds the message list once the provider's real prompt token count reaches
+`config.COMPACT_AT_TOKENS` (85% of the 1M window);
 it cuts only on an assistant tool-call boundary and replaces the dropped span with one
 `[session state]` message carrying the changed files, the current diff, the per-file read coverage
 and the last check, so no tool result is orphaned and the workspace stays authoritative.

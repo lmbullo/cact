@@ -62,9 +62,10 @@ These are architecture, not style. A change that breaks one is a regression even
   INVARIANTS / WHERE TO CHANGE. `bench/agent/headers.py` parses those sections into rows;
   `bench/guide.py` and the in-kernel `guide()` verb both read them. `help(tool)` returns the live
   signature, and the provider schema comes from the same registry entry. An agent must never
-  need to read an implementation to learn how to call it. `bench/smoke.py` checks that every
-  ENTRY POINTS callable resolves to a declared symbol, so a header cannot advertise a deleted
-  function.
+  need to read an implementation to learn how to call it. A header is at most 24 lines
+  (`headers.MAX_HEADER`, `HEADER_ALLOW` empty), so every in-scope module meets the same budget.
+  `bench/smoke.py` checks that every ENTRY POINTS callable resolves to a declared symbol, so a
+  header cannot advertise a deleted function.
 - **Self-verifying work.** `final_answer` is staged, then rejected until the goal `Verifier`
   plan passes. A failed check is a repair instruction, not a question. There are no interactive
   prompts in production (`tui/python/worker.py` is unattended).
@@ -101,7 +102,7 @@ These are architecture, not style. A change that breaks one is a regression even
 | `docs/README.md` | The trigger→file map for every document, and the one-owner/path rules the docs gate enforces |
 | `docs/run.md` | Invocation: gate ladder, expected exit codes, eval/workspace/TUI commands, knobs, gotchas |
 | `docs/architecture.md` | Runtime shape: tree kinds, one cell end to end, loops, paging, the check plan and compaction |
-| `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE), `prelude_setup.py` / `prelude_journal.py` / `prelude_index.py` / `prelude_read.py` / `prelude_verbs.py` (the five fragments), `run_prelude.py` (exec/git/serve + gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
+| `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE over five fragment assemblers), `run_prelude.py` (assembled RUN_PRELUDE over the `run_prelude_*.py` fragments: exec/git/serve + the mutation and spawn gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
 | `bench/agent/verbs.py` | The typed verb registry: name, schema, summary, `mutates`, implementing function. `tools.py` builds provider specs from it; the child receives it as `KERNEL_VERBS` |
 | `bench/agent/tools.py` | `TYPE_TOOLS`, generated from `verbs.VERBS`; `code` is the orchestration cell in `tool_loop.py`, `python` its alias |
 | `bench/agent/headers.py` | The header index (`index`, `guide`, `problems`). Shipped as source to every kernel child, so the CLI and the verb run the same code |
@@ -109,6 +110,7 @@ These are architecture, not style. A change that breaks one is a regression even
 | `bench/agent/state_loop.py` | The production loop: tool call → kernel cell → typed observation or state card, context compaction |
 | `bench/agent/envelope.py` | The one typed observation shape: `ok/op/kind/data/page/handle/notes/error`; `page` is the only paging contract |
 | `bench/agent/tool_loop.py` | The turn machine: `final_answer`, goal checks, stop reasons, call pairing, the unattended-ask gate |
+| `bench/agent/call_shape.py` | The one pure rewrite before dispatch: generic `exec`/`read _OBS`/`git add`/`edit` shapes to their typed signature, one `[shape]` note |
 | `bench/agent/subagent.py` | `delegate`: a read-only child loop with its own context and usage |
 | `bench/agent/skeptic.py` | The read-only reviewer that must falsify a finish before it is accepted |
 | `bench/agent/custom.py` | Per-run tools from a JSON manifest, shipped to the child as extra verbs and prelude |
@@ -150,7 +152,10 @@ These are architecture, not style. A change that breaks one is a regression even
    `/var/tmp`, `/dev/shm`, `$TMPDIR`) **by a program**: the scratch exemption belongs to the
    process gate, because that output is not journalled. The typed editors (`write`, `edit`,
    `splice`, `delete`, `mkdir`, `apply`) are workspace-only and answer `outside_root` with a
-   `use` that says so; a scratch file inside the workspace (`bench/.tmp/`) is fine. Direct
+   `use` that says so; a scratch file inside the workspace (`bench/.tmp/`) is fine. `read` is the
+   one typed verb that accepts an absolute scratch path (`/tmp`, `/var/tmp`, `/dev/shm`,
+   `$TMPDIR`), so output a program wrote there can be read back; the typed writers stay
+   workspace-only. Direct
    spawning (`subprocess.Popen`, `os.system`, `os.exec*`, `os.posix_spawn`, `os.spawn`) runs
    through the same classifier (`_audit_spawn`).
    A program can still write files: the journal is a typed-helper contract, not a sandbox. Keep
@@ -197,7 +202,9 @@ These are architecture, not style. A change that breaks one is a regression even
    the goal, the cheap subset, the throttle, the cache and rendering: the cheap subset re-runs
    after a mutating cell (at most every 20s) and appears as the `[check]` line of the state
    card. `final_answer` is rejected (`GOAL_UNMET`) until the whole plan passes. Production
-   passes `goal_stops=False`, so a failing check never ends the run by itself.
+   passes `goal_stops=False`, so a failing check never ends the run by itself; a green `checks`
+   closes the verification tail (`GREEN`): further `exec` and `checks` are refused while code
+   cells and mutations stay open, and a mutation invalidates the pass.
 8. **Eval ground truth is data, not prose.** `bench/evals/fixtures.py` builds the input;
    `bench/evals/oracle.py` owns the hidden answer. A fixture never contains its own oracle,
    and an oracle never reads a visible test. The archived legacy suite and its fixtures live
@@ -253,8 +260,8 @@ the offline gates and say so in the report.
 | Eval input or answer | `fixtures.py` (input), `oracle.py` (answer), never both | the case's row |
 | A delegated capability | `subagent.py` / `skeptic.py` / `custom.py`, then `config.build` and the worker env flags | `bench/eval.py`, a live run |
 | Model/temperature/cache | `llm.Client`, TUI env | a live run |
-| TUI board/log/keys/clipboard | `tui/src/client.tsx`, `board-view.tsx`, `log-view.tsx`, `theme.ts`, `list-model.ts`, `clipboard.ts` | `bun test` |
-| TUI queue/journal/API | `tui/src/server.ts`, `tui/src/types.ts` | `bun test`, `bench/live.py` |
+| TUI board/log/keys/clipboard | `tui/src/client.tsx` over `client-*.ts(x)`, `board-view.tsx`/`board-task.tsx`, `log-view.tsx`/`log-rows.tsx`, `theme.ts`, `list-model.ts`, `clipboard.ts` | `bun test` |
+| TUI queue/journal/API | `tui/src/server.ts` over `server-*.ts`, `tui/src/types.ts` | `bun test`, `bench/live.py` |
 
 Adding a module means adding its four-section header before its first line of code, a one-line
 contract docstring on every public function and class, then `python3 bench/guide.py --check` and

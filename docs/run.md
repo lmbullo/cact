@@ -14,7 +14,8 @@ not run this ladder by hand.
 
 | Command | Covers | Expected |
 |---|---|---|
-| `python3 bench/guide.py --check` | every module header has its four sections | exit 0 |
+| `python3 bench/guide.py --check` | every module header has its four sections and fits the 24-line budget | exit 0 |
+| `python3 bench/index.py --check` | the same header problems through the symbol-index CLI | exit 0 |
 | `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
 | `python3 bench/smoke.py` | the offline contract check: one group per area (the list is the module's own header), from the header/docs gates and the check plan through the kernel's files/verbs/gates, `revert_check`, `serve`, the finish handoff, the capability scope, the turn machine, the journal kinds and style | exit 0 |
 | `python3 bench/eval.py` | the 16 scripted loop contracts | exit 0 |
@@ -34,6 +35,7 @@ python3 bench/guide.py --module bench/agent/check_plan.py
 python3 bench/guide.py --json --query checks
 python3 bench/guide.py --check
 python3 bench/index.py --write            # regenerate agents.index.json (gitignored)
+python3 bench/index.py --check            # gate: every header is complete and within budget
 
 python3 bench/eval.py                      # 16 scripted loop contracts, no key, no network
 python3 bench/eval.py --list               # ids, kinds, failure tags
