@@ -13,7 +13,8 @@
  *  - Paths are derived, never stored, so an older task file still finds its machine log.
  *  - A failed write never breaks a run: it logs to console.error and returns.
  *  - Task files are written tmp+rename; `seq` comes from server-state, `ts` is stamped here.
- *  - loadTasks fails a task left `running` by a previous process and records why.
+ *  - loadTasks reaps a task's worker left `running` by a previous process (a crashed server),
+ *    then fails the task and records why.
  *
  * WHERE TO CHANGE
  *  A path formula .... the *File helpers   One record .... saveTask/appendLog/appendEvent
@@ -23,6 +24,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, writ
 import { join } from "node:path";
 import { eventsDir, logsDir, promptsDir, tasksDir } from "./server-config";
 import { broadcast, nextSeq, taskById, tasks } from "./server-state";
+import { reapWorker } from "./server-procs";
 import { pump } from "./server-tasks";
 import type { Task, TaskEvent } from "./types";
 
@@ -115,6 +117,9 @@ export function loadTasks(): void {
   tasks.sort((a, b) => a.createdAt - b.createdAt);
   for (const task of tasks) {
     if (task.status === "running") {
+      // A crashed server leaves its python worker (and the kernel child under it) alive; the
+      // worker's own group id is its pid, so one reaped group frees the whole task's memory.
+      if (task.pid) reapWorker(task.pid);
       task.status = "failed";
       task.finishedAt = Date.now();
       task.error = "server restarted while this task was running";

@@ -25,6 +25,9 @@ WHERE TO CHANGE
 """
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from bench.agent.kernel import Kernel
 import bench.agent.state_loop as state_loop
 
@@ -298,3 +301,30 @@ def run(check, root, kernel):
     check("kernel: read(raw=True) can be sliced", "alp" in cell.stdout, (cell.stdout + cell.stderr)[:200])
     cell = kernel.run("print(read('a.txt', repeat=True)['content'][:20])")
     check("kernel: read()['content'] is the delivered text", "alpha" in cell.stdout, (cell.stdout + cell.stderr)[:200])
+
+    # A workspace larger than the snapshot budget must bound the tree it keeps in memory and
+    # say so, instead of reading everything (a home directory is the failure case).
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "big.txt").write_text("x" * 100)
+        bounded = Kernel(tmp, timeout=20, writable=True, prelude="all", allow_run=True,
+                         env={"KERNEL_SNAPSHOT_BYTES": "1"})
+        try:
+            cell = bounded.run("print(changes())")
+            check("kernel: a tree past the snapshot budget reports snapshot_partial",
+                  "'snapshot_partial': True" in cell.stdout, cell.stdout[:240])
+            cell = bounded.run("write('new.txt', 'hello\\nworld\\n')")
+            check("kernel: a typed write past the snapshot budget keeps its hunk",
+                  "new.txt" in cell.changed and "+hello" in cell.deltas.get("new.txt", ""),
+                  (cell.delta or "")[:240])
+            cell = bounded.run("print(changes())")
+            check("kernel: changes() lists a journaled path past the snapshot budget",
+                  "new.txt" in cell.stdout, cell.stdout[:240])
+            cell = bounded.run("undo('new.txt')")
+            check("kernel: undo removes a created file past the snapshot budget",
+                  not Path(tmp, "new.txt").exists(), cell.stdout[:240])
+            bounded.run("write('big.txt', 'y' * 200)")
+            cell = bounded.run("undo('big.txt')")
+            check("kernel: undo restores a pre-existing file past the snapshot budget",
+                  Path(tmp, "big.txt").read_text() == "x" * 100, cell.stdout[:240])
+        finally:
+            bounded.stop()

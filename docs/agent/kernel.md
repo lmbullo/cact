@@ -64,7 +64,7 @@ entry=guide(query, path, limit, chars, offset, headers)   the one verb the heade
 module=bench/agent/kernel/prelude_skill.py symbols=-
 entry=_SKILL   source text; inside: skill
 module=bench/agent/kernel/prelude_snapshot.py symbols=-
-entry=_SNAPSHOT   source text; inside: _BASE, _BASE_READY, _LAST_STATE, _snapshot, _tree_state, | _row, _changed, _delta
+entry=_SNAPSHOT   source text; inside: _BASE, _BASE_READY, _LAST_STATE, _SNAP_PARTIAL, _snap_files, | _snapshot, _tree_state, _row, _changed, _delta
 module=bench/agent/kernel/prelude_status.py symbols=-
 entry=_STATUS   source text; inside: _not_a_repo, status
 module=bench/agent/kernel/prelude_undo.py symbols=-

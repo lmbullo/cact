@@ -26,6 +26,7 @@ import { rmSync } from "node:fs";
 import { serverFile, serverLog } from "./server-config";
 import { route } from "./server-http";
 import { loadTasks, saveTask } from "./server-journal";
+import { signalTree } from "./server-procs";
 import {
   beginShutdown,
   broadcast,
@@ -86,13 +87,7 @@ function shutdown(signal: string): void {
       saveTask(task);
     }
   }
-  for (const { proc } of running.values()) {
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      // ignore
-    }
-  }
+  for (const { proc } of running.values()) signalTree(proc.pid, "SIGTERM");
   rmSync(serverFile, { force: true });
   stopServer();
   process.exit(0);

@@ -52,6 +52,9 @@ def diff_tool(path=None, max_chars=None):
     if truncated:
         text = text + "\n...[diff truncated; page with offset=%d]" % len(text)
     notes = []
+    if _SNAP_PARTIAL:
+        notes.append("the session snapshot stopped at its memory budget; files outside the "
+                     "watched prefix are not in this diff (raise KERNEL_SNAPSHOT_BYTES to widen it)")
     if ignored:
         notes.append("%d journaled write(s) go to a path the tree walk skips (bench/.tmp/ or "
                      "gitignored); they are not in this diff: %s"
@@ -61,7 +64,8 @@ def diff_tool(path=None, max_chars=None):
               "total": total, "offset": 0, "unit": "char",
               "next": {"offset": len(text), "unit": "char"} if truncated else None,
               "truncated": truncated, "has_more": truncated,
-              "ignored": len(ignored), "ignored_paths": ignored, "text": text}
+              "ignored": len(ignored), "ignored_paths": ignored,
+              "snapshot_partial": _SNAP_PARTIAL, "text": text}
     if notes:
         result["note"] = "; ".join(notes)
     return result

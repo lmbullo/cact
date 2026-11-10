@@ -15,7 +15,8 @@
  * INVARIANTS
  *  - loadEnvFile() runs before any env read; every constant is computed once, so a later
  *    process.env edit cannot move a path mid-run. Every state dir exists after import.
- *  - Limits are clamped here, not at use: concurrency 1-8, maxSteps >= 1, maxOutput >= 1024.
+ *  - Limits are clamped here, not at use: concurrency 1-MAX_CONCURRENCY, maxSteps >= 1,
+ *    maxOutput >= 1024.
  *
  * WHERE TO CHANGE
  *  Paths and their args .... arg, workspace, stateDir, *Dir, serverFile
@@ -90,8 +91,13 @@ export const effort = process.env.CODE_TUI_EFFORT ?? "low";
 // green-plan stop; the worker's config.py owns the same default when it is launched directly.
 export const profile = process.env.CODE_TUI_PROFILE ?? "fast-code";
 process.env.CODE_TUI_PROFILE = profile;
-/** How many tasks may run at once: CODE_TUI_CONCURRENCY, clamped to 1-8. */
-export const concurrency = Math.max(1, Math.min(8, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1));
+/** The highest run count a server may be configured with; 100 live runs is a supported load. */
+export const MAX_CONCURRENCY = 256;
+/** How many tasks may run at once: CODE_TUI_CONCURRENCY, clamped to 1-MAX_CONCURRENCY. */
+export const concurrency = Math.max(
+  1,
+  Math.min(MAX_CONCURRENCY, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1),
+);
 /** The worker's step budget per task. */
 export const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 300) || 300);
 /** The worker's output budget per task, in characters. */

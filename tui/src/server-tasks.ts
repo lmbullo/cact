@@ -14,12 +14,13 @@
  *
  * INVARIANTS
  *  - One python/worker.py per task, never shared; `running` is the slot ledger.
- *  - `final` decides the status once the process exits: done, partial (a budget stop with a
- *    summary) or failed; a cancelled task is cancelled whatever the worker said.
+ *  - A worker is detached in its own group, so cancel/shutdown signal its whole tree; pump
+ *    starts SPAWN_BATCH per tick so 100 queued runs never exec 100 interpreters in one turn.
+ *  - `final` decides the exit status (done/partial/failed); a cancelled task stays cancelled.
  *  - Nothing starts while shutting down or once the task is no longer queued.
  *
  * WHERE TO CHANGE
- *  What a worker is told ... the Bun.spawn argv/env in startTask
+ *  What a worker is told ... workerSpawn in server-procs.ts
  *  How a run settles ....... the exit handler in startTask    Cancel .... cancelTask
  */
 import { randomUUID } from "node:crypto";
@@ -41,6 +42,7 @@ import {
 } from "./server-config";
 import { appendEvent, appendLog, logFile, promptFile, saveTask } from "./server-journal";
 import { broadcast, refreshChecks, running, shuttingDown, taskById, tasks } from "./server-state";
+import { signalTree, workerSpawn } from "./server-procs";
 import { handleWorkerLine, readWorkerStream } from "./server-worker";
 import { capString, parseWorkerLine } from "./worker-events";
 import type { Task } from "./types";
@@ -68,7 +70,11 @@ export function createTask(prompt: string): Task {
   return task;
 }
 
-/** Start queued tasks while a concurrency slot is free, oldest first. */
+/** Workers started per event-loop turn; the rest of the queue follows on the next tick. */
+const SPAWN_BATCH = 8;
+let pumpScheduled = false;
+
+/** Start queued tasks while a concurrency slot is free, oldest first, SPAWN_BATCH at a time. */
 export function pump(): void {
   if (shuttingDown) return;
   const capacity = concurrency - running.size;
@@ -77,7 +83,11 @@ export function pump(): void {
     .filter((task) => task.status === "queued")
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(0, capacity);
-  for (const task of queued) startTask(task);
+  for (const task of queued.slice(0, SPAWN_BATCH)) startTask(task);
+  if (queued.length > SPAWN_BATCH && !pumpScheduled) {
+    pumpScheduled = true;
+    setTimeout(() => { pumpScheduled = false; pump(); }, 0);
+  }
 }
 
 /** Spawn the task's worker, stream its stdout/stderr through handleWorkerLine and settle it. */
@@ -94,42 +104,41 @@ export function startTask(task: Task): void {
 
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn({
-      cmd: [
-        python,
-        WORKER,
-        "--workspace",
+    proc = Bun.spawn(
+      workerSpawn(
+        [
+          python,
+          WORKER,
+          "--workspace",
+          workspace,
+          "--prompt-file",
+          promptFile(task.id),
+          "--model",
+          model,
+          "--effort",
+          effort,
+          "--max-steps",
+          String(maxSteps),
+          "--max-wall",
+          String(maxWall),
+          "--max-output",
+          String(maxOutput),
+          "--cell-timeout",
+          String(cellTimeout),
+          "--allow-run",
+          allowRun ? "1" : "0",
+          "--checks",
+          JSON.stringify(checks),
+        ],
         workspace,
-        "--prompt-file",
-        promptFile(task.id),
-        "--model",
-        model,
-        "--effort",
-        effort,
-        "--max-steps",
-        String(maxSteps),
-        "--max-wall",
-        String(maxWall),
-        "--max-output",
-        String(maxOutput),
-        "--cell-timeout",
-        String(cellTimeout),
-        "--allow-run",
-        allowRun ? "1" : "0",
-        "--checks",
-        JSON.stringify(checks),
-      ],
-      cwd: workspace,
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: "1",
-        CODE_TUI_WORKSPACE: workspace,
-        CODE_TUI_STATE: stateDir,
-      },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+        {
+          ...process.env,
+          PYTHONUNBUFFERED: "1",
+          CODE_TUI_WORKSPACE: workspace,
+          CODE_TUI_STATE: stateDir,
+        },
+      ),
+    );
   } catch (error) {
     task.status = "failed";
     task.finishedAt = Date.now();
@@ -228,19 +237,9 @@ export function cancelTask(task: Task): void {
   appendEvent(task, { kind: "log", text: "cancellation requested" });
   const runtime = running.get(task.id);
   if (!runtime) return;
-  try {
-    runtime.proc.kill("SIGTERM");
-  } catch {
-    // already gone
-  }
+  signalTree(runtime.proc.pid, "SIGTERM");
   setTimeout(() => {
-    if (running.has(task.id)) {
-      try {
-        runtime.proc.kill("SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    if (running.has(task.id)) signalTree(runtime.proc.pid, "SIGKILL");
   }, 5000);
   broadcast({ type: "task", task });
 }

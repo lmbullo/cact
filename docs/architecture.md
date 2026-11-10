@@ -100,7 +100,11 @@ What the diagram does not show:
   `result['stdout']` (or `result.stdout`); `read(raw=True)[:n]` and `read(...)['content']` work,
   so a natural model mistake does not cost a cell. The canonical keys are the contract.
 - **Journalling.** The prelude snapshots the tree at start; every cell diffs it. That is what
-  `changes()`, `diff()`, `undo()` and `[state] changed:` read.
+  `changes()`, `diff()`, `undo()` and `[state] changed:` read. The snapshot is bounded by
+  `KERNEL_SNAPSHOT_BYTES` (default 64 MB) and `KERNEL_SNAPSHOT_FILES` (default 40000); past the
+  budget the views cover the watched prefix and report `snapshot_partial`, so pointing `code` at
+  a home directory cannot pin gigabytes. Typed mutations past the prefix stay visible and
+  undoable from the journal, and every other verb (read/search/map/edit/exec/git) is untouched.
 - **Sandbox switch.** `exec`/`git`/`run()` enabled ⇒ the kernel is a plain `python3 -u -c DRIVER`
   child. Disabled (`CODE_TUI_ALLOW_RUN=0`, `worker.py --allow-run 0`) ⇒ the child runs under
   `bwrap` with a read-only `/` plus a writable bind of the workspace only, and the `exec`/`git`

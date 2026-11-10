@@ -342,7 +342,7 @@ the worker:
 | `CODE_TUI_EFFORT` | `low` | `reasoning_effort` (`none` disables it) |
 | `CODE_TUI_EFFORT_POLICY` | `fixed` | `adaptive` sends the effort only after a surprising turn; `fixed` always sends `CODE_TUI_EFFORT` |
 | `CODE_TUI_PROFILE` | `fast-code` | Measured arm: `fast-code` (lean typed set + python cell, effort `low`, inline finish, green-plan stop); also `fast` (same without `code`), `m3-plan`, `current`, `code-act` |
-| `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–8) |
+| `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–256; 100 live runs is supported) |
 | `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
@@ -426,7 +426,12 @@ The server binds `127.0.0.1` on a random port (written to `server.json`):
 | `GET /ws` | WebSocket: a `snapshot` on open, then `task`, `event`, `ping` |
 
 Cancelling a queued task marks it `cancelled` immediately. Cancelling a running task sends
-`SIGTERM` to the worker, then `SIGKILL` after 5 seconds; the task ends `cancelled`.
+`SIGTERM` to the worker's process group, then `SIGKILL` after 5 seconds; the task ends
+`cancelled`. Each worker is spawned detached as its own group leader, so one signal reaches the
+python worker and the kernel child and `run()` children under it — a cancel or shutdown leaves no
+orphan tree behind. A crashed server's workers are reaped on the next boot (only a pid whose
+`/proc` cmdline still names `worker.py`). Workers are started `SPAWN_BATCH` at a time so queuing 100
+runs does not exec 100 interpreters in one event-loop turn.
 
 The detached server prints one JSON line when it starts, and nothing else at that point, so a
 launcher or an agent reads it without parsing prose:

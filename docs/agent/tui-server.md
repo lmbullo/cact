@@ -4,13 +4,15 @@ source_headers=bench/agent/headers.py
 source_symbols=bench/index.py
 subsystem=tui-server
 page=docs/agent/tui-server.md
-modules=7
-module=tui/src/server-config.ts symbols=VERSION,ROOT,WORKER,arg,loadEnvFile,workspace,stateDir,tasksDir,eventsDir,promptsDir,logsDir,serverFile,model,effort,profile,concurrency,maxSteps,maxOutput,maxWall,cellTimeout,allowRun,python,initialChecks,initialKey,serverLog,SOURCE_RECHECK_MS
+modules=8
+module=tui/src/server-config.ts symbols=VERSION,ROOT,WORKER,arg,loadEnvFile,workspace,stateDir,tasksDir,eventsDir,promptsDir,logsDir,serverFile,model,effort,profile,MAX_CONCURRENCY,concurrency,maxSteps,maxOutput,maxWall,cellTimeout,allowRun,python,initialChecks,initialKey,serverLog,SOURCE_RECHECK_MS
 entry=arg(name, fallback), loadEnvFile(); VERSION, ROOT, WORKER, workspace, stateDir, tasksDir, | eventsDir, promptsDir, logsDir, serverFile, model, effort, profile, concurrency, maxSteps, | maxOutput, maxWall, cellTimeout, allowRun, python, initialChecks, initialKey, serverLog, | SOURCE_RECHECK_MS
 module=tui/src/server-http.ts symbols=json,route
 entry=json(data, status=200) -> Response   one JSON answer with the server's headers | route(req, srv) -> Response | Promise<Response> | undefined   the route table; undefined only | after an upgrade
 module=tui/src/server-journal.ts symbols=taskFile,eventFile,promptFile,logFile,appendLog,saveTask,appendEvent,readTaskEvents,loadTasks
 entry=taskFile, eventFile, promptFile, logFile (id); saveTask(task); appendLog(task, record); | appendEvent(task, partial) -> TaskEvent; readTaskEvents(taskId, limit=600); loadTasks()
+module=tui/src/server-procs.ts symbols=workerSpawn,leadsGroup,signalTree,reapWorker
+entry=workerSpawn(cmd, cwd, env) -> options   one detached worker with piped stdout/stderr | signalTree(pid, signal) -> boolean      signal the worker's process group, else just the pid | reapWorker(pid) -> boolean              SIGKILL a stale worker from a crashed server
 module=tui/src/server-state.ts symbols=boot,setInfo,setServer,stopServer,beginShutdown,tasks,taskById,running,nextSeq,sourceStatus,refreshChecks,broadcast,snapshot
 entry=tasks, taskById, running, info, setInfo, setServer, stopServer, beginShutdown, nextSeq, | sourceStatus, refreshChecks, broadcast, snapshot
 module=tui/src/server-tasks.ts symbols=createTask,pump,startTask,cancelTask
