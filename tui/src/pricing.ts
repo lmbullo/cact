@@ -37,7 +37,7 @@ export type Price = {
 /**
  * USD per 1M tokens, from DeepSeek's published price list of 2025-02-09
  * (https://api-docs.deepseek.com/quick_start/pricing). `deepseek-flash` is the alias this
- * repo's worker sends (bench/agent/llm.py) to the DeepSeek chat endpoint, so it shares the
+ * repo's Rust worker sends (`rust/crates/cact/src/llm.rs`) to the DeepSeek chat endpoint, so it shares the
  * chat rates. Renew the numbers and this date together.
  */
 export const PRICES: Record<string, Price> = {

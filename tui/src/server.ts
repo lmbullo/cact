@@ -12,7 +12,7 @@
  *  OS-chosen. Routes: server-http.ts route(). SIGINT/SIGTERM -> shutdown().
  *
  * INVARIANTS
- *  one python/worker.py per task, never shared; CODE_TUI_CONCURRENCY 1-8; pump() fills free slots.
+ *  one cact worker per task, never shared; CODE_TUI_CONCURRENCY 1-8; pump() fills free slots.
  *  shutdown is once: running/queued tasks become failed, workers signalled, server.json removed.
  *  A heartbeat ping every 15 s keeps a socket the client silently lost from looking alive.
  *

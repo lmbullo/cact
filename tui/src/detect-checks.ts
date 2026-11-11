@@ -11,9 +11,9 @@
  * INVARIANTS
  * explicit configuration wins: CODE_TUI_CHECKS (JSON list), then CODE_TUI_CHECK (one command);
  * an empty CODE_TUI_CHECK disables verification.
- * otherwise bench/smoke.py, ruff.toml or Cargo.toml at the root, plus lint, typecheck, format:check
- * and test (or build when neither exists) from the root and tui/package.json; lint, typecheck and
- * format are cheap, so a mutating cell cannot leave a tree the project itself would reject.
+ * otherwise ruff.toml or Cargo.toml at the root, plus lint, typecheck, format:check and test
+ * (or build when neither exists) from the root and tui/package.json; lint, typecheck and format
+ * are cheap, so a mutating cell cannot leave a tree the project itself would reject.
  * a Rust crate gets cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings and cargo test --workspace.
  * the package manager follows the lockfile: bun.lock/bun.lockb -> bun, package-lock.json -> npm, default bun; a tests/ directory is a bun target only for a bun project.
  * scope is the subdirectory a spec belongs to; the loop filters the cheap run by changed paths.
@@ -33,7 +33,7 @@ export type CheckEnv = {
 };
 
 /** The verification plan for one workspace: CODE_TUI_CHECKS, else CODE_TUI_CHECK, else the
- * project's lint/typecheck/format/test scripts plus smoke and ruff. Empty means no goal. */
+ * project's lint/typecheck/format/test scripts plus ruff. Empty means no goal. */
 export function detectChecks(root: string, env: CheckEnv = process.env as CheckEnv): CheckSpec[] {
   const explicit = env.CODE_TUI_CHECKS;
   if (explicit !== undefined) {
@@ -61,7 +61,6 @@ export function detectChecks(root: string, env: CheckEnv = process.env as CheckE
   const add = (name: string, cmd: string, cheap: boolean, scope: string[]) => {
     if (!out.some((item) => item.cmd === cmd)) out.push({ name, cmd, cheap, scope });
   };
-  if (existsSync(join(root, "bench", "smoke.py"))) add("smoke", "python3 bench/smoke.py", true, ["bench"]);
   if (existsSync(join(root, "ruff.toml"))) add("lint", "python3 -m ruff check .", true, []);
   if (existsSync(join(root, "Cargo.toml"))) {
     add("format", "cargo fmt --check", true, []);
