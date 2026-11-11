@@ -24,6 +24,8 @@ python3 bench/guide.py --query "<topic>" # which module owns this
 python3 bench/guide.py --module <path>   # one module's header whole
 python3 -m ruff check .                  # gate: the code contract (ruff.toml)
 python3 bench/smoke.py                   # offline contract check, no key, no network
+make -C rust check                       # Rust engine: clippy + cargo test + cact selfcheck
+make -C rust build                       # release binary (4 jobs, no debuginfo, ~30s)
 ```
 
 Inside a task the same plan is one call: `checks()`. The tree-state equivalent of `git status`
@@ -36,15 +38,26 @@ points; the header says them and every public name carries a one-line docstring.
 
 ## 1. What this repo is
 
-An LLM coding agent in two halves, one language each:
+An LLM coding agent in three parts:
 
 | Path | Language | What it is |
 |---|---|---|
-| `bench/` | Python 3.10+, stdlib only | The agent (`bench/agent/`), the failure-mode evals (`bench/evals/`), archived legacy suites and results (`bench/archive/`) |
-| `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the same agent on the current working tree |
+| `rust/` | Rust 1.78+ | The production engine: `cact worker` is the process the TUI spawns (`rust/README.md`) |
+| `bench/` | Python 3.10+, stdlib only | The reference implementation and the evals: the agent (`bench/agent/`), the failure-mode evals (`bench/evals/`), archived legacy suites and results (`bench/archive/`) |
+| `tui/` | TypeScript + Bun + `@opentui/react` | `code`: a server-backed TUI that runs the agent on the current working tree |
+
+The Rust port is authoritative for the loop: the same typed action space (`rust/crates/cact/src/spec.rs`),
+the same state cards (`card.rs`), the same check plan that gates every finish (`checks.rs`), the
+same `@@TUI@@` worker protocol (`worker.rs`), and the same persistent Python cell (`kernel.rs`).
+`tui/src/server-config.ts::WORKER_CMD` picks the Rust binary when it is built and falls back to
+`tui/python/worker.py`; `CODE_TUI_PYTHON` forces the Python worker. The Python tree keeps the
+evals and the reference behaviour; `bench/smoke.py` still gates it and its header index skips
+`rust/` (it only parses Python/TS headers), so the Rust tree is documented by its `//!` headers,
+`rust/README.md`, and `cact selfcheck`.
 
 The agent is a model in a loop with a **persistent Python kernel**. The action space is 21 typed
-tools generated from one registry (`bench/agent/verbs.py`): `guide`, `skill`, `map`, `read`,
+tools generated from one registry (`bench/agent/verbs.py`; the Rust engine carries the same
+contract in `rust/crates/cact/src/spec.rs`): `guide`, `skill`, `map`, `read`,
 `session_diff`, `checks`, `revert_check`, `serve`, `status`, `search`, `recall`, `page`, `outline`,
 `edit`, `splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`. `run` stays in the registry as
 a python-only helper (never a provider tool); `limits.DEFAULT_TOOLS` is the production scope — every
@@ -53,8 +66,8 @@ typed verb except the operational `serve`, plus `code`/`delegate`/`docs`/`plan`/
 orchestration cell (a python cell; `python` is its alias), not a verb. `run()` is present in
 `repl`/`bare` modes and absent from typed modes.
 
-No root `package.json`, no `pyproject.toml`, no CI. The only install step is `bun install` in
-`tui/`.
+No root `package.json`, no `pyproject.toml`, no CI. The install steps are `bun install` in
+`tui/` and `make -C rust build`.
 
 ## 2. Load-bearing properties
 

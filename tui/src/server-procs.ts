@@ -24,7 +24,7 @@
  *  Spawn flags .... workerSpawn    One signal .... signalTree    Crash cleanup .... reapWorker
  */
 import { readFileSync } from "node:fs";
-import { WORKER } from "./server-config";
+import { WORKER, WORKER_CMD } from "./server-config";
 
 /** The spawn options every worker shares: detached group leader, piped output, no stdin. */
 export function workerSpawn(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
@@ -79,7 +79,7 @@ export function reapWorker(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
     const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    if (!cmdline.includes(WORKER)) return false;
+    if (!cmdline.includes(WORKER) && !cmdline.includes(WORKER_CMD[0]!)) return false;
   } catch {
     return false;
   }

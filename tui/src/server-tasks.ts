@@ -26,7 +26,7 @@
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import {
-  WORKER,
+  WORKER_CMD,
   allowRun,
   cellTimeout,
   concurrency,
@@ -36,7 +36,6 @@ import {
   maxWall,
   model,
   profile,
-  python,
   stateDir,
   workspace,
 } from "./server-config";
@@ -107,8 +106,7 @@ export function startTask(task: Task): void {
     proc = Bun.spawn(
       workerSpawn(
         [
-          python,
-          WORKER,
+          ...WORKER_CMD,
           "--workspace",
           workspace,
           "--prompt-file",
