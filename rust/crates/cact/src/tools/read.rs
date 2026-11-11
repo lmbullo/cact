@@ -45,7 +45,12 @@ pub fn read(ctx: &Ctx, args: &Value) -> Env {
             merge(envs)
         }
         Value::String(path) => read_one(ctx, path, start, end, args),
-        _ => Env::fail("read", "bad_arguments", "read needs a path", "pass path=\"src/main.rs\", or ranges=[{path,start,end}]"),
+        _ => Env::fail(
+            "read",
+            "bad_arguments",
+            "read needs a path",
+            "pass path=\"src/main.rs\", or ranges=[{path,start,end}]",
+        ),
     }
 }
 
@@ -60,28 +65,43 @@ fn read_one(ctx: &Ctx, path: &str, start: usize, end: Option<usize>, args: &Valu
         Err(e) => {
             return Env::fail(
                 "read",
-                if e.kind() == std::io::ErrorKind::NotFound { "not_found" } else { "read_failed" },
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "not_found"
+                } else {
+                    "read_failed"
+                },
                 format!("{shown_path}: {e}"),
-                format!("map(path=\"{}\") lists what exists under the workspace root {}", ctx.root.display(), ctx.root.display()),
+                format!(
+                    "map(path=\"{}\") lists what exists under the workspace root {}",
+                    ctx.root.display(),
+                    ctx.root.display()
+                ),
             )
         }
     };
     if util::looks_binary(&bytes) {
-        return Env::fail("read", "binary_file", format!("{shown_path} is binary ({} bytes)", bytes.len()), "use exec(argv=[\"file\", path]) or a parser instead");
+        return Env::fail(
+            "read",
+            "binary_file",
+            format!("{shown_path} is binary ({} bytes)", bytes.len()),
+            "use exec(argv=[\"file\", path]) or a parser instead",
+        );
     }
     let text = String::from_utf8_lossy(&bytes).to_string();
     let (start, end) = match args["section"].as_str().filter(|s| !s.is_empty()) {
-        Some(section) => match crate::tools::outline::section_range(&ctx.root, &shown_path, section) {
-            Some((s, e)) => (s, Some(e)),
-            None => {
-                return Env::fail(
-                    "read",
-                    "no_section",
-                    format!("no heading or symbol named `{section}` in {shown_path}"),
-                    "call outline(path=...) to see the names and their line ranges",
-                )
+        Some(section) => {
+            match crate::tools::outline::section_range(&ctx.root, &shown_path, section) {
+                Some((s, e)) => (s, Some(e)),
+                None => {
+                    return Env::fail(
+                        "read",
+                        "no_section",
+                        format!("no heading or symbol named `{section}` in {shown_path}"),
+                        "call outline(path=...) to see the names and their line ranges",
+                    )
+                }
             }
-        },
+        }
         None => (start, end),
     };
     let (body, first, last) = util::line_window(&text, start, end, PAGE);
@@ -105,13 +125,22 @@ fn read_one(ctx: &Ctx, path: &str, start: usize, end: Option<usize>, args: &Valu
                 "{shown_path} {first}-{last}/{total} was already delivered in this session; pass repeat=true to read it again, or start=<n> for a new window"
             ));
     }
-    let rendered = if raw { body.clone() } else { util::numbered(&body, first) };
+    let rendered = if raw {
+        body.clone()
+    } else {
+        util::numbered(&body, first)
+    };
     let mut env = Env::ok("read")
         .field("path", shown_path.clone())
         .field("start", first)
         .field("end", last)
         .field("total", total)
-        .paged(Page::window(last.saturating_sub(first) + 1, total, first.saturating_sub(1), "line"))
+        .paged(Page::window(
+            last.saturating_sub(first) + 1,
+            total,
+            first.saturating_sub(1),
+            "line",
+        ))
         .body(rendered);
     env.reads.push((shown_path, first, last));
     if last < total {
@@ -123,7 +152,12 @@ fn read_one(ctx: &Ctx, path: &str, start: usize, end: Option<usize>, args: &Valu
 /// Merge several per-file answers into one envelope: bodies in order, reads concatenated.
 fn merge(mut envs: Vec<Env>) -> Env {
     if envs.is_empty() {
-        return Env::fail("read", "bad_arguments", "no path to read", "pass path=... or ranges=[{path}]");
+        return Env::fail(
+            "read",
+            "bad_arguments",
+            "no path to read",
+            "pass path=... or ranges=[{path}]",
+        );
     }
     if envs.len() == 1 {
         return envs.remove(0);
@@ -143,7 +177,15 @@ fn merge(mut envs: Vec<Env>) -> Env {
     out.page = Some(Page::whole(out.reads.len(), "file"));
     if !failed.is_empty() {
         let first = &failed[0];
-        out.notes.push(format!("{} file(s) failed; first: {}", failed.len(), first.error.as_ref().map(|e| e.message.clone()).unwrap_or_default()));
+        out.notes.push(format!(
+            "{} file(s) failed; first: {}",
+            failed.len(),
+            first
+                .error
+                .as_ref()
+                .map(|e| e.message.clone())
+                .unwrap_or_default()
+        ));
         out.ok = false;
         out.error = first.error.clone();
     }

@@ -18,7 +18,9 @@ import ast
 import builtins
 import io
 import json
+import os
 import sys
+import tempfile
 import traceback
 
 PROTO = "@@K@@"
@@ -29,12 +31,42 @@ VERBS = (
 )
 ns = {"__name__": "__main__", "__builtins__": builtins}
 ns["_OBS"] = []
+_PROTO_OUT = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
+
+# Programs spawned inside a cell are evidence too: the parent records this list on `cell.end`,
+# so a build/test hidden in Python is not invisible to the run's cost and gate metrics.
+_RUN_LOG = []
+
+
+def _spawn_command(event, args):
+    """The command line one audit event names, or empty for an unrelated event."""
+    if event == "os.system":
+        return str(args[0]) if args else ""
+    if event in ("subprocess.Popen", "os.exec", "os.posix_spawn"):
+        argv = args[1] if len(args) > 1 else (args[0] if args else "")
+    elif event == "os.spawn":
+        argv = args[2] if len(args) > 2 else (args[0] if args else "")
+    else:
+        return ""
+    if isinstance(argv, (list, tuple)):
+        return " ".join(str(item) for item in argv)
+    return str(argv or "")
+
+
+def _audit_spawn(event, args):
+    """Record child processes without changing what they may run."""
+    command = _spawn_command(event, args)
+    if command:
+        _RUN_LOG.append(command)
+
+
+sys.addaudithook(_audit_spawn)
 
 
 def _send(payload):
-    """Write one protocol line on the real stdout and flush."""
-    sys.__stdout__.write(PROTO + json.dumps(payload) + "\n")
-    sys.__stdout__.flush()
+    """Write one protocol line on the saved stdout descriptor and flush."""
+    _PROTO_OUT.write(PROTO + json.dumps(payload) + "\n")
+    _PROTO_OUT.flush()
 
 
 class Final(Exception):
@@ -111,6 +143,12 @@ def _reply(request):
     out, err = io.StringIO(), io.StringIO()
     real_out, real_err = sys.stdout, sys.stderr
     final, error, value = None, None, None
+    _RUN_LOG.clear()
+    # A child process inherits fd 1, not the Python StringIO. Capture the real descriptor too,
+    # or a program's output would corrupt the @@K@@ protocol line.
+    real_fd = os.dup(1)
+    captured = tempfile.TemporaryFile(mode="w+")
+    os.dup2(captured.fileno(), 1)
     sys.stdout, sys.stderr = out, err
     try:
         value = _run_cell(request.get("code", ""))
@@ -120,6 +158,13 @@ def _reply(request):
         error = traceback.format_exc()[-4000:]
     finally:
         sys.stdout, sys.stderr = real_out, real_err
+        os.dup2(real_fd, 1)
+        os.close(real_fd)
+        captured.seek(0)
+        child_stdout = captured.read()
+        captured.close()
+        if child_stdout:
+            out.write(child_stdout)
     _send({
         "kind": "done",
         "stdout": out.getvalue(),
@@ -127,6 +172,7 @@ def _reply(request):
         "result": "" if value is None else repr(value)[:4000],
         "final": final,
         "error": error,
+        "runs": list(_RUN_LOG),
     })
 
 

@@ -32,7 +32,10 @@ pub struct Journal {
 impl Journal {
     /// A journal rooted at `root` (paths are recorded relative to it).
     pub fn new(root: &Path) -> Journal {
-        Journal { entries: Vec::new(), root: root.to_path_buf() }
+        Journal {
+            entries: Vec::new(),
+            root: root.to_path_buf(),
+        }
     }
 
     /// Record one change; returns false when the body did not actually change.
@@ -43,7 +46,12 @@ impl Journal {
         let shown = before.clone().unwrap_or_default();
         let new = after.clone().unwrap_or_default();
         let diff = util::unified_diff(path, &shown, &new);
-        self.entries.push(Entry { path: path.to_string(), before, after, diff });
+        self.entries.push(Entry {
+            path: path.to_string(),
+            before,
+            after,
+            diff,
+        });
         true
     }
 
@@ -90,7 +98,10 @@ impl Journal {
                 blocks.push(entry.diff.clone());
             }
         }
-        util::clip(&blocks.join(""), if max_chars == 0 { 24_000 } else { max_chars })
+        util::clip(
+            &blocks.join(""),
+            if max_chars == 0 { 24_000 } else { max_chars },
+        )
     }
 
     /// Restore the most recent entry's path to its before-state; returns the path undone.

@@ -143,7 +143,7 @@ pub fn typed_specs() -> Vec<Value> {
             "stdin": {"type": "string"},
             "timeout": {"type": "number", "minimum": 1}
         }), &[]),
-        tool("git", "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. diff/show page with offset/max_chars and return next.offset plus has_more. Use it instead of git through exec; session_diff is the journal view, not git.", json!({
+        tool("git", "Typed git (working tree): status, diff, show, log, files, add, commit, push, remote, branch. branch() reads the current branch; branch=<name> creates/switches to it. diff/show page with offset/max_chars and return next.offset plus has_more. Use it instead of git through exec; session_diff is the journal view, not git.", json!({
             "action": {"type": "string", "enum": ["status", "diff", "show", "log", "files", "add", "commit", "push", "remote", "branch"]},
             "paths": {"type": "array", "items": {"type": "string"}},
             "message": {"type": "string"},
@@ -167,7 +167,12 @@ pub fn cell_spec(name: &str) -> Value {
     } else {
         "Execute Python in a persistent kernel. Variables, imports and data persist between calls. The value of the last expression and anything printed are returned as the tool result. Use the typed tools for reading, searching, editing and running programs; use python for computation and for anything the typed tools do not cover. help() lists the verbs with their live signatures."
     };
-    tool(name, desc, json!({"code": {"type": "string", "description": "Python source to execute in the kernel."}}), &["code"])
+    tool(
+        name,
+        desc,
+        json!({"code": {"type": "string", "description": "Python source to execute in the kernel."}}),
+        &["code"],
+    )
 }
 
 /// The durable plan spec.
@@ -203,20 +208,20 @@ pub struct Scope {
     pub max_report_chars: usize,
     pub effort: Option<String>,
     pub inline_finish: bool,
+    /// Provider name of the persistent cell: `code` when true, `python` when false.
+    pub code_mode: bool,
 }
 
-/// The production default: every typed verb this port implements, plus the cell and plan/task.
+/// The `fast-code` profile: the lean typed set the measured loop actually uses, plus one cell.
+/// The cell name is `python` unless `CODE_TUI_CODE_MODE=1` overrides it at construction time.
 pub const DEFAULT_TOOLS: &[&str] = &[
-    "guide", "skill", "map", "read", "session_diff", "checks", "status", "search", "page",
-    "outline", "edit", "splice", "write", "delete", "mkdir", "apply", "exec", "git",
-    "plan", "task",
+    "code", "read", "edit", "write", "search", "checks", "exec", "status", "outline", "page",
+    "apply", "delete", "mkdir", "splice", "git", "guide", "skill", "map",
 ];
 
-/// The `fast-code` profile tool list: turns on one `code` cell plus the lean typed set.
+/// The `fast-code` profile tool list: the lean typed set plus one cell.
 pub fn fast_code_tools() -> Vec<String> {
-    let mut tools: Vec<String> = vec!["code".into()];
-    tools.extend(DEFAULT_TOOLS.iter().map(|s| s.to_string()));
-    tools
+    DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect()
 }
 
 impl Scope {
@@ -230,6 +235,7 @@ impl Scope {
             max_report_chars: 4000,
             effort: Some("low".into()),
             inline_finish: true,
+            code_mode: std::env::var("CODE_TUI_CODE_MODE").ok().as_deref() == Some("1"),
         }
     }
 

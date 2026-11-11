@@ -1,1 +1,0 @@
-Add a short 'For agents' section to README.md describing the two halves of this repo, then finish.

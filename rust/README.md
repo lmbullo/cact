@@ -1,4 +1,4 @@
-# rust: the cact engine, ported from `bench/` (Python) to Rust
+# rust: the cact engine
 
 `cact` is the same agent, in Rust: one model in a loop with a typed action space, the state-card
 observations, the check plan that gates every finish, and the same `@@TUI@@` worker protocol the
@@ -41,7 +41,7 @@ is busy, `JOBS=8` when it is idle. There is no debuginfo to write, so a clean re
 target/release/cact run --workspace /path/to/repo --prompt 'Add fib.py and tests' \
     --model deepseek-flash --checks '[{"name":"test","cmd":"python3 -m pytest -q"}]'
 
-# the worker the TUI spawns (same argv as tui/python/worker.py)
+# the worker the TUI spawns
 target/release/cact worker --workspace /path/to/repo --prompt-file /tmp/prompt.txt \
     --model deepseek-flash --effort low --max-steps 300 --max-wall 1800 \
     --checks '[{"name":"test","cmd":"python3 -m pytest -q"}]'
@@ -50,20 +50,18 @@ target/release/cact worker --workspace /path/to/repo --prompt-file /tmp/prompt.t
 `DEEPSEEK_API_KEY` is required (or `--key` for `run`). `DEEPSEEK_BASE_URL`,
 `CODE_TUI_ALLOWED_TOOLS`, `CODE_TUI_STATE`, `BENCH_LLM_CACHE` and `PYTHON` are honoured.
 
-## What is ported, and what is not
+## What is ported
 
-Ported: the LLM client and cache, the tool registry and every verb in the production scope
-(`guide`, `skill`, `map`, `read`, `session_diff`, `checks`, `status`, `search`, `page`, `outline`,
-`edit`, `splice`, `write`, `delete`, `mkdir`, `apply`, `exec`, `git`, `plan`, `task`, `code`), the
-persistent Python cell, the state card, the journal, the check plan and verifier, the finish
-protocol, the worker protocol and history, and the offline selfcheck.
+The LLM client and cache, the `fast-code` tool set (`guide`, `skill`, `map`, `read`, `checks`,
+`status`, `search`, `page`, `outline`, `edit`, `splice`, `write`, `delete`, `mkdir`, `apply`,
+`exec`, `git`, plus the `python` cell), the persistent Python cell, the state card, the journal,
+the check plan and verifier, the green-plan stop, the finish protocol, the worker protocol and
+history, and the offline selfcheck.
 
-Not ported (still Python, under `bench/`): the benchmark/eval harness (`bench/evals`,
-`bench/live.py`, `bench/remote.py`, `bench/smoke*`), the Python kernel prelude's extra verbs that
-the production scope does not grant (`serve`, `revert_check`, `recall`, `docs`, `delegate`,
-`custom`), and the `repl`/`tool` loop variants. The Python tree stays as the reference
-implementation and its `bench/smoke.py` gate still runs; `bench/agent/headers.py` skips `rust/`
-because it only parses Python/TS headers.
+The Python reference implementation and its evals were removed from this branch and remain on
+`main`. The only Python here is the persistent cell child (`kernel_driver.py`); it is not the
+agent loop. The `plan`/`task`/`session_diff` verbs remain callable inside a cell but are not
+provider tools in the `fast-code` profile.
 
 ## The Python cell
 

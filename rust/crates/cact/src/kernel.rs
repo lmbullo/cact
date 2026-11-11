@@ -44,6 +44,8 @@ pub struct Cell {
     pub changed: Vec<String>,
     pub delta: Option<String>,
     pub reads: Vec<(String, usize, usize)>,
+    /// Every program the cell spawned, including a direct subprocess/`os.system` in Python.
+    pub runs: Vec<String>,
     pub duration_ms: u128,
     pub timed_out: bool,
     pub restarted: bool,
@@ -157,10 +159,18 @@ impl Kernel {
         let request = json!({"kind": "cell", "code": code}).to_string();
         if self.write(&request).is_err() {
             self.stop();
-            return Cell { tool: tool.into(), error: Some("kernel stdin closed".into()), failed: true, restarted, ..Cell::default() };
+            return Cell {
+                tool: tool.into(),
+                error: Some("kernel stdin closed".into()),
+                failed: true,
+                restarted,
+                ..Cell::default()
+            };
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(self.timeout_s.max(1.0));
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs_f64(self.timeout_s.max(1.0));
         let mut reads: Vec<(String, usize, usize)> = Vec::new();
+        let mut rpc_runs: Vec<String> = Vec::new();
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -169,7 +179,10 @@ impl Kernel {
                 return Cell {
                     tool: tool.into(),
                     stdout: String::new(),
-                    stderr: format!("cell timeout after {:.0}s; the kernel was restarted", self.timeout_s),
+                    stderr: format!(
+                        "cell timeout after {:.0}s; the kernel was restarted",
+                        self.timeout_s
+                    ),
                     timed_out: true,
                     restarted: true,
                     failed: false,
@@ -185,7 +198,8 @@ impl Kernel {
                     self.restarted = true;
                     return Cell {
                         tool: tool.into(),
-                        stderr: "kernel child exited during the cell; the namespace was lost".into(),
+                        stderr: "kernel child exited during the cell; the namespace was lost"
+                            .into(),
                         error: Some("kernel_exit".into()),
                         restarted: true,
                         failed: true,
@@ -207,6 +221,9 @@ impl Kernel {
                 "rpc" => {
                     let name = reply["name"].as_str().unwrap_or("");
                     let args = &reply["args"];
+                    if name == "exec" {
+                        rpc_runs.extend(crate::contract::commands_from_args(args));
+                    }
                     let env = tools::call(ctx, name, args);
                     reads.extend(env.reads.iter().cloned());
                     let text = crate::card::render_body(&env);
@@ -218,8 +235,28 @@ impl Kernel {
                         stdout: reply["stdout"].as_str().unwrap_or("").to_string(),
                         stderr: reply["stderr"].as_str().unwrap_or("").to_string(),
                         result: reply["result"].as_str().unwrap_or("").to_string(),
-                        final_value: if reply["final"].is_null() { None } else { Some(reply["final"].clone()) },
+                        final_value: if reply["final"].is_null() {
+                            None
+                        } else {
+                            Some(reply["final"].clone())
+                        },
                         error: reply["error"].as_str().map(|s| s.to_string()),
+                        runs: {
+                            let mut runs = rpc_runs;
+                            runs.extend(
+                                reply["runs"]
+                                    .as_array()
+                                    .map(|items| {
+                                        items
+                                            .iter()
+                                            .filter_map(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default(),
+                            );
+                            runs
+                        },
                         reads,
                         restarted,
                         duration_ms: started.elapsed().as_millis(),
@@ -227,7 +264,8 @@ impl Kernel {
                     };
                     cell.failed = cell.error.is_some();
                     // The child keeps `_OBS` in step with the parent's store: index the cell output.
-                    if !cell.stdout.is_empty() || !cell.stderr.is_empty() || !cell.result.is_empty() {
+                    if !cell.stdout.is_empty() || !cell.stderr.is_empty() || !cell.result.is_empty()
+                    {
                         let index = ctx.obs.borrow_mut().push(Entry {
                             stdout: cell.stdout.clone(),
                             stderr: cell.stderr.clone(),
@@ -245,7 +283,9 @@ impl Kernel {
     /// Write one protocol line to the child.
     fn write(&mut self, line: &str) -> Result<(), ()> {
         let stdin = self.stdin.as_mut().ok_or(())?;
-        stdin.write_all(format!("{line}\n").as_bytes()).map_err(|_| ())?;
+        stdin
+            .write_all(format!("{line}\n").as_bytes())
+            .map_err(|_| ())?;
         stdin.flush().map_err(|_| ())
     }
 

@@ -28,14 +28,24 @@ struct Hit {
 pub fn search(ctx: &Ctx, args: &Value) -> Env {
     let pattern = args["pattern"].as_str().unwrap_or("");
     if pattern.is_empty() {
-        return Env::fail("search", "bad_arguments", "search needs a pattern", "pass pattern=\"TODO\" (regex by default)");
+        return Env::fail(
+            "search",
+            "bad_arguments",
+            "search needs a pattern",
+            "pass pattern=\"TODO\" (regex by default)",
+        );
     }
     let regex_mode = args["regex"].as_bool().unwrap_or(true);
     let ignore_case = args["ignore_case"].as_bool().unwrap_or(false);
     let matcher = match build_matcher(pattern, regex_mode, ignore_case) {
         Ok(m) => m,
         Err(e) => {
-            return Env::fail("search", "bad_pattern", e, "pass regex=false for a literal search, or fix the regex");
+            return Env::fail(
+                "search",
+                "bad_pattern",
+                e,
+                "pass regex=false for a literal search, or fix the regex",
+            );
         }
     };
     let context = args["context"].as_u64().unwrap_or(0) as usize;
@@ -45,17 +55,25 @@ pub fn search(ctx: &Ctx, args: &Value) -> Env {
     };
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let count_only = args["count"].as_bool().unwrap_or(false);
-    let within: Option<(usize, usize)> = args["within"]
-        .as_array()
-        .filter(|a| a.len() == 2)
-        .map(|a| (a[0].as_u64().unwrap_or(1) as usize, a[1].as_u64().unwrap_or(u64::MAX) as usize));
+    let within: Option<(usize, usize)> =
+        args["within"].as_array().filter(|a| a.len() == 2).map(|a| {
+            (
+                a[0].as_u64().unwrap_or(1) as usize,
+                a[1].as_u64().unwrap_or(u64::MAX) as usize,
+            )
+        });
 
     let files = match collect_files(ctx, args) {
         Ok(files) => files,
         Err(env) => return *env,
     };
     if files.is_empty() {
-        return Env::fail("search", "no_files", "no file matched the path/include filter", "call map() to see the tree, or pass an explicit path");
+        return Env::fail(
+            "search",
+            "no_files",
+            "no file matched the path/include filter",
+            "call map() to see the tree, or pass an explicit path",
+        );
     }
     let mut hits: Vec<Hit> = Vec::new();
     let mut counts: Vec<(String, usize)> = Vec::new();
@@ -87,8 +105,12 @@ pub fn search(ctx: &Ctx, args: &Value) -> Env {
                 path: shown.clone(),
                 line: number,
                 text: line.to_string(),
-                before: (from..number).map(|n| (n, lines[n - 1].to_string())).collect(),
-                after: (number + 1..=to).map(|n| (n, lines[n - 1].to_string())).collect(),
+                before: (from..number)
+                    .map(|n| (n, lines[n - 1].to_string()))
+                    .collect(),
+                after: (number + 1..=to)
+                    .map(|n| (n, lines[n - 1].to_string()))
+                    .collect(),
             });
         }
         if file_hits > 0 {
@@ -108,9 +130,16 @@ pub fn search(ctx: &Ctx, args: &Value) -> Env {
         return Env::ok("search")
             .field("matches", 0)
             .paged(Page::whole(0, "hit"))
-            .body(format!("no match for {pattern:?} in {} file(s)", files.len()));
+            .body(format!(
+                "no match for {pattern:?} in {} file(s)",
+                files.len()
+            ));
     }
-    let end = if max_results == 0 { total } else { (offset + max_results).min(total) };
+    let end = if max_results == 0 {
+        total
+    } else {
+        (offset + max_results).min(total)
+    };
     let start = offset.min(total);
     let window = &hits[start..end];
     let mut rows: Vec<String> = Vec::new();
@@ -144,13 +173,25 @@ type Matcher = Box<dyn Fn(&str) -> bool>;
 /// Build the line predicate: a regex, or a literal substring.
 fn build_matcher(pattern: &str, regex_mode: bool, ignore_case: bool) -> Result<Matcher, String> {
     if regex_mode {
-        let source = if ignore_case { format!("(?i){pattern}") } else { pattern.to_string() };
+        let source = if ignore_case {
+            format!("(?i){pattern}")
+        } else {
+            pattern.to_string()
+        };
         let re = regex::Regex::new(&source).map_err(|e| e.to_string())?;
         Ok(Box::new(move |line: &str| re.is_match(line)))
     } else {
-        let needle = if ignore_case { pattern.to_lowercase() } else { pattern.to_string() };
+        let needle = if ignore_case {
+            pattern.to_lowercase()
+        } else {
+            pattern.to_string()
+        };
         Ok(Box::new(move |line: &str| {
-            let hay = if ignore_case { line.to_lowercase() } else { line.to_string() };
+            let hay = if ignore_case {
+                line.to_lowercase()
+            } else {
+                line.to_string()
+            };
             hay.contains(&needle)
         }))
     }
@@ -161,7 +202,11 @@ fn collect_files(ctx: &Ctx, args: &Value) -> Result<Vec<std::path::PathBuf>, Box
     let includes = map::include_list(&args["include"]);
     let mut out: Vec<std::path::PathBuf> = Vec::new();
     let roots: Vec<String> = match &args["path"] {
-        Value::Array(a) => a.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect(),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect(),
         Value::String(s) => vec![s.clone()],
         _ => Vec::new(),
     };
@@ -179,7 +224,10 @@ fn collect_files(ctx: &Ctx, args: &Value) -> Result<Vec<std::path::PathBuf>, Box
             return Err(Box::new(Env::fail(
                 "search",
                 "not_found",
-                format!("{root}: no such file or directory under {}", ctx.root.display()),
+                format!(
+                    "{root}: no such file or directory under {}",
+                    ctx.root.display()
+                ),
                 "call map() to see the tree",
             )));
         }

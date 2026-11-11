@@ -6,37 +6,56 @@
 //!   and stop on the finish protocol. The verifier (the run's check plan) gates every finish.
 //!
 //! ENTRY POINTS
-//!   Budget { steps, wall_s, output }        the run's limits
+//!   Budget { steps, wall_s, output, max_total_tokens, card_budget }   the run's limits
 //!   Engine::new(client, ctx, kernel, budget, scope, rules, sink)
 //!   .run(prompt) -> RunResult               stop, final text, counters, usage, handoff
 //!
 //! INVARIANTS
 //!   a model error is stop=LLM_FAILED with the last text kept, never a panic.
-//!   `final_answer` is rejected until the plan passes; a failing check never ends the run, it is a
-//!   repair instruction, and a silent final_answer that passes ends the turn as VERIFIED.
-//!   the turn is bounded: at most `max_calls_per_turn` calls, steps and wall clock from `Budget`.
+//!   `final_answer` is rejected until the plan and the prompt contract pass; a failing check or
+//!   an unsupported prompt constraint never ends the run, it is a repair instruction.
+//!   the turn is bounded: at most `max_calls_per_turn` calls, steps, wall clock, total tokens and
+//!   the card budget from `Budget`; a clipped card always names the exact resume call.
 
 use crate::card;
+use crate::contract::{self, Evidence};
+use crate::env;
 use crate::envelope::Env;
 use crate::kernel::{Cell, Kernel};
 use crate::llm::{Client, Effort, Reply, Usage};
 use crate::spec::Scope;
-use crate::tools::{self, RunState};
+use crate::tools::{self, PlanItem, RunState};
 use serde_json::{json, Value};
 
-/// The run's limits: turns, wall clock, and the per-turn output ceiling.
+/// The run's limits: turns, wall clock, output per turn, total tokens and card delivery.
 #[derive(Debug, Clone, Copy)]
 pub struct Budget {
     pub steps: usize,
     pub wall_s: f64,
     pub output: usize,
+    pub max_total_tokens: usize,
+    pub card_budget: usize,
 }
 
 impl Budget {
-    /// A budget with the given caps; a zero step cap means unlimited (bounded by wall clock).
+    /// A budget with the given caps; `max_total_tokens`/`card_budget` default from the env.
     pub fn new(steps: usize, wall_s: f64, output: usize) -> Budget {
-        Budget { steps, wall_s, output }
+        Budget {
+            steps,
+            wall_s,
+            output,
+            max_total_tokens: env_usize("CODE_TUI_MAX_TOTAL_TOKENS", 30_000_000),
+            card_budget: env_usize("CODE_TUI_CARD_BUDGET", 5_000),
+        }
     }
+}
+
+/// One environment integer, with a default when unset or malformed.
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(default)
 }
 
 /// One finished run: the stop word, the report, and what it cost.
@@ -71,6 +90,8 @@ pub mod stops {
     pub const TRUNCATED: &str = "TRUNCATED";
     /// The model call itself failed.
     pub const LLM_FAILED: &str = "LLM_FAILED";
+    /// The run's total token ceiling was reached: the circuit breaker.
+    pub const TOKEN_LIMIT: &str = "TOKEN_LIMIT";
 }
 
 /// The turn machine: model, tools, kernel child, verify-on-finish.
@@ -83,6 +104,12 @@ pub struct Engine<'a> {
     pub rules: String,
     pub sink: Box<dyn FnMut(Value) + 'a>,
     pub plan_label: Option<String>,
+    contract: Vec<contract::Item>,
+    evidence: Evidence,
+    last_prompt_tokens: u64,
+    card_step: usize,
+    card_used: usize,
+    green: bool,
 }
 
 impl<'a> Engine<'a> {
@@ -96,7 +123,22 @@ impl<'a> Engine<'a> {
         rules: String,
         sink: Box<dyn FnMut(Value) + 'a>,
     ) -> Engine<'a> {
-        Engine { client, ctx, kernel, budget, scope, rules, sink, plan_label: None }
+        Engine {
+            client,
+            ctx,
+            kernel,
+            budget,
+            scope,
+            rules,
+            sink,
+            plan_label: None,
+            contract: Vec::new(),
+            evidence: Evidence::default(),
+            last_prompt_tokens: 0,
+            card_step: 0,
+            card_used: 0,
+            green: false,
+        }
     }
 
     /// Emit one worker event through the sink.
@@ -107,11 +149,34 @@ impl<'a> Engine<'a> {
     /// Drive the loop until a stop word; never raises on a model error.
     pub fn run(&mut self, task_id: &str, prompt: &str) -> RunResult {
         let started = std::time::Instant::now();
-        let mut result = RunResult { plan_green: self.ctx.plan.is_none(), ..RunResult::default() };
+        let mut result = RunResult {
+            plan_green: self.ctx.plan.is_none(),
+            ..RunResult::default()
+        };
+        self.contract = contract::parse(prompt);
+        if !self.contract.is_empty() {
+            let mut state = self.ctx.state.borrow_mut();
+            if state.plan.is_empty() {
+                state.plan = self
+                    .contract
+                    .iter()
+                    .map(|item| PlanItem {
+                        text: format!("contract: {}", item.text),
+                        done: false,
+                    })
+                    .collect();
+            }
+        }
         let tools_specs = self.specs();
+        let env_card = env::render(&self.ctx.root, prompt, self.ctx.plan.as_ref());
+        let first_user = if env_card.is_empty() {
+            format!("[task] {task_id}\n\n{prompt}")
+        } else {
+            format!("{env_card}\n\n[task] {task_id}\n\n{prompt}")
+        };
         let mut messages: Vec<Value> = vec![
             json!({"role": "system", "content": self.rules}),
-            json!({"role": "user", "content": format!("[task] {task_id}\n\n{prompt}")}),
+            json!({"role": "user", "content": first_user}),
         ];
         let mut staged: Option<Value> = None;
         let mut last_text = String::new();
@@ -146,6 +211,17 @@ impl<'a> Engine<'a> {
             };
             result.llm_calls += 1;
             usage_add(&mut result.usage, &reply.usage);
+            self.last_prompt_tokens = reply.usage.prompt;
+            if self.budget.max_total_tokens > 0
+                && result.usage.total as usize >= self.budget.max_total_tokens
+            {
+                result.stop = stops::TOKEN_LIMIT.into();
+                result.final_text = staged
+                    .as_ref()
+                    .map(value_text)
+                    .unwrap_or_else(|| last_text.clone());
+                break;
+            }
             self.emit(json!({"kind": "turn", "turn": step, "data": {
                 "usage": {
                     "prompt": reply.usage.prompt, "completion": reply.usage.completion,
@@ -165,10 +241,22 @@ impl<'a> Engine<'a> {
             messages.push(assistant_message(&reply));
             if calls.is_empty() {
                 // No tool call: accept the staged answer, or the reply's own text, after verifying.
-                let candidate = staged.clone().unwrap_or_else(|| Value::String(reply.content.clone()));
+                let candidate = staged
+                    .clone()
+                    .unwrap_or_else(|| Value::String(reply.content.clone()));
                 match self.verify() {
                     Ok(true) => {
-                        result.stop = if self.ctx.changed().is_empty() { stops::DONE } else { stops::VERIFIED }.into();
+                        if let Some(notice) = self.contract_rejection() {
+                            staged = None;
+                            messages.push(json!({"role": "user", "content": notice}));
+                            continue;
+                        }
+                        result.stop = if self.ctx.changed().is_empty() {
+                            stops::DONE
+                        } else {
+                            stops::VERIFIED
+                        }
+                        .into();
                         result.plan_green = true;
                         result.final_text = value_text(&candidate);
                         result.final_answer = Some(candidate);
@@ -228,12 +316,38 @@ impl<'a> Engine<'a> {
                 if let Some(check) = self.ctx.state.borrow().last_check.clone() {
                     self.emit(json!({"kind": "check", "ok": check == "pass", "name": self.plan_label.clone().unwrap_or_else(|| "check".into()), "line": if check == "pass" { String::new() } else { check }}));
                 }
+                let refusal = cell.envelope.as_ref().and_then(|e| e.error.clone());
+                let env_ok = cell.envelope.as_ref().map(|e| e.ok).unwrap_or(true);
+                let ok = cell.error.is_none() && !cell.timed_out && env_ok;
+                let notes: Vec<String> = cell
+                    .envelope
+                    .as_ref()
+                    .map(|e| {
+                        e.notes
+                            .iter()
+                            .map(|note| note.split_whitespace().collect::<Vec<_>>().join(" "))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let error = refusal
+                    .as_ref()
+                    .map(|e| format!("{}: {}", e.code, e.message))
+                    .or_else(|| cell.error.clone());
                 self.emit(json!({
                     "kind": "cell.end",
                     "cell": index + 1,
                     "tool": call.name,
-                    "ok": cell.error.is_none() && !cell.timed_out,
-                    "code": cell.envelope.as_ref().and_then(|e| e.error.clone()).map(|e| e.code),
+                    "ok": ok,
+                    "verb_kind": cell.envelope.as_ref().map(|e| e.kind.clone()),
+                    "code": refusal.as_ref().map(|e| e.code.clone()),
+                    "error": error,
+                    "page": cell.envelope.as_ref().and_then(|e| e.page.as_ref()).map(|page| json!({
+                        "shown": page.shown, "total": page.total, "unit": page.unit,
+                        "has_more": page.has_more, "truncated": page.truncated,
+                        "complete": page.complete
+                    })),
+                    "notes": notes,
+                    "runs": cell.runs,
                     "chars": cell.stdout.len() + cell.result.len(),
                     "duration_ms": cell.duration_ms,
                     "obs": cell.obs_index.map(|i| format!("_OBS[{i}]")),
@@ -247,7 +361,17 @@ impl<'a> Engine<'a> {
             if let Some((_, value)) = turn_values.last().cloned() {
                 match self.verify() {
                     Ok(true) => {
-                        result.stop = if self.ctx.changed().is_empty() { stops::DONE } else { stops::VERIFIED }.into();
+                        if let Some(notice) = self.contract_rejection() {
+                            messages.push(json!({"role": "user", "content": notice}));
+                            staged = None;
+                            continue;
+                        }
+                        result.stop = if self.ctx.changed().is_empty() {
+                            stops::DONE
+                        } else {
+                            stops::VERIFIED
+                        }
+                        .into();
                         result.plan_green = true;
                         result.final_text = value_text(&value);
                         result.final_answer = Some(value);
@@ -279,7 +403,12 @@ impl<'a> Engine<'a> {
     /// The provider tool list: typed specs plus the cell and plan/task, filtered by scope.
     fn specs(&self) -> Vec<Value> {
         let mut specs = crate::spec::typed_specs();
-        specs.push(crate::spec::cell_spec("code"));
+        let cell = if self.scope.code_mode {
+            "code"
+        } else {
+            "python"
+        };
+        specs.push(crate::spec::cell_spec(cell));
         specs.push(crate::spec::plan_spec());
         specs.push(crate::spec::task_spec());
         self.scope.filter(specs)
@@ -288,27 +417,123 @@ impl<'a> Engine<'a> {
     /// Run one call and return both the cell record and the card text the model reads.
     fn dispatch(&mut self, name: &str, args: &Value, step: usize) -> (Cell, String) {
         let state: RunState = self.ctx.state.borrow().clone();
+        if self.green && (name == "exec" || name == "checks") {
+            let env = Env::fail(
+                name,
+                "green_plan",
+                "the check plan already passes for this tree",
+                "reply with the final report, or call final_answer(...) inside a silent code cell",
+            );
+            let text = card::render_body(&env);
+            let cell = Cell {
+                tool: name.to_string(),
+                envelope: Some(env),
+                changed: self.ctx.changed(),
+                ..Cell::default()
+            };
+            let text = self.fit_card(name, args, &cell, text, step);
+            return (cell, text);
+        }
         if name == "code" || name == "python" {
             let code = args["code"].as_str().unwrap_or("");
-            let mut cell = self.kernel.cell(self.ctx, code, "code");
+            let cell = self.kernel.cell(self.ctx, code, "code");
             self.ctx.state.borrow_mut().steps = step;
-            let text = card::render(&cell, step, 0, &state, None);
-            if cell.obs_index.is_none() {
-                cell.obs_index = None;
+            self.evidence
+                .observe_runs(&cell.runs, cell.error.is_none() && !cell.timed_out);
+            if !cell.changed.is_empty() {
+                self.green = false;
             }
+            let text = card::render(&cell, step, self.last_prompt_tokens, &state, None);
+            let text = self.fit_card(name, args, &cell, text, step);
             return (cell, text);
         }
         let env = tools::call(self.ctx, name, args);
+        if !env.changed.is_empty() {
+            self.green = false;
+        }
+        if name == "checks" && env.ok {
+            self.green = self.ctx.state.borrow().last_check.as_deref() == Some("pass");
+        }
+        let runs = contract::commands_from_args(args);
+        self.evidence.record_call(name, args, env.ok);
+        self.evidence.observe_runs(&runs, env.ok);
         let text = card::render_body(&env);
         let cell = Cell {
             tool: name.to_string(),
-            envelope: Some(env),
+            envelope: Some(env.clone()),
             changed: self.ctx.changed(),
-            reads: Vec::new(),
+            reads: env.reads.clone(),
+            delta: env.delta.clone(),
+            runs,
             ..Cell::default()
         };
         self.ctx.state.borrow_mut().steps = step;
+        let text = self.fit_card(name, args, &cell, text, step);
         (cell, text)
+    }
+
+    /// The exact resume call a clipped card names: the next read window, else the _OBS page.
+    fn resume_call(name: &str, cell: &Cell, handle: &str) -> String {
+        if name == "read" {
+            if let Some((path, _, end)) = cell.reads.iter().max_by_key(|(_, _, end)| *end) {
+                return format!("[card] clipped; resume read({path:?}, start={})", end + 1);
+            }
+        }
+        format!("[card] clipped; resume page(handle={handle:?})")
+    }
+
+    /// Deliver a card within this turn's budget; a cut names the exact call that continues it.
+    fn fit_card(
+        &mut self,
+        name: &str,
+        _args: &Value,
+        cell: &Cell,
+        text: String,
+        step: usize,
+    ) -> String {
+        if self.budget.card_budget == 0 {
+            return text;
+        }
+        if step != self.card_step {
+            self.card_step = step;
+            self.card_used = 0;
+        }
+        let total = text.chars().count();
+        let room = self.budget.card_budget.saturating_sub(self.card_used);
+        if total <= room {
+            self.card_used += total;
+            return text;
+        }
+        let handle = cell
+            .obs_index
+            .map(|i| format!("_OBS[{i}]"))
+            .or_else(|| {
+                cell.envelope
+                    .as_ref()
+                    .and_then(|env| env.data.as_ref())
+                    .and_then(|data| data.get("obs"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "_OBS[-1]".into());
+        let reserve = if room > 180 { 180 } else { room / 4 };
+        let (head, _) = card::clip_card(&text, room.saturating_sub(reserve), &handle);
+        let out = format!("{}\n{}", head, Self::resume_call(name, cell, &handle));
+        self.card_used += out.chars().count();
+        out
+    }
+
+    /// The rejection a finish earns when a prompt constraint still has no evidence.
+    fn contract_rejection(&self) -> Option<String> {
+        let evidence = self
+            .evidence
+            .snapshot(self.ctx.changed().len(), self.evidence.checks_green);
+        let missing = contract::missing(&self.contract, &evidence);
+        if missing.is_empty() {
+            None
+        } else {
+            Some(contract::rejection(&missing))
+        }
     }
 
     /// Run the goal plan, if any: Ok(true) pass, Ok(false) fail, Err(stop) when the plan is unrunnable.
@@ -322,10 +547,12 @@ impl<'a> Engine<'a> {
                     None => Ok(true),
                     Some(check) => {
                         let ok = check.ok();
+                        self.evidence.checks_green = ok;
                         if ok {
                             self.ctx.state.borrow_mut().last_check = Some("pass".into());
                         } else {
-                            let line = format!("{} : {}", name_of(&check.cmd), check.first_failure());
+                            let line =
+                                format!("{} : {}", name_of(&check.cmd), check.first_failure());
                             self.ctx.state.borrow_mut().last_check = Some(line);
                         }
                         self.emit(json!({"kind": "check", "ok": ok, "name": name_of(&check.cmd), "line": if ok { String::new() } else { check.first_failure() }}));
@@ -338,7 +565,13 @@ impl<'a> Engine<'a> {
 
     /// The rejection message a failed finish earns: the first failing line, then "keep working".
     fn reject(&self) -> String {
-        let line = self.ctx.state.borrow().last_check.clone().unwrap_or_else(|| "the plan failed".into());
+        let line = self
+            .ctx
+            .state
+            .borrow()
+            .last_check
+            .clone()
+            .unwrap_or_else(|| "the plan failed".into());
         format!(
             "[runtime] final_answer rejected: the check plan has not passed.\n[check] {}\nRead the failing line, repair the cause, and re-run checks() when you believe it passes. Keep working.",
             crate::util::clip(&line, 240)

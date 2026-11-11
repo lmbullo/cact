@@ -29,7 +29,16 @@ pub struct Page {
 impl Page {
     /// A whole answer: everything matched and was delivered.
     pub fn whole(total: usize, unit: &str) -> Page {
-        Page { shown: total, total, offset: 0, next: None, unit: unit.into(), has_more: false, truncated: false, complete: true }
+        Page {
+            shown: total,
+            total,
+            offset: 0,
+            next: None,
+            unit: unit.into(),
+            has_more: false,
+            truncated: false,
+            complete: true,
+        }
     }
 
     /// A window `offset..offset+shown` of `total`.
@@ -76,15 +85,28 @@ pub struct Env {
 impl Env {
     /// A successful answer of `kind` with no body yet.
     pub fn ok(kind: &str) -> Env {
-        Env { ok: true, kind: kind.into(), ..Env::default() }
+        Env {
+            ok: true,
+            kind: kind.into(),
+            ..Env::default()
+        }
     }
 
     /// A refusal that carries the three fields a caller needs to recover.
-    pub fn fail(kind: &str, code: &str, message: impl Into<String>, use_hint: impl Into<String>) -> Env {
+    pub fn fail(
+        kind: &str,
+        code: &str,
+        message: impl Into<String>,
+        use_hint: impl Into<String>,
+    ) -> Env {
         Env {
             ok: false,
             kind: kind.into(),
-            error: Some(Refusal { code: code.into(), message: message.into(), use_hint: use_hint.into() }),
+            error: Some(Refusal {
+                code: code.into(),
+                message: message.into(),
+                use_hint: use_hint.into(),
+            }),
             ..Env::default()
         }
     }
@@ -97,7 +119,9 @@ impl Env {
 
     /// Attach one structured field.
     pub fn field(mut self, key: &str, value: impl Into<Value>) -> Env {
-        self.data.get_or_insert_with(Map::new).insert(key.into(), value.into());
+        self.data
+            .get_or_insert_with(Map::new)
+            .insert(key.into(), value.into());
         self
     }
 

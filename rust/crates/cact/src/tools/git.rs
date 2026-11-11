@@ -16,7 +16,9 @@ use crate::util;
 use serde_json::Value;
 
 /// The actions this port implements.
-pub const ACTIONS: &[&str] = &["status", "diff", "show", "log", "files", "add", "commit", "push", "remote", "branch"];
+pub const ACTIONS: &[&str] = &[
+    "status", "diff", "show", "log", "files", "add", "commit", "push", "remote", "branch",
+];
 
 /// `git`: one subcommand, one paged answer.
 pub fn git(ctx: &Ctx, args: &Value) -> Env {
@@ -29,12 +31,23 @@ pub fn git(ctx: &Ctx, args: &Value) -> Env {
             format!("use one of: {}", ACTIONS.join(", ")),
         );
     }
-    let cwd = args["cwd"].as_str().map(|c| util::resolve(&ctx.root, c)).unwrap_or_else(|| ctx.root.clone());
+    let cwd = args["cwd"]
+        .as_str()
+        .map(|c| util::resolve(&ctx.root, c))
+        .unwrap_or_else(|| ctx.root.clone());
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let max_chars = args["max_chars"].as_u64().unwrap_or(24_000) as usize;
     let limit = args["limit"].as_u64().unwrap_or(30) as usize;
     let mut argv: Vec<String> = vec!["git".into(), action.into()];
-    let paths: Vec<String> = args["paths"].as_array().map(|a| a.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect()).unwrap_or_default();
+    let paths: Vec<String> = args["paths"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
     match action {
         "status" => {
             argv.push("--short".into());
@@ -63,14 +76,24 @@ pub fn git(ctx: &Ctx, args: &Value) -> Env {
         "files" => argv.push("ls-files".into()),
         "add" => {
             if paths.is_empty() {
-                return Env::fail("git", "bad_arguments", "git add needs paths", "pass paths=[\"src/main.rs\"] or paths=[\".\"]");
+                return Env::fail(
+                    "git",
+                    "bad_arguments",
+                    "git add needs paths",
+                    "pass paths=[\"src/main.rs\"] or paths=[\".\"]",
+                );
             }
             argv.extend(paths.iter().cloned());
         }
         "commit" => {
             let message = args["message"].as_str().unwrap_or("");
             if message.trim().is_empty() {
-                return Env::fail("git", "bad_arguments", "git commit needs a message", "pass message=\"what changed and why\"");
+                return Env::fail(
+                    "git",
+                    "bad_arguments",
+                    "git commit needs a message",
+                    "pass message=\"what changed and why\"",
+                );
             }
             argv.push("-m".into());
             argv.push(message.to_string());
@@ -88,7 +111,19 @@ pub fn git(ctx: &Ctx, args: &Value) -> Env {
             }
         }
         "remote" => argv.push("-v".into()),
-        "branch" => argv.push("--show-current".into()),
+        "branch" => {
+            // No branch argument reads the current branch; a name creates/switches to it.
+            if let Some(branch) = args["branch"].as_str().filter(|b| !b.trim().is_empty()) {
+                argv = vec![
+                    "git".into(),
+                    "checkout".into(),
+                    "-b".into(),
+                    branch.to_string(),
+                ];
+            } else {
+                argv.push("--show-current".into());
+            }
+        }
         _ => {}
     }
     // `git files` is `git ls-files`; rebuild the argv for the alias.
@@ -98,7 +133,11 @@ pub fn git(ctx: &Ctx, args: &Value) -> Env {
     match util::run_argv(&argv, &cwd, &Default::default(), None, 120.0) {
         Err(e) => Env::fail("git", "git_failed", e, "is git installed?"),
         Ok(out) => {
-            let text = if action == "status" && out.stdout.is_empty() { "working tree clean".to_string() } else { out.stdout.clone() };
+            let text = if action == "status" && out.stdout.is_empty() {
+                "working tree clean".to_string()
+            } else {
+                out.stdout.clone()
+            };
             if out.exit != Some(0) {
                 let detail = util::first_failure(&out.stdout, &out.stderr);
                 return Env::fail(
@@ -112,7 +151,11 @@ pub fn git(ctx: &Ctx, args: &Value) -> Env {
                 let chars: Vec<char> = text.chars().collect();
                 let total = chars.len();
                 let start = offset.min(total);
-                let take = if max_chars == 0 { total - start } else { max_chars.min(total - start) };
+                let take = if max_chars == 0 {
+                    total - start
+                } else {
+                    max_chars.min(total - start)
+                };
                 let body: String = chars[start..start + take].iter().collect();
                 let mut env = Env::ok("git")
                     .field("action", action)
@@ -123,7 +166,9 @@ pub fn git(ctx: &Ctx, args: &Value) -> Env {
                 }
                 return env;
             }
-            Env::ok("git").field("action", action).body(util::clip(&text, 24_000))
+            Env::ok("git")
+                .field("action", action)
+                .body(util::clip(&text, 24_000))
         }
     }
 }

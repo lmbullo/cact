@@ -12,7 +12,9 @@
 
 mod card;
 mod checks;
+mod contract;
 mod engine;
+mod env;
 mod envelope;
 mod history;
 mod journal;
@@ -40,7 +42,8 @@ const USAGE: &str = "cact: an unattended coding agent
   cact version
 
 Environment: DEEPSEEK_API_KEY (or --key), DEEPSEEK_BASE_URL, CODE_TUI_ALLOWED_TOOLS,
-CODE_TUI_STATE, BENCH_LLM_CACHE, PYTHON (kernel interpreter), RUST_LOG=1 (worker events on stderr).
+CODE_TUI_STATE, BENCH_LLM_CACHE, PYTHON (kernel interpreter), CODE_TUI_CARD_BUDGET,
+CODE_TUI_MAX_TOTAL_TOKENS, RUST_LOG=1 (worker events on stderr).
 ";
 
 fn main() {
@@ -90,10 +93,26 @@ fn run(argv: Vec<String>) -> i32 {
                 let level = value().unwrap_or_default();
                 args.effort = if level == "none" { None } else { Some(level) };
             }
-            "--max-steps" => args.max_steps = value().and_then(|v| v.parse().ok()).unwrap_or(args.max_steps),
-            "--max-wall" => args.max_wall = value().and_then(|v| v.parse().ok()).unwrap_or(args.max_wall),
-            "--cell-timeout" => args.cell_timeout = value().and_then(|v| v.parse().ok()).unwrap_or(args.cell_timeout),
-            "--max-output" => args.max_output = value().and_then(|v| v.parse().ok()).unwrap_or(args.max_output),
+            "--max-steps" => {
+                args.max_steps = value()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(args.max_steps)
+            }
+            "--max-wall" => {
+                args.max_wall = value()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(args.max_wall)
+            }
+            "--cell-timeout" => {
+                args.cell_timeout = value()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(args.cell_timeout)
+            }
+            "--max-output" => {
+                args.max_output = value()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(args.max_output)
+            }
             "--check" => args.check = value().unwrap_or_default(),
             "--checks" => args.checks = value().unwrap_or_default(),
             "--key" => key = value().unwrap_or_default(),
@@ -116,15 +135,40 @@ fn run(argv: Vec<String>) -> i32 {
         eprintln!("cact run: DEEPSEEK_API_KEY (or --key) is required");
         return 2;
     }
-    let workspace = args.workspace.canonicalize().unwrap_or_else(|_| args.workspace.clone());
-    let specs = if args.checks.trim().is_empty() { checks::parse(&args.check) } else { checks::parse(&args.checks) };
+    let workspace = args
+        .workspace
+        .canonicalize()
+        .unwrap_or_else(|_| args.workspace.clone());
+    let specs = if args.checks.trim().is_empty() {
+        checks::parse(&args.check)
+    } else {
+        checks::parse(&args.checks)
+    };
     let ctx = tools::Ctx::new(&workspace, specs.clone(), args.allow_run, args.max_output);
-    let base = std::env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into());
-    let client = llm::Client::new(&key, &args.model, args.effort.as_deref(), &base, 180.0, Some(llm::Client::default_cache(&workspace)));
+    let base =
+        std::env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into());
+    let client = llm::Client::new(
+        &key,
+        &args.model,
+        args.effort.as_deref(),
+        &base,
+        180.0,
+        Some(llm::Client::default_cache(&workspace)),
+    );
     let budget = engine::Budget::new(args.max_steps, args.max_wall.max(10.0), args.max_output);
     let tools_env = std::env::var("CODE_TUI_ALLOWED_TOOLS").unwrap_or_default();
-    let scope = if tools_env.trim().is_empty() { spec::Scope::production() } else { spec::Scope::from_names(&tools_env) };
-    let rules = format!("{}{}{}{}", spec::TOOL_RULES, spec::STATE_RULES, spec::AUTONOMOUS, spec::RUN_NOTE);
+    let scope = if tools_env.trim().is_empty() {
+        spec::Scope::production()
+    } else {
+        spec::Scope::from_names(&tools_env)
+    };
+    let rules = format!(
+        "{}{}{}{}",
+        spec::TOOL_RULES,
+        spec::STATE_RULES,
+        spec::AUTONOMOUS,
+        spec::RUN_NOTE
+    );
     let sink: Box<dyn FnMut(serde_json::Value)> = if verbose {
         Box::new(|event| {
             let kind = event["kind"].as_str().unwrap_or("event").to_string();
@@ -135,7 +179,11 @@ fn run(argv: Vec<String>) -> i32 {
             if event["kind"] == json!("check") {
                 eprintln!(
                     "[check] {} {}",
-                    if event["ok"] == json!(true) { "pass" } else { "fail" },
+                    if event["ok"] == json!(true) {
+                        "pass"
+                    } else {
+                        "fail"
+                    },
                     event["line"].as_str().unwrap_or("")
                 );
             }
@@ -143,7 +191,8 @@ fn run(argv: Vec<String>) -> i32 {
     };
     let mut kernel = kernel::Kernel::start(&workspace, args.cell_timeout.max(5.0));
     let result = {
-        let mut engine = engine::Engine::new(&client, &ctx, &mut kernel, budget, scope, rules, sink);
+        let mut engine =
+            engine::Engine::new(&client, &ctx, &mut kernel, budget, scope, rules, sink);
         engine.run("run", &prompt)
     };
     kernel.stop();
@@ -151,11 +200,23 @@ fn run(argv: Vec<String>) -> i32 {
         println!("chg: {path}");
     }
     println!("\n[stop] {}", result.stop);
-    println!("[cost] steps={} calls={} llm={} prompt={} completion={} reasoning={}", result.steps, result.calls, result.llm_calls, result.usage.prompt, result.usage.completion, result.usage.reasoning);
-    let text = result.final_answer.as_ref().map(|v| match v {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }).unwrap_or_else(|| result.final_text.clone());
+    println!(
+        "[cost] steps={} calls={} llm={} prompt={} completion={} reasoning={}",
+        result.steps,
+        result.calls,
+        result.llm_calls,
+        result.usage.prompt,
+        result.usage.completion,
+        result.usage.reasoning
+    );
+    let text = result
+        .final_answer
+        .as_ref()
+        .map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .unwrap_or_else(|| result.final_text.clone());
     println!("\n{}", text.trim());
     let _ = std::io::stdout().flush();
     if result.stop == engine::stops::DONE || result.stop == engine::stops::VERIFIED {
