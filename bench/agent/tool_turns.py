@@ -13,7 +13,7 @@ ENTRY POINTS
 
 INVARIANTS
   turns = one record per turn; top-level code/observation/reads/notice mirror the last call that set them, runs concatenates.
-  every run gets one wrap-up nudge at wrap_up_at and one last-turn nudge at max_steps - 1; a subclass changes wording, never timing.
+  every run gets one wrap-up nudge at wrap_up_at and one last-turn nudge at max_steps - 1; max_steps <= 0 has neither, so "unlimited" sends no budget nudge. a subclass changes wording, never timing.
   the skeptic review is cached per evidence digest (candidate, diff, check text, changed set): a repeated finish attempt is free.
   _push is a real client.complete; it turns its own LLMError into empty text and still counts as an llm_call.
   the summary record is written in run()'s finally block, so a crash still leaves a trace.
@@ -97,6 +97,8 @@ class ToolTurns:
         budget boundary; subclasses word them through WRAP_UP_NOTE / LAST_TURN_NOTE.
         """
         b = self.budget
+        if b.max_steps <= 0:
+            return
         if not self._last_turn and tally.steps >= max(1, b.max_steps - 1):
             self._last_turn = True
             messages.append({"role": "user", "content": self.LAST_TURN_NOTE})

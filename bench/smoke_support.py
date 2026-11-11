@@ -148,11 +148,11 @@ class FakeKernel:
 
 
 def _run_loop(replies: list[dict], cells: dict, goal=None, raises: set[str] | None = None,
-              typed: dict | None = None, scope=None):
+              typed: dict | None = None, scope=None, budget=None):
     from bench.agent import loop, tool_loop
     client = FakeClient(replies)
     kernel = FakeKernel(cells, raises, typed)
-    loop_ = tool_loop.ToolLoop(client, kernel, loop.Budget(), goal=goal, scope=scope)
+    loop_ = tool_loop.ToolLoop(client, kernel, budget or loop.Budget(), goal=goal, scope=scope)
     return loop_.run("smoke", "do the task"), client, kernel
 
 

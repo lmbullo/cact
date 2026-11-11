@@ -15,8 +15,8 @@
  * INVARIANTS
  *  - loadEnvFile() runs before any env read; every constant is computed once, so a later
  *    process.env edit cannot move a path mid-run. Every state dir exists after import.
- *  - Limits are clamped here, not at use: concurrency 1-MAX_CONCURRENCY, maxSteps >= 1,
- *    maxOutput >= 1024.
+ *  - Limits are clamped here, not at use: concurrency 1-MAX_CONCURRENCY, maxSteps >= 1
+ *    (0 = unlimited), maxOutput >= 1024.
  *
  * WHERE TO CHANGE
  *  Paths and their args .... arg, workspace, stateDir, *Dir, serverFile
@@ -98,8 +98,11 @@ export const concurrency = Math.max(
   1,
   Math.min(MAX_CONCURRENCY, Number(process.env.CODE_TUI_CONCURRENCY ?? 1) || 1),
 );
-/** The worker's step budget per task. */
-export const maxSteps = Math.max(1, Number(process.env.CODE_TUI_MAX_STEPS ?? 300) || 300);
+/** The worker's step budget per task; 0 means unlimited. */
+export const maxSteps = (() => {
+  const requested = Number(process.env.CODE_TUI_MAX_STEPS ?? 300);
+  return requested === 0 ? 0 : Math.max(1, requested || 300);
+})();
 /** The worker's output budget per task, in characters. */
 export const maxOutput = Math.max(1024, Number(process.env.CODE_TUI_MAX_OUTPUT ?? 393216) || 393216);
 /** The worker's wall-clock budget per task, in seconds. */

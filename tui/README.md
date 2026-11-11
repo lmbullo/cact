@@ -352,7 +352,7 @@ the worker:
 | `CODE_TUI_EFFORT_POLICY` | `fixed` | `adaptive` sends the effort only after a surprising turn; `fixed` always sends `CODE_TUI_EFFORT` |
 | `CODE_TUI_PROFILE` | `fast-code` | Measured arm: `fast-code` (lean typed set + python cell, effort `low`, inline finish, green-plan stop); also `fast` (same without `code`), `m3-plan`, `current`, `code-act` |
 | `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–256; 100 live runs is supported) |
-| `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop |
+| `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop; `0` means unlimited |
 | `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
 | `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per reply (clamped to 393216) |
