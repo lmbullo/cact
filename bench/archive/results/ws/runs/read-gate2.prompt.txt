@@ -1,1 +1,0 @@
-Read exactly the first 20 lines of README.md, then finish with a one-line summary that cites README.md.

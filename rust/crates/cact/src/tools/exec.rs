@@ -22,9 +22,17 @@ pub const TIMEOUT: f64 = 60.0;
 /// `exec`: run the requested program(s) or shell string.
 pub fn exec(ctx: &Ctx, args: &Value) -> Env {
     if !ctx.allow_exec {
-        return Env::fail("exec", "exec_not_allowed", "this run does not grant process spawn", "use the typed tools; a task that needs exec grants it with CODE_TUI_ALLOW_RUN=1");
+        return Env::fail(
+            "exec",
+            "exec_not_allowed",
+            "this run does not grant process spawn",
+            "use the typed tools; a task that needs exec grants it with CODE_TUI_ALLOW_RUN=1",
+        );
     }
-    let cwd = args["cwd"].as_str().map(|c| util::resolve(&ctx.root, c)).unwrap_or_else(|| ctx.root.clone());
+    let cwd = args["cwd"]
+        .as_str()
+        .map(|c| util::resolve(&ctx.root, c))
+        .unwrap_or_else(|| ctx.root.clone());
     let mut env_map: BTreeMap<String, String> = BTreeMap::new();
     if let Some(obj) = args["env"].as_object() {
         for (k, v) in obj {
@@ -40,20 +48,35 @@ pub fn exec(ctx: &Ctx, args: &Value) -> Env {
     if let Some(list) = args["commands"].as_array() {
         for item in list {
             if let Some(argv) = item.as_array() {
-                runs.push(argv.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect());
+                runs.push(
+                    argv.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect(),
+                );
             }
         }
     }
     if runs.is_empty() {
         if let Some(argv) = args["argv"].as_array() {
-            runs.push(argv.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect());
+            runs.push(
+                argv.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect(),
+            );
         } else if let Some(s) = args["argv"].as_str() {
             shell = Some(s.to_string());
         }
     }
     if let Some(s) = args["shell"].as_str() {
         if !runs.is_empty() {
-            return Env::fail("exec", "bad_arguments", "exec takes argv/commands or shell, not both", "pass argv=[...], or shell=\"...\"");
+            return Env::fail(
+                "exec",
+                "bad_arguments",
+                "exec takes argv/commands or shell, not both",
+                "pass argv=[...], or shell=\"...\"",
+            );
         }
         shell = Some(s.to_string());
     }
@@ -68,7 +91,12 @@ pub fn exec(ctx: &Ctx, args: &Value) -> Env {
         }
     }
     if runs.is_empty() && shell.is_none() {
-        return Env::fail("exec", "bad_arguments", "exec needs argv, commands or shell", "pass argv=[\"git\", \"status\", \"--short\"]");
+        return Env::fail(
+            "exec",
+            "bad_arguments",
+            "exec needs argv, commands or shell",
+            "pass argv=[\"git\", \"status\", \"--short\"]",
+        );
     }
     let mut blocks: Vec<String> = Vec::new();
     let mut failed = false;
@@ -76,7 +104,9 @@ pub fn exec(ctx: &Ctx, args: &Value) -> Env {
     let all: Vec<Result<util::Output, String>> = if let Some(command) = &shell {
         vec![util::run_shell(command, &cwd, &env_map, timeout)]
     } else {
-        runs.iter().map(|argv| util::run_argv(argv, &cwd, &env_map, stdin, timeout)).collect()
+        runs.iter()
+            .map(|argv| util::run_argv(argv, &cwd, &env_map, stdin, timeout))
+            .collect()
     };
     for out in all {
         match out {
@@ -112,8 +142,13 @@ pub fn exec(ctx: &Ctx, args: &Value) -> Env {
     let clipped = util::clip(&body, ctx.max_output);
     let mut env = Env::ok("exec").field("runs", rows);
     if clipped.len() < body.len() {
-        let handle = ctx.obs.borrow_mut().push(crate::obs::Entry { stdout: body, ..Default::default() });
-        env = env.field("obs", format!("_OBS[{handle}]")).note(format!("full output: _OBS[{handle}]"));
+        let handle = ctx.obs.borrow_mut().push(crate::obs::Entry {
+            stdout: body,
+            ..Default::default()
+        });
+        env = env
+            .field("obs", format!("_OBS[{handle}]"))
+            .note(format!("full output: _OBS[{handle}]"));
     }
     env.body = Some(clipped);
     if failed {
@@ -121,7 +156,10 @@ pub fn exec(ctx: &Ctx, args: &Value) -> Env {
         env.ok = false;
         env.error = Some(crate::envelope::Refusal {
             code: "nonzero_exit".into(),
-            message: format!("a command exited non-zero: {}", util::clip(first.lines().next().unwrap_or(""), 200)),
+            message: format!(
+                "a command exited non-zero: {}",
+                util::clip(first.lines().next().unwrap_or(""), 200)
+            ),
             use_hint: "read the output, fix the cause, then run the gate again".into(),
         });
     }
@@ -139,7 +177,9 @@ fn wrong_call(reason: String) -> Env {
 }
 
 /// Programs that move files around; their path arguments decide whether they are gated.
-const MUTATORS: &[&str] = &["tee", "touch", "cp", "mv", "rm", "rmdir", "mkdir", "ln", "truncate", "dd", "install"];
+const MUTATORS: &[&str] = &[
+    "tee", "touch", "cp", "mv", "rm", "rmdir", "mkdir", "ln", "truncate", "dd", "install",
+];
 
 /// Refuse an argv that would write inside the workspace.
 fn gate_argv(root: &std::path::Path, argv: &[String]) -> Option<String> {
@@ -147,7 +187,11 @@ fn gate_argv(root: &std::path::Path, argv: &[String]) -> Option<String> {
         return None;
     }
     let program = baseline(&argv[0]);
-    if program == "sed" && argv.iter().any(|a| a == "-i" || a.starts_with("--in-place") || (a.starts_with("-i") && a.len() > 2)) {
+    if program == "sed"
+        && argv.iter().any(|a| {
+            a == "-i" || a.starts_with("--in-place") || (a.starts_with("-i") && a.len() > 2)
+        })
+    {
         return Some("sed -i writes in place".into());
     }
     if !MUTATORS.contains(&program.as_str()) {
@@ -181,7 +225,9 @@ fn gate_shell(root: &std::path::Path, command: &str) -> Option<String> {
             .take_while(|c| !c.is_whitespace() && *c != ';' && *c != '|')
             .collect();
         if !target.is_empty() && !target.contains('$') && writes_inside(root, &target) {
-            return Some(format!("redirect into `{target}` would mutate a tracked file"));
+            return Some(format!(
+                "redirect into `{target}` would mutate a tracked file"
+            ));
         }
         rest = &rest[pos + 1..];
     }
@@ -194,7 +240,10 @@ fn writes_inside(root: &std::path::Path, target: &str) -> bool {
     if trimmed.is_empty() || trimmed == "/dev/null" || trimmed == "-" {
         return false;
     }
-    if trimmed.starts_with("/tmp") || trimmed.starts_with("/var/tmp") || trimmed.starts_with("/dev/shm") {
+    if trimmed.starts_with("/tmp")
+        || trimmed.starts_with("/var/tmp")
+        || trimmed.starts_with("/dev/shm")
+    {
         return false;
     }
     if let Ok(tmp) = std::env::var("TMPDIR") {

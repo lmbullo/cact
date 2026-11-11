@@ -35,8 +35,22 @@ pub mod search;
 
 /// Directories a walk never descends into: build output, caches, VCS internals.
 pub const IGNORED_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", "__pycache__", ".ruff_cache", ".cache", ".venv", "venv",
-    "dist", "build", ".mypy_cache", ".pytest_cache", ".next", ".turbo", "coverage", ".cact",
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".ruff_cache",
+    ".cache",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".next",
+    ".turbo",
+    "coverage",
+    ".cact",
 ];
 
 /// One plan item: the text plus whether it is done.
@@ -57,7 +71,12 @@ pub struct RunState {
 
 impl Default for RunState {
     fn default() -> Self {
-        RunState { plan: Vec::new(), phase: "act".into(), last_check: None, steps: 0 }
+        RunState {
+            plan: Vec::new(),
+            phase: "act".into(),
+            last_check: None,
+            steps: 0,
+        }
     }
 }
 
@@ -76,7 +95,14 @@ impl RunState {
             .plan
             .iter()
             .enumerate()
-            .map(|(i, item)| format!("{}{}. {}", if item.done { "x" } else { " " }, i + 1, item.text))
+            .map(|(i, item)| {
+                format!(
+                    "{}{}. {}",
+                    if item.done { "x" } else { " " },
+                    i + 1,
+                    item.text
+                )
+            })
             .collect();
         vec![format!("[plan] {}", rows.join(" | "))]
     }
@@ -101,7 +127,11 @@ impl Ctx {
             root: root.to_path_buf(),
             journal: RefCell::new(Journal::new(root)),
             obs: RefCell::new(Store::new()),
-            plan: if specs.is_empty() { None } else { Some(Plan::new(specs, root)) },
+            plan: if specs.is_empty() {
+                None
+            } else {
+                Some(Plan::new(specs, root))
+            },
             state: RefCell::new(RunState::default()),
             shown: RefCell::new(std::collections::BTreeMap::new()),
             allow_exec,
@@ -115,7 +145,13 @@ impl Ctx {
     }
 
     /// Record one mutation and stamp the returned envelope with changed/delta.
-    pub fn commit(&self, env: Env, path: &str, before: Option<String>, after: Option<String>) -> Env {
+    pub fn commit(
+        &self,
+        env: Env,
+        path: &str,
+        before: Option<String>,
+        after: Option<String>,
+    ) -> Env {
         let recorded = self.journal.borrow_mut().record(path, before, after);
         let mut env = env;
         if recorded {
@@ -169,7 +205,12 @@ pub fn call(ctx: &Ctx, name: &str, args: &Value) -> Env {
 fn page(ctx: &Ctx, args: &Value) -> Env {
     let handle = args["handle"].as_str().unwrap_or("");
     if handle.is_empty() {
-        return Env::fail("page", "bad_arguments", "page needs the handle a card named", "pass handle=\"_OBS[3]\"");
+        return Env::fail(
+            "page",
+            "bad_arguments",
+            "page needs the handle a card named",
+            "pass handle=\"_OBS[3]\"",
+        );
     }
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let limit = args["limit"].as_u64().unwrap_or(8000) as usize;
@@ -184,29 +225,57 @@ fn page(ctx: &Ctx, args: &Value) -> Env {
                 .paged(Page::window(shown, total, start, "char"))
                 .body(text)
         }
-        Err(message) => Env::fail("page", "unknown_handle", message, "use the exact handle the card named, like _OBS[12]"),
+        Err(message) => Env::fail(
+            "page",
+            "unknown_handle",
+            message,
+            "use the exact handle the card named, like _OBS[12]",
+        ),
     }
 }
 
 /// `status`: branch, capped short status, ahead/behind, and the journal's per-path counts.
 fn status(ctx: &Ctx, args: &Value) -> Env {
-    let cwd = args["cwd"].as_str().map(|c| crate::util::resolve(&ctx.root, c)).unwrap_or_else(|| ctx.root.clone());
+    let cwd = args["cwd"]
+        .as_str()
+        .map(|c| crate::util::resolve(&ctx.root, c))
+        .unwrap_or_else(|| ctx.root.clone());
     let mut env = Env::ok("status");
-    let branch = crate::util::run_argv(&["git".into(), "rev-parse".into(), "--abbrev-ref".into(), "HEAD".into()], &cwd, &Default::default(), None, 10.0);
+    let branch = crate::util::run_argv(
+        &[
+            "git".into(),
+            "rev-parse".into(),
+            "--abbrev-ref".into(),
+            "HEAD".into(),
+        ],
+        &cwd,
+        &Default::default(),
+        None,
+        10.0,
+    );
     let mut lines: Vec<String> = Vec::new();
     match branch {
         Ok(out) if out.exit == Some(0) => {
             let name = out.stdout.trim().to_string();
             lines.push(format!("branch {name}"));
             env = env.field("git", true).field("branch", name);
-            if let Ok(short) = crate::util::run_argv(&["git".into(), "status".into(), "--short".into()], &cwd, &Default::default(), None, 20.0) {
+            if let Ok(short) = crate::util::run_argv(
+                &["git".into(), "status".into(), "--short".into()],
+                &cwd,
+                &Default::default(),
+                None,
+                20.0,
+            ) {
                 let rows: Vec<&str> = short.stdout.lines().collect();
                 let shown = rows.len().min(40);
                 for row in &rows[..shown] {
                     lines.push(row.to_string());
                 }
                 if rows.len() > shown {
-                    lines.push(format!("... {} more lines (git action=status shows all)", rows.len() - shown));
+                    lines.push(format!(
+                        "... {} more lines (git action=status shows all)",
+                        rows.len() - shown
+                    ));
                 }
             }
         }
@@ -241,7 +310,12 @@ fn checks_tool(ctx: &Ctx, args: &Value) -> Env {
     let only = args["name"].as_str().filter(|s| !s.is_empty());
     let rows = plan.rows(only);
     if rows.is_empty() {
-        return Env::fail("checks", "unknown_spec", "no spec matched that name", "call checks() with no argument to list the plan");
+        return Env::fail(
+            "checks",
+            "unknown_spec",
+            "no spec matched that name",
+            "call checks() with no argument to list the plan",
+        );
     }
     let mut out: Vec<String> = Vec::new();
     let mut all_ok = true;
@@ -252,14 +326,25 @@ fn checks_tool(ctx: &Ctx, args: &Value) -> Env {
         } else if check.state == "unrunnable" {
             format!("{}: unrunnable", check.cmd)
         } else {
-            format!("{}: failed (exit {})", check.cmd, check.exit.map(|c| c.to_string()).unwrap_or_default())
+            format!(
+                "{}: failed (exit {})",
+                check.cmd,
+                check.exit.map(|c| c.to_string()).unwrap_or_default()
+            )
         };
-        out.push(format!("{line} | {}", crate::util::clip(&check.first_failure(), 200)));
+        out.push(format!(
+            "{line} | {}",
+            crate::util::clip(&check.first_failure(), 200)
+        ));
         if !check.ok() {
             out.push(crate::util::clip(&check.text(2000), 2000));
         }
     }
-    ctx.state.borrow_mut().last_check = Some(if all_ok { "pass".into() } else { rows[0].first_failure() });
+    ctx.state.borrow_mut().last_check = Some(if all_ok {
+        "pass".into()
+    } else {
+        rows[0].first_failure()
+    });
     Env::ok("checks")
         .field("rows", rows.iter().map(|c| serde_json::json!({"name": c.cmd, "ok": c.ok(), "exit": c.exit, "first_line": c.first_failure()})).collect::<Vec<_>>())
         .body(out.join("\n"))
@@ -268,8 +353,15 @@ fn checks_tool(ctx: &Ctx, args: &Value) -> Env {
 /// `undo`: restore the most recent journaled change.
 fn undo(ctx: &Ctx) -> Env {
     match ctx.journal.borrow_mut().undo() {
-        Some(path) => Env::ok("undo").field("path", path.clone()).body(format!("restored {path}")),
-        None => Env::fail("undo", "nothing_to_undo", "the journal is empty", "only a typed write/edit/splice/delete/apply is undoable"),
+        Some(path) => Env::ok("undo")
+            .field("path", path.clone())
+            .body(format!("restored {path}")),
+        None => Env::fail(
+            "undo",
+            "nothing_to_undo",
+            "the journal is empty",
+            "only a typed write/edit/splice/delete/apply is undoable",
+        ),
     }
 }
 
@@ -283,18 +375,29 @@ fn session_diff(ctx: &Ctx, args: &Value) -> Env {
             .field("paths", ctx.changed())
             .body("no tracked change this session".to_string());
     }
-    Env::ok("session_diff").field("paths", ctx.changed()).body(diff)
+    Env::ok("session_diff")
+        .field("paths", ctx.changed())
+        .body(diff)
 }
 
 /// `plan`: replace the plan and/or mark 1-based items done.
 fn plan_tool(ctx: &Ctx, args: &Value) -> Env {
     let mut state = ctx.state.borrow_mut();
     if let Some(items) = args["items"].as_array() {
-        let done: Vec<usize> = state.plan.iter().enumerate().filter(|(_, i)| i.done).map(|(n, _)| n + 1).collect();
+        let done: Vec<usize> = state
+            .plan
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.done)
+            .map(|(n, _)| n + 1)
+            .collect();
         state.plan = items
             .iter()
             .filter_map(|v| v.as_str())
-            .map(|text| PlanItem { text: text.to_string(), done: false })
+            .map(|text| PlanItem {
+                text: text.to_string(),
+                done: false,
+            })
             .collect();
         for n in done {
             if let Some(item) = state.plan.get_mut(n.saturating_sub(1)) {
@@ -311,7 +414,9 @@ fn plan_tool(ctx: &Ctx, args: &Value) -> Env {
     }
     let lines = state.plan_lines();
     drop(state);
-    Env::ok("plan").field("plan", lines.clone()).body(lines.join("\n"))
+    Env::ok("plan")
+        .field("plan", lines.clone())
+        .body(lines.join("\n"))
 }
 
 /// `task`: the durable principal view: phase, plan, changed paths, last check, open items.
@@ -320,12 +425,24 @@ fn task_tool(ctx: &Ctx) -> Env {
     let changed = ctx.changed();
     let mut lines = vec![format!("phase: {}", state.phase)];
     lines.extend(state.plan_lines());
-    lines.push(format!("changed: {}", if changed.is_empty() { "none".into() } else { changed.join(", ") }));
+    lines.push(format!(
+        "changed: {}",
+        if changed.is_empty() {
+            "none".into()
+        } else {
+            changed.join(", ")
+        }
+    ));
     lines.push(format!(
         "last check: {}",
         state.last_check.clone().unwrap_or_else(|| "not run".into())
     ));
-    let open: Vec<String> = state.plan.iter().filter(|i| !i.done).map(|i| i.text.clone()).collect();
+    let open: Vec<String> = state
+        .plan
+        .iter()
+        .filter(|i| !i.done)
+        .map(|i| i.text.clone())
+        .collect();
     if !open.is_empty() {
         lines.push(format!("open: {}", open.join(" | ")));
     }
@@ -339,8 +456,14 @@ fn task_tool(ctx: &Ctx) -> Env {
 /// True when `path` is inside `root` (the workspace), used by the exec mutation gate.
 pub fn inside(root: &Path, path: &Path) -> bool {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let full = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let full = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
     let parent = full.parent().unwrap_or(&full);
-    let resolved = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+    let resolved = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
     resolved.starts_with(&root)
 }

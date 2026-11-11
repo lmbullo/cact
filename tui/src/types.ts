@@ -3,17 +3,17 @@
  * WHAT IT IS
  * Types only. Task = one queued/running/finished task (board row + detail); TaskEvent = one line of events/<id>.jsonl;
  * CheckState = the verdict a `check` event carries; ServerInfo = server.json and GET /health; CheckSpec = one plan entry;
- * Snapshot/WsMessage = WebSocket messages; WorkerMessage = the @@TUI@@ payload emitted by python/worker.py.
+ * Snapshot/WsMessage = WebSocket messages; WorkerMessage = the @@TUI@@ payload emitted by the cact worker.
  *
  * ENTRY POINTS
  * Task, TaskStatus, TaskEvent, CheckState, ServerInfo, SourceFingerprint, CheckSpec, Snapshot, WsMessage, WorkerMessage
  *
  * INVARIANTS
  * types only: no runtime code; changing a field means changing server.ts (producer) and client.tsx (consumer) together.
- * TaskStatus is the closed vocabulary the board colours/sections by; stop reason -> status lives in tui/python/worker.py.
+ * TaskStatus is the closed vocabulary the board colours/sections by; stop reason -> status lives in tui/the cact worker.
  * Task.progress is the live estimate from turn events; steps/usage are final; context/window keep the last prompt size and window.
  * Task.stop/Task.errors are the final verdict/error count; CheckState is the same verdict for one verification run.
- * WorkerMessage mirrors emit({...}) in python/worker.py, the source of truth for the message kinds.
+ * WorkerMessage mirrors emit({...}) in the cact worker, the source of truth for the message kinds.
  * ServerInfo.source is the boot fingerprint (source-hash.ts); stale/changed are measured on each read, never stored.
  * CheckSpec mirrors bench.agent.check_plan.CheckSpec {name,cmd,cheap,scope?}; scope is path prefixes; parsed in detect-checks.ts.
  * ServerInfo.logsDir / Task.log = logs/<id>.jsonl (event/stdout/stderr/prompt/usage/error records); no path formula needed.
@@ -75,7 +75,7 @@ export type Task = {
 };
 
 /** One verification run as the journal records it: the verdict, the check's name and the first
- * failing line of its output (empty when it passed). Written by python/worker.py, journaled by
+ * failing line of its output (empty when it passed). Written by the cact worker, journaled by
  * server.ts as a `check` event, read by board-view.LogHeader from the task's last one. */
 export type CheckState = {
   ok: boolean;
@@ -101,6 +101,10 @@ export type TaskEvent = {
   page?: Record<string, unknown> | null;
   chars?: number;
   duration_ms?: number;
+  /** cell.end: the refusal's message when a typed call failed; `code` names the refusal. */
+  error?: string;
+  /** cell.end: every program the cell spawned, including one spawned inside Python. */
+  runs?: string[];
   notes?: string[];
   /** check: the verification verdict this event carries (see CheckState). */
   check?: CheckState;
@@ -174,14 +178,14 @@ export type WsMessage =
   | { type: "event"; taskId: string; event: TaskEvent }
   | { type: "ping"; ts: number };
 
-/** One `@@TUI@@` line from python/worker.py; server.ts is the only reader. */
+/** One `@@TUI@@` line from the cact worker; server.ts is the only reader. */
 export type WorkerMessage =
   | { kind: "cell.start"; cell: number; code?: string; tool?: string; args?: Record<string, unknown> }
-  | { kind: "cell.end"; cell: number; tool?: string; ok?: boolean; verb_kind?: string; code?: string; page?: Record<string, unknown> | null; chars?: number; duration_ms?: number; notes?: string[] }
+  | { kind: "cell.end"; cell: number; tool?: string; ok?: boolean; verb_kind?: string; code?: string; error?: string; page?: Record<string, unknown> | null; chars?: number; duration_ms?: number; runs?: string[]; notes?: string[] }
   | { kind: "turn"; turn: number; data: Record<string, unknown> }
   // Emitted right after a turn whose record carried a verdict; the last one is the current state.
   | { kind: "check"; ok: boolean; name: string; line?: string }
   | { kind: "final"; status: "done" | "partial" | "failed"; final?: string; stop?: string; usage?: Record<string, number>; steps?: number; calls?: number; llmCalls?: number; errors?: number; wallMs?: number }
-  // A `turn`'s `data` carries {usage, cache, window, ...}; see python/worker.py EventTrace.
+  // A `turn`'s `data` carries {usage, cache, window, ...}; see the cact worker EventTrace.
   | { kind: "error"; text: string }
   | { kind: "log"; text: string };

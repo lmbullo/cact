@@ -1,1 +1,0 @@
-In a single cell: set keep=42, then call run('for i in 1 2 3 4 5; do bun test >/dev/null 2>&1; echo run:0; done', timeout=120), print r['stdout'], then print keep. Do not change any files. Then answer with the run lines and the value of keep.

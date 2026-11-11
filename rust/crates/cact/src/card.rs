@@ -9,6 +9,7 @@
 //!   paging is quoted from the envelope, never recomputed; `complete`/`has_more` are the truth.
 //!   process output names the `_OBS[n]` handle holding the full text, so nothing is silently lost.
 //!   `[read]` is built from the ranges actually delivered, so it cannot claim an undelivered line.
+//!   `clip_card` is a delivery policy, never a verdict: `[error]`/`[check]` lines stay visible.
 
 use crate::envelope::Env;
 use crate::kernel::Cell;
@@ -23,7 +24,13 @@ pub fn render_body(env: &Env) -> String {
     if let Some(page) = &env.page {
         parts.push(format!(
             "[page] shown={} total={} unit={} offset={} has_more={} truncated={} complete={}",
-            page.shown, page.total, page.unit, page.offset, page.has_more, page.truncated, page.complete
+            page.shown,
+            page.total,
+            page.unit,
+            page.offset,
+            page.has_more,
+            page.truncated,
+            page.complete
         ));
         if let Some(next) = page.next {
             parts.push(format!("[page] next.offset={next}"));
@@ -42,7 +49,13 @@ pub fn render_body(env: &Env) -> String {
         parts.push(format!("[note] {}", collapse(note)));
     }
     if let Some(error) = &env.error {
-        parts.push(format!("[error] {}: {}: {}; use {}", env.kind, error.code, collapse(&error.message), collapse(&error.use_hint)));
+        parts.push(format!(
+            "[error] {}: {}: {}; use {}",
+            env.kind,
+            error.code,
+            collapse(&error.message),
+            collapse(&error.use_hint)
+        ));
     }
     if let Some(body) = &env.body {
         if !body.is_empty() {
@@ -54,8 +67,17 @@ pub fn render_body(env: &Env) -> String {
 
 /// One finished cell as the card the model reads. `observed` is whether the verb's own envelope
 /// was already rendered into the body.
-pub fn render(cell: &Cell, step: usize, prompt_tokens: u64, state: &RunState, obs_handle: Option<&str>) -> String {
-    let mut parts = vec![format!("[s] step={step} ms={} tok={prompt_tokens}", cell.duration_ms)];
+pub fn render(
+    cell: &Cell,
+    step: usize,
+    prompt_tokens: u64,
+    state: &RunState,
+    obs_handle: Option<&str>,
+) -> String {
+    let mut parts = vec![format!(
+        "[s] step={step} ms={} tok={prompt_tokens}",
+        cell.duration_ms
+    )];
     parts.push(state.phase_line());
     parts.extend(state.plan_lines());
     if !cell.changed.is_empty() {
@@ -81,10 +103,24 @@ pub fn render(cell: &Cell, step: usize, prompt_tokens: u64, state: &RunState, ob
         parts.push(format!("[tool] {}", cell.tool));
     }
     if let Some(error) = &cell.error {
-        let tail: String = error.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
-        parts.push(format!("[error] cell: runtime_error: {}\n{}", util::clip(error.lines().last().unwrap_or("error"), 200), util::clip(&tail, 1200)));
+        let tail: String = error
+            .lines()
+            .rev()
+            .take(6)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        parts.push(format!(
+            "[error] cell: runtime_error: {}\n{}",
+            util::clip(error.lines().last().unwrap_or("error"), 200),
+            util::clip(&tail, 1200)
+        ));
     }
-    let handle = obs_handle.map(|h| h.to_string()).or_else(|| cell.obs_index.map(|i| format!("_OBS[{i}]")));
+    let handle = obs_handle
+        .map(|h| h.to_string())
+        .or_else(|| cell.obs_index.map(|i| format!("_OBS[{i}]")));
     let has_output = !cell.stdout.is_empty() || !cell.stderr.is_empty() || !cell.result.is_empty();
     if cell.envelope.is_none() && has_output {
         let budget = 6000;
@@ -92,10 +128,16 @@ pub fn render(cell: &Cell, step: usize, prompt_tokens: u64, state: &RunState, ob
         let mut shown_stderr = util::clip(&cell.stderr, budget);
         if let Some(handle) = &handle {
             if shown_stdout.len() < cell.stdout.len() {
-                shown_stdout = format!("{}\n...[full output: {handle}; page(handle={handle})]", shown_stdout);
+                shown_stdout = format!(
+                    "{}\n...[full output: {handle}; page(handle={handle})]",
+                    shown_stdout
+                );
             }
             if shown_stderr.len() < cell.stderr.len() {
-                shown_stderr = format!("{}\n...[full output: {handle}; page(handle={handle})]", shown_stderr);
+                shown_stderr = format!(
+                    "{}\n...[full output: {handle}; page(handle={handle})]",
+                    shown_stderr
+                );
             }
         }
         if !shown_stdout.trim().is_empty() {
@@ -117,6 +159,41 @@ pub fn render(cell: &Cell, step: usize, prompt_tokens: u64, state: &RunState, ob
         parts.push(format!("[read] {}", rows.join("; ")));
     }
     parts.join("\n")
+}
+
+/// `(text, was_clipped)`: a whole card while it fits, else its head plus a named `_OBS` handle.
+///
+/// The head cut never hides a refusal or a verdict: every `[error]`/`[check]` line not already
+/// in the head is appended after the marker. The caller names the exact resume call.
+pub fn clip_card(text: &str, budget: usize, handle: &str) -> (String, bool) {
+    let total = text.chars().count();
+    if total <= budget {
+        return (text.to_string(), false);
+    }
+    let marker = format!("[card clipped: {total} chars total; full text: {handle}]");
+    let marker_len = marker.chars().count();
+    let keep = budget.saturating_sub(marker_len + 1);
+    let head: String = text.chars().take(keep).collect();
+    let shown: Vec<&str> = head.lines().collect();
+    let mut pinned: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if (line.starts_with("[error]") || line.starts_with("[check]"))
+            && !shown.contains(&line)
+            && !pinned.contains(&line)
+        {
+            pinned.push(line);
+        }
+    }
+    let mut out = head;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&marker);
+    if !pinned.is_empty() {
+        out.push('\n');
+        out.push_str(&pinned.join("\n"));
+    }
+    (out, true)
 }
 
 /// True when the cell produced text of its own (stdout, stderr or a value).

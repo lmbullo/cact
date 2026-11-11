@@ -78,7 +78,9 @@ impl Args {
             let flag = argv[i].as_str();
             let mut value = || -> Result<String, String> {
                 i += 1;
-                argv.get(i).cloned().ok_or_else(|| format!("{flag} needs a value"))
+                argv.get(i)
+                    .cloned()
+                    .ok_or_else(|| format!("{flag} needs a value"))
             };
             match flag {
                 "--workspace" => args.workspace = std::path::PathBuf::from(value()?),
@@ -125,15 +127,21 @@ pub fn main(argv: &[String]) -> i32 {
         emit(json!({"kind": "final", "status": "failed", "stop": "EMPTY_PROMPT"}));
         return 2;
     }
-    let key = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default().trim().to_string();
+    let key = std::env::var("DEEPSEEK_API_KEY")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if key.is_empty() {
-        emit(json!({"kind": "error", "text": "DEEPSEEK_API_KEY is not set. Put it in ~/.config/code-tui/env or export it before launching code."}));
+        emit(
+            json!({"kind": "error", "text": "DEEPSEEK_API_KEY is not set. Put it in ~/.config/code-tui/env or export it before launching code."}),
+        );
         emit(json!({"kind": "final", "status": "failed", "stop": "NO_API_KEY"}));
         return 2;
     }
     // A task may commit; a fresh workspace has no git identity. Supply one for children only.
     let git_name = std::env::var("CODE_TUI_GIT_NAME").unwrap_or_else(|_| "code-tui agent".into());
-    let git_mail = std::env::var("CODE_TUI_GIT_EMAIL").unwrap_or_else(|_| "agent@code-tui.local".into());
+    let git_mail =
+        std::env::var("CODE_TUI_GIT_EMAIL").unwrap_or_else(|_| "agent@code-tui.local".into());
     for var in ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"] {
         if std::env::var_os(var).is_none() {
             std::env::set_var(var, &git_name);
@@ -151,11 +159,23 @@ pub fn main(argv: &[String]) -> i32 {
         checks::parse(&args.check)
     };
     let ctx = Ctx::new(&workspace, specs, args.allow_run, args.max_output);
-    let base = std::env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into());
-    let client = Client::new(&key, &args.model, args.effort.as_deref(), &base, 180.0, None);
+    let base =
+        std::env::var("DEEPSEEK_BASE_URL").unwrap_or_else(|_| "https://api.deepseek.com".into());
+    let client = Client::new(
+        &key,
+        &args.model,
+        args.effort.as_deref(),
+        &base,
+        180.0,
+        None,
+    );
     let budget = Budget::new(args.max_steps, args.max_wall.max(10.0), args.max_output);
     let tools_env = std::env::var("CODE_TUI_ALLOWED_TOOLS").unwrap_or_default();
-    let scope = if tools_env.trim().is_empty() { Scope::production() } else { Scope::from_names(&tools_env) };
+    let scope = if tools_env.trim().is_empty() {
+        Scope::production()
+    } else {
+        Scope::from_names(&tools_env)
+    };
     let mut rules = format!("{TOOL_RULES}{STATE_RULES}{AUTONOMOUS}");
     if args.allow_run {
         rules.push_str(RUN_NOTE);
@@ -167,7 +187,15 @@ pub fn main(argv: &[String]) -> i32 {
     }
     let mut kernel = Kernel::start(&workspace, args.cell_timeout.max(5.0));
     let result = {
-        let mut engine = Engine::new(&client, &ctx, &mut kernel, budget, scope, rules, Box::new(emit));
+        let mut engine = Engine::new(
+            &client,
+            &ctx,
+            &mut kernel,
+            budget,
+            scope,
+            rules,
+            Box::new(emit),
+        );
         engine.run("tui-task", &prompt)
     };
     let (status, payloads) = final_payloads(&result);
@@ -193,7 +221,11 @@ pub fn final_payloads(result: &RunResult) -> (String, Vec<Value>) {
         "done"
     } else if result.stop == stops::GOAL_UNMET {
         "failed"
-    } else if (result.stop == stops::STEP_LIMIT || result.stop == stops::WALL_LIMIT) && !result.final_text.trim().is_empty() {
+    } else if (result.stop == stops::STEP_LIMIT
+        || result.stop == stops::WALL_LIMIT
+        || result.stop == stops::TOKEN_LIMIT)
+        && !result.final_text.trim().is_empty()
+    {
         "partial"
     } else {
         "failed"
@@ -220,7 +252,14 @@ pub fn final_payloads(result: &RunResult) -> (String, Vec<Value>) {
             "cacheMiss": result.usage.cache_miss_tokens,
         },
         "economy": {"changed": result.changed, "planGreen": result.plan_green},
+        "attestation": {
+            "stop": result.stop,
+            "steps": result.steps,
+            "changed": result.changed,
+            "plan_green": result.plan_green,
+        },
         "wallMs": result.wall_ms,
+        "error": if result.stop == stops::LLM_FAILED { crate::util::clip(&result.final_text, 600) } else { String::new() },
     }));
     (status.to_string(), payloads)
 }

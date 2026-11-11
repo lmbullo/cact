@@ -32,7 +32,11 @@ pub fn map(ctx: &Ctx, args: &Value) -> Env {
     let mut rows: Vec<String> = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
     let roots: Vec<String> = match &args["path"] {
-        Value::Array(a) => a.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect(),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect(),
         Value::String(s) => vec![s.clone()],
         _ => vec![".".to_string()],
     };
@@ -43,23 +47,43 @@ pub fn map(ctx: &Ctx, args: &Value) -> Env {
         } else if full.is_dir() {
             files.extend(walk(&ctx.root, &full, &includes));
         } else {
-            return Env::fail("map", "not_found", format!("{root}: no such file or directory"), "pass path=\".\" for the workspace root");
+            return Env::fail(
+                "map",
+                "not_found",
+                format!("{root}: no such file or directory"),
+                "pass path=\".\" for the workspace root",
+            );
         }
     }
     files.sort();
     files.dedup();
     let total = files.len();
-    let end = if max_files == 0 { total } else { (offset + max_files).min(total) };
+    let end = if max_files == 0 {
+        total
+    } else {
+        (offset + max_files).min(total)
+    };
     for file in files.iter().take(end).skip(offset.min(total)) {
         let shown = util::relative(&ctx.root, file);
         let count = std::fs::read(file)
-            .map(|b| if util::looks_binary(&b) { 0 } else { String::from_utf8_lossy(&b).lines().count() })
+            .map(|b| {
+                if util::looks_binary(&b) {
+                    0
+                } else {
+                    String::from_utf8_lossy(&b).lines().count()
+                }
+            })
             .unwrap_or(0);
         rows.push(format!("{shown} ({count} lines)"));
     }
     let mut env = Env::ok("map")
         .field("files", total)
-        .paged(Page::window(end.saturating_sub(offset.min(total)), total, offset.min(total), "file"))
+        .paged(Page::window(
+            end.saturating_sub(offset.min(total)),
+            total,
+            offset.min(total),
+            "file",
+        ))
         .body(rows.join("\n"));
     if end < total {
         env = env.note(format!("next: offset={end}"));
@@ -71,7 +95,11 @@ pub fn map(ctx: &Ctx, args: &Value) -> Env {
 pub fn include_list(value: &Value) -> Vec<String> {
     match value {
         Value::String(s) => vec![s.clone()],
-        Value::Array(a) => a.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect(),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -89,11 +117,15 @@ pub fn walk(root: &Path, dir: &Path, includes: &[String]) -> Vec<PathBuf> {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                if IGNORED_DIRS.contains(&name.as_str()) || name.starts_with('.') && name != ".agent" {
+                if IGNORED_DIRS.contains(&name.as_str())
+                    || name.starts_with('.') && name != ".agent"
+                {
                     continue;
                 }
                 stack.push(path);
-            } else if includes.is_empty() || includes.iter().any(|pattern| matches(root, &path, pattern)) {
+            } else if includes.is_empty()
+                || includes.iter().any(|pattern| matches(root, &path, pattern))
+            {
                 out.push(path);
             }
         }
@@ -107,7 +139,14 @@ pub fn matches(root: &Path, path: &Path, pattern: &str) -> bool {
     if !pattern.contains('*') {
         return rel == pattern || rel.ends_with(&format!("/{pattern}"));
     }
-    glob(pattern, &rel) || glob(pattern, path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default().as_str())
+    glob(pattern, &rel)
+        || glob(
+            pattern,
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+                .as_str(),
+        )
 }
 
 /// A small glob matcher: `*` matches any run within one path segment, `**` across segments,

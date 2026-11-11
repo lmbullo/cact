@@ -36,7 +36,10 @@ impl Spec {
         paths.iter().any(|path| {
             let text = path.trim_start_matches("./");
             self.scope.iter().any(|prefix| {
-                prefix == "." || prefix.is_empty() || text == prefix || text.starts_with(&format!("{prefix}/"))
+                prefix == "."
+                    || prefix.is_empty()
+                    || text == prefix
+                    || text.starts_with(&format!("{prefix}/"))
             })
         })
     }
@@ -53,13 +56,24 @@ pub fn parse(raw: &str) -> Vec<Spec> {
             if let Some(list) = value.as_array() {
                 let mut specs = Vec::new();
                 for item in list {
-                    let cmd = item["cmd"].as_str().or_else(|| item["command"].as_str()).unwrap_or("").trim().to_string();
+                    let cmd = item["cmd"]
+                        .as_str()
+                        .or_else(|| item["command"].as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     if cmd.is_empty() {
                         continue;
                     }
                     let scope = match &item["scope"] {
-                        serde_json::Value::Array(a) => a.iter().filter_map(|v| v.as_str()).map(|s| s.trim().trim_matches('/').to_string()).collect(),
-                        serde_json::Value::String(s) => vec![s.trim().trim_matches('/').to_string()],
+                        serde_json::Value::Array(a) => a
+                            .iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|s| s.trim().trim_matches('/').to_string())
+                            .collect(),
+                        serde_json::Value::String(s) => {
+                            vec![s.trim().trim_matches('/').to_string()]
+                        }
                         _ => Vec::new(),
                     };
                     specs.push(Spec {
@@ -73,7 +87,12 @@ pub fn parse(raw: &str) -> Vec<Spec> {
             }
         }
     }
-    vec![Spec { name: "check".into(), cmd: raw.to_string(), cheap: false, scope: Vec::new() }]
+    vec![Spec {
+        name: "check".into(),
+        cmd: raw.to_string(),
+        cheap: false,
+        scope: Vec::new(),
+    }]
 }
 
 /// One finished command run: passed, failed or unrunnable.
@@ -110,8 +129,19 @@ impl Check {
             return format!("{}: passed ({}ms)", self.cmd, self.duration_ms);
         }
         if self.state == "unrunnable" {
-            let detail = util::clip((if self.stderr.is_empty() { &self.stdout } else { &self.stderr }).trim(), limit);
-            return format!("{}: could not run. This is not a failed test; the check itself is broken.\n{}", self.cmd, detail);
+            let detail = util::clip(
+                (if self.stderr.is_empty() {
+                    &self.stdout
+                } else {
+                    &self.stderr
+                })
+                .trim(),
+                limit,
+            );
+            return format!(
+                "{}: could not run. This is not a failed test; the check itself is broken.\n{}",
+                self.cmd, detail
+            );
         }
         let head = match self.exit {
             Some(code) => format!("{}: failed (exit {code}, {}ms)", self.cmd, self.duration_ms),
@@ -121,22 +151,50 @@ impl Check {
             let body: Vec<String> = self.failures.iter().map(|f| format!("  - {f}")).collect();
             return format!("{head}\n{}", body.join("\n"));
         }
-        format!("{head}\n{}", util::clip((if self.stderr.is_empty() { &self.stdout } else { &self.stderr }).trim(), limit))
+        format!(
+            "{head}\n{}",
+            util::clip(
+                (if self.stderr.is_empty() {
+                    &self.stdout
+                } else {
+                    &self.stderr
+                })
+                .trim(),
+                limit
+            )
+        )
     }
 }
 
 /// Run one plan entry through `/bin/sh -c` in `cwd`, bounded by `timeout_s`.
 pub fn run_spec(spec: &Spec, cwd: &Path, timeout_s: f64) -> Check {
     match util::run_shell(&spec.cmd, cwd, &BTreeMap::new(), timeout_s) {
-        Err(e) => Check { cmd: spec.cmd.clone(), state: "unrunnable".into(), stdout: String::new(), stderr: e, ..Check::default() },
+        Err(e) => Check {
+            cmd: spec.cmd.clone(),
+            state: "unrunnable".into(),
+            stdout: String::new(),
+            stderr: e,
+            ..Check::default()
+        },
         Ok(out) => {
             if out.timed_out {
-                return Check { cmd: spec.cmd.clone(), state: "unrunnable".into(), stdout: out.stdout, stderr: out.stderr, duration_ms: out.duration_ms, ..Check::default() };
+                return Check {
+                    cmd: spec.cmd.clone(),
+                    state: "unrunnable".into(),
+                    stdout: out.stdout,
+                    stderr: out.stderr,
+                    duration_ms: out.duration_ms,
+                    ..Check::default()
+                };
             }
             let failures: Vec<String> = failure_lines(&out.stdout, &out.stderr);
             Check {
                 cmd: spec.cmd.clone(),
-                state: if out.exit == Some(0) { "passed".into() } else { "failed".into() },
+                state: if out.exit == Some(0) {
+                    "passed".into()
+                } else {
+                    "failed".into()
+                },
                 exit: out.exit,
                 duration_ms: out.duration_ms,
                 stdout: out.stdout,
@@ -157,7 +215,10 @@ fn failure_lines(stdout: &str, stderr: &str) -> Vec<String> {
         r"^\s*([^\s:()]+\.\w+:\d+):\s*(error:.*)$",
         r"^\s*(?:AssertionError|Error|Exception):\s*(.+)$",
     ];
-    let compiled: Vec<regex::Regex> = patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+    let compiled: Vec<regex::Regex> = patterns
+        .iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
+        .collect();
     let mut out: Vec<String> = Vec::new();
     for text in [stderr, stdout] {
         for line in text.lines() {
@@ -190,12 +251,21 @@ impl Plan {
         let mut specs = specs;
         // Cheap specs first: a broken tree is reported before the slow suite runs.
         specs.sort_by_key(|spec| !spec.cheap);
-        Plan { specs, cwd: cwd.to_path_buf(), cache: std::cell::RefCell::new(BTreeMap::new()), last: std::cell::RefCell::new(None) }
+        Plan {
+            specs,
+            cwd: cwd.to_path_buf(),
+            cache: std::cell::RefCell::new(BTreeMap::new()),
+            last: std::cell::RefCell::new(None),
+        }
     }
 
     /// A human label for the goal: the spec names in order.
     pub fn label(&self) -> String {
-        self.specs.iter().map(|s| s.name.clone()).collect::<Vec<_>>().join(", ")
+        self.specs
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Run the applicable specs in order, stopping at the first failure. Cached greens are free.
@@ -215,10 +285,15 @@ impl Plan {
             let verdict = if check.ok() {
                 check.clone()
             } else {
-                Check { cmd: format!("{}: {}", spec.name, spec.cmd), ..check.clone() }
+                Check {
+                    cmd: format!("{}: {}", spec.name, spec.cmd),
+                    ..check.clone()
+                }
             };
             *self.last.borrow_mut() = Some(verdict.clone());
-            self.cache.borrow_mut().insert(spec.cmd.clone(), check.clone());
+            self.cache
+                .borrow_mut()
+                .insert(spec.cmd.clone(), check.clone());
             if !check.ok() {
                 return Some(verdict);
             }
@@ -227,7 +302,12 @@ impl Plan {
         if ran.is_empty() {
             return None;
         }
-        *self.last.borrow_mut() = Some(Check { cmd: ran.join(", "), state: "passed".into(), exit: Some(0), ..Check::default() });
+        *self.last.borrow_mut() = Some(Check {
+            cmd: ran.join(", "),
+            state: "passed".into(),
+            exit: Some(0),
+            ..Check::default()
+        });
         self.last.borrow().clone()
     }
 
@@ -243,7 +323,9 @@ impl Plan {
             let check = run_spec(spec, &self.cwd, 600.0);
             let mut check = check;
             check.cmd = spec.name.clone();
-            self.cache.borrow_mut().insert(spec.cmd.clone(), check.clone());
+            self.cache
+                .borrow_mut()
+                .insert(spec.cmd.clone(), check.clone());
             if !check.ok() {
                 *self.last.borrow_mut() = Some(check.clone());
             }

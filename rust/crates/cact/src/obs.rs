@@ -28,7 +28,9 @@ pub struct Store {
 impl Store {
     /// An empty store.
     pub fn new() -> Store {
-        Store { entries: Vec::new() }
+        Store {
+            entries: Vec::new(),
+        }
     }
 
     /// Append one entry and return its index (the `n` in `_OBS[n]`).
@@ -44,9 +46,18 @@ impl Store {
     }
 
     /// One slice of one field: `field` is stdout (default), stderr or result.
-    pub fn page(&self, handle: &str, offset: usize, limit: usize, field: &str) -> Result<(String, usize, usize), String> {
+    pub fn page(
+        &self,
+        handle: &str,
+        offset: usize,
+        limit: usize,
+        field: &str,
+    ) -> Result<(String, usize, usize), String> {
         let index = Store::index(handle).ok_or_else(|| format!("not a handle: {handle}"))?;
-        let entry = self.entries.get(index).ok_or_else(|| format!("no entry {handle}; {}-1 is the newest", self.entries.len()))?;
+        let entry = self
+            .entries
+            .get(index)
+            .ok_or_else(|| format!("no entry {handle}; {}-1 is the newest", self.entries.len()))?;
         let text = match field {
             "stderr" => &entry.stderr,
             "result" => &entry.result,
@@ -55,7 +66,11 @@ impl Store {
         let chars: Vec<char> = text.chars().collect();
         let total = chars.len();
         let start = offset.min(total);
-        let take = if limit == 0 { total - start } else { limit.min(total - start) };
+        let take = if limit == 0 {
+            total - start
+        } else {
+            limit.min(total - start)
+        };
         Ok((chars[start..start + take].iter().collect(), total, start))
     }
 }

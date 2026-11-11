@@ -57,7 +57,12 @@ pub fn brief(workspace: &Path) -> String {
     for row in &rows {
         let files = row["files"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .unwrap_or_default();
         lines.push(format!(
             "- {}: {} [{}]",
@@ -93,7 +98,10 @@ pub fn brief(workspace: &Path) -> String {
         lines.push("open items from earlier tasks (newest first):".into());
         lines.extend(open);
     }
-    format!("[workspace history] previous tasks in this workspace and what they changed:\n{}", lines.join("\n"))
+    format!(
+        "[workspace history] previous tasks in this workspace and what they changed:\n{}",
+        lines.join("\n")
+    )
 }
 
 /// Append one history row (the last 50 are kept) so the next task sees what changed.
@@ -104,7 +112,11 @@ pub fn record(workspace: &Path, prompt: &str, result: &crate::engine::RunResult)
     }
     let handoff = result.final_answer.as_ref();
     let summary = handoff
-        .and_then(|v| v.get("summary").and_then(|s| s.as_str()).map(|s| s.to_string()))
+        .and_then(|v| {
+            v.get("summary")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string())
+        })
         .or_else(|| handoff.and_then(|v| v.as_str().map(|s| s.to_string())))
         .unwrap_or_else(|| result.final_text.clone());
     let list = |key: &str| -> Vec<Value> {
@@ -125,7 +137,12 @@ pub fn record(workspace: &Path, prompt: &str, result: &crate::engine::RunResult)
         "untested": list("untested"),
     });
     let mut rows: Vec<String> = std::fs::read_to_string(&path)
-        .map(|text| text.lines().filter(|l| !l.trim().is_empty()).map(|l| l.to_string()).collect())
+        .map(|text| {
+            text.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        })
         .unwrap_or_default();
     if rows.len() >= 49 {
         rows = rows.split_off(rows.len() - 49);
@@ -140,7 +157,10 @@ fn now_hhmm() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let offset = std::env::var("CACT_TZ_OFFSET").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let offset = std::env::var("CACT_TZ_OFFSET")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
     let local = secs as i64 + offset;
     let minutes = (local % 86_400 + 86_400) % 86_400 / 60;
     format!("{:02}:{:02}", minutes / 60, minutes % 60)

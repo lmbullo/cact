@@ -26,10 +26,22 @@ pub struct Module {
 pub fn guide(ctx: &Ctx, args: &Value) -> Env {
     let modules = index(ctx);
     if let Some(path) = args["path"].as_str() {
-        match modules.iter().find(|m| m.path == path || m.path.ends_with(path)) {
-            Some(module) => return Env::ok("guide").field("path", module.path.clone()).body(module.header.clone()),
+        match modules
+            .iter()
+            .find(|m| m.path == path || m.path.ends_with(path))
+        {
+            Some(module) => {
+                return Env::ok("guide")
+                    .field("path", module.path.clone())
+                    .body(module.header.clone())
+            }
             None => {
-                return Env::fail("guide", "not_found", format!("no indexed header for {path}"), "call guide() for the module map, or read(path=...) for the file")
+                return Env::fail(
+                    "guide",
+                    "not_found",
+                    format!("no indexed header for {path}"),
+                    "call guide() for the module map, or read(path=...) for the file",
+                )
             }
         }
     }
@@ -38,7 +50,11 @@ pub fn guide(ctx: &Ctx, args: &Value) -> Env {
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let mut rows: Vec<&Module> = modules.iter().collect();
     if !query.is_empty() {
-        let terms: Vec<String> = query.to_lowercase().split_whitespace().map(|s| s.to_string()).collect();
+        let terms: Vec<String> = query
+            .to_lowercase()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
         rows.sort_by_key(|m| {
             let hay = format!("{} {}", m.path, m.header).to_lowercase();
             let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
@@ -52,7 +68,10 @@ pub fn guide(ctx: &Ctx, args: &Value) -> Env {
     if rows.is_empty() {
         return Env::ok("guide")
             .paged(Page::whole(0, "module"))
-            .body(format!("no module header matches {query:?}; guide() lists all {} indexed modules", modules.len()));
+            .body(format!(
+                "no module header matches {query:?}; guide() lists all {} indexed modules",
+                modules.len()
+            ));
     }
     let total = rows.len();
     let end = (offset + limit).min(total);
@@ -64,13 +83,27 @@ pub fn guide(ctx: &Ctx, args: &Value) -> Env {
         .join("\n");
     Env::ok("guide")
         .field("modules", total)
-        .paged(Page::window(window.len(), total, offset.min(total), "module"))
-        .body(body + &if end < total { format!("\nnext: offset={end}") } else { String::new() })
+        .paged(Page::window(
+            window.len(),
+            total,
+            offset.min(total),
+            "module",
+        ))
+        .body(
+            body + &if end < total {
+                format!("\nnext: offset={end}")
+            } else {
+                String::new()
+            },
+        )
 }
 
 /// `skill`: list procedures, or return one whole.
 pub fn skill(ctx: &Ctx, args: &Value) -> Env {
-    let root = args["root"].as_str().map(|r| util::resolve(&ctx.root, r)).unwrap_or_else(|| ctx.root.clone());
+    let root = args["root"]
+        .as_str()
+        .map(|r| util::resolve(&ctx.root, r))
+        .unwrap_or_else(|| ctx.root.clone());
     let dir = root.join(".agent").join("skills");
     let name = args["name"].as_str().unwrap_or("").trim();
     if name.is_empty() {
@@ -78,7 +111,11 @@ pub fn skill(ctx: &Ctx, args: &Value) -> Env {
             .map(|entries| {
                 entries
                     .flatten()
-                    .filter_map(|e| e.file_name().to_str().map(|n| n.trim_end_matches(".md").to_string()))
+                    .filter_map(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map(|n| n.trim_end_matches(".md").to_string())
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -94,7 +131,12 @@ pub fn skill(ctx: &Ctx, args: &Value) -> Env {
     let path = dir.join(format!("{name}.md"));
     match std::fs::read_to_string(&path) {
         Ok(text) => Env::ok("skill").field("name", name).body(text),
-        Err(_) => Env::fail("skill", "not_found", format!("no skill `{name}` under .agent/skills"), "call skill() for the available names"),
+        Err(_) => Env::fail(
+            "skill",
+            "not_found",
+            format!("no skill `{name}` under .agent/skills"),
+            "call skill() for the available names",
+        ),
     }
 }
 
@@ -124,7 +166,11 @@ fn index(ctx: &Ctx) -> Vec<Module> {
                 .trim_start_matches("///")
                 .trim()
                 .to_string();
-            out.push(Module { path: shown, summary, header });
+            out.push(Module {
+                path: shown,
+                summary,
+                header,
+            });
         }
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -135,17 +181,30 @@ fn index(ctx: &Ctx) -> Vec<Module> {
 fn header_of(text: &str, ext: &str) -> Option<String> {
     match ext {
         "rs" => {
-            let lines: Vec<&str> = text.lines().take_while(|l| l.trim_start().starts_with("//!")).collect();
+            let lines: Vec<&str> = text
+                .lines()
+                .take_while(|l| l.trim_start().starts_with("//!"))
+                .collect();
             if lines.is_empty() {
                 return None;
             }
-            Some(lines.iter().map(|l| l.trim_start().trim_start_matches("//!").trim_start()).collect::<Vec<_>>().join("\n"))
+            Some(
+                lines
+                    .iter()
+                    .map(|l| l.trim_start().trim_start_matches("//!").trim_start())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
         }
         "py" => {
             let mut rest = text.trim_start();
             if !(rest.starts_with("\"\"\"") || rest.starts_with("'''")) {
                 let first_const = rest.find("\"\"\"").or_else(|| rest.find("'''"))?;
-                if first_const > 6 || !rest[..first_const].lines().all(|l| l.trim().is_empty() || l.trim().starts_with('#')) {
+                if first_const > 6
+                    || !rest[..first_const]
+                        .lines()
+                        .all(|l| l.trim().is_empty() || l.trim().starts_with('#'))
+                {
                     return None;
                 }
                 rest = &rest[first_const..];

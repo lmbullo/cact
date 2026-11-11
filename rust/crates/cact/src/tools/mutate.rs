@@ -20,11 +20,25 @@ use serde_json::Value;
 pub fn write(ctx: &Ctx, args: &Value) -> Env {
     let path = match args["path"].as_str() {
         Some(p) if !p.is_empty() => p,
-        _ => return Env::fail("write", "bad_arguments", "write needs a path", "pass path=\"file.rs\", content=\"...\""),
+        _ => {
+            return Env::fail(
+                "write",
+                "bad_arguments",
+                "write needs a path",
+                "pass path=\"file.rs\", content=\"...\"",
+            )
+        }
     };
     let content = match args["content"].as_str() {
         Some(c) => c.to_string(),
-        None => return Env::fail("write", "bad_arguments", "write needs content", "pass content=\"...\" (an empty string is allowed)"),
+        None => {
+            return Env::fail(
+                "write",
+                "bad_arguments",
+                "write needs content",
+                "pass content=\"...\" (an empty string is allowed)",
+            )
+        }
     };
     let force = args["force"].as_bool().unwrap_or(false);
     let full = util::resolve(&ctx.root, path);
@@ -35,18 +49,34 @@ pub fn write(ctx: &Ctx, args: &Value) -> Env {
             return Env::fail(
                 "write",
                 "truncated_write",
-                format!("{shown}: {} bytes would replace {} bytes", content.len(), old.len()),
-                format!("use edit/splice for a partial change, or pass force=true to replace {shown}"),
+                format!(
+                    "{shown}: {} bytes would replace {} bytes",
+                    content.len(),
+                    old.len()
+                ),
+                format!(
+                    "use edit/splice for a partial change, or pass force=true to replace {shown}"
+                ),
             );
         }
     }
     if let Some(parent) = full.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            return Env::fail("write", "write_failed", format!("{shown}: {e}"), "check that the parent directory is writable");
+            return Env::fail(
+                "write",
+                "write_failed",
+                format!("{shown}: {e}"),
+                "check that the parent directory is writable",
+            );
         }
     }
     if let Err(e) = std::fs::write(&full, &content) {
-        return Env::fail("write", "write_failed", format!("{shown}: {e}"), "check permissions and disk space");
+        return Env::fail(
+            "write",
+            "write_failed",
+            format!("{shown}: {e}"),
+            "check permissions and disk space",
+        );
     }
     let mut env = Env::ok("write")
         .field("path", shown.clone())
@@ -58,7 +88,8 @@ pub fn write(ctx: &Ctx, args: &Value) -> Env {
             content.len()
         ));
     if content.contains("\\n") && !content.contains('\n') {
-        env = env.note("content has no real line breaks: it contains the two characters backslash-n");
+        env =
+            env.note("content has no real line breaks: it contains the two characters backslash-n");
     }
     ctx.commit(env, &shown, before, Some(content))
 }
@@ -67,7 +98,14 @@ pub fn write(ctx: &Ctx, args: &Value) -> Env {
 pub fn edit(ctx: &Ctx, args: &Value) -> Env {
     let edits = match args["edits"].as_array() {
         Some(list) if !list.is_empty() => list,
-        _ => return Env::fail("edit", "bad_arguments", "edit needs edits=[{path, old, new}]", "pass edits=[{\"path\": \"a.rs\", \"old\": \"x\", \"new\": \"y\"}]"),
+        _ => {
+            return Env::fail(
+                "edit",
+                "bad_arguments",
+                "edit needs edits=[{path, old, new}]",
+                "pass edits=[{\"path\": \"a.rs\", \"old\": \"x\", \"new\": \"y\"}]",
+            )
+        }
     };
     // Validate everything first: a bad edit changes no file.
     let mut planned: Vec<(String, String, String, String)> = Vec::new();
@@ -89,7 +127,12 @@ pub fn edit(ctx: &Ctx, args: &Value) -> Env {
         let text = match std::fs::read_to_string(&full) {
             Ok(text) => text,
             Err(e) => {
-                return Env::fail("edit", "not_found", format!("{shown}: {e}"), "use write for a new file, or map() to see what exists");
+                return Env::fail(
+                    "edit",
+                    "not_found",
+                    format!("{shown}: {e}"),
+                    "use write for a new file, or map() to see what exists",
+                );
             }
         };
         let current = planned
@@ -115,7 +158,12 @@ pub fn edit(ctx: &Ctx, args: &Value) -> Env {
         let full = util::resolve(&ctx.root, &shown);
         let before = std::fs::read_to_string(&full).ok();
         if let Err(e) = std::fs::write(&full, &after) {
-            return Env::fail("edit", "write_failed", format!("{shown}: {e}"), "check permissions");
+            return Env::fail(
+                "edit",
+                "write_failed",
+                format!("{shown}: {e}"),
+                "check permissions",
+            );
         }
         if ctx.journal.borrow_mut().record(&shown, before, Some(after)) {
             changed.push(shown.clone());
@@ -125,7 +173,11 @@ pub fn edit(ctx: &Ctx, args: &Value) -> Env {
     if let Some(first) = changed.first() {
         env.delta = Some(ctx.journal.borrow().diff(Some(first), 6000));
     }
-    env.body = Some(format!("edited {} file(s): {}", changed.len(), changed.join(", ")));
+    env.body = Some(format!(
+        "edited {} file(s): {}",
+        changed.len(),
+        changed.join(", ")
+    ));
     env
 }
 
@@ -136,7 +188,11 @@ fn replace(text: &str, old: &str, new: &str, replace_all: bool) -> Result<String
         if count > 1 && !replace_all {
             return Err(format!("`old` appears {count} times; add surrounding lines to make it unique, or pass all=true"));
         }
-        return Ok(if replace_all { text.replace(old, new) } else { text.replacen(old, new, 1) });
+        return Ok(if replace_all {
+            text.replace(old, new)
+        } else {
+            text.replacen(old, new, 1)
+        });
     }
     // Try ignoring leading indentation: find a unique block equal after trimming.
     let old_trim: Vec<&str> = old.lines().map(|l| l.trim_start()).collect();
@@ -154,7 +210,13 @@ fn replace(text: &str, old: &str, new: &str, replace_all: bool) -> Result<String
         let indent = &lines[start][..lines[start].len() - lines[start].trim_start().len()];
         let replacement: Vec<String> = new
             .lines()
-            .map(|line| if line.is_empty() { String::new() } else { format!("{indent}{}", line.trim_start()) })
+            .map(|line| {
+                if line.is_empty() {
+                    String::new()
+                } else {
+                    format!("{indent}{}", line.trim_start())
+                }
+            })
             .collect();
         let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
         out.splice(start..start + old_trim.len(), replacement);
@@ -165,7 +227,11 @@ fn replace(text: &str, old: &str, new: &str, replace_all: bool) -> Result<String
 
 /// The closest lines to a failed match, so the caller can see the real text.
 fn closest(text: &str, needle: &str) -> String {
-    let key: String = needle.chars().filter(|c| !c.is_whitespace()).take(24).collect();
+    let key: String = needle
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .take(24)
+        .collect();
     for (i, line) in text.lines().enumerate() {
         if line.contains(&key) {
             return format!("closest line {}: {}", i + 1, util::clip(line, 200));
@@ -179,39 +245,86 @@ pub fn splice(ctx: &Ctx, args: &Value) -> Env {
     let path = args["path"].as_str().unwrap_or("");
     let start = args["start"].as_u64().unwrap_or(0) as usize;
     if path.is_empty() || start == 0 {
-        return Env::fail("splice", "bad_arguments", "splice needs path and start >= 1", "pass path, start, end (end=start-1 inserts)");
+        return Env::fail(
+            "splice",
+            "bad_arguments",
+            "splice needs path and start >= 1",
+            "pass path, start, end (end=start-1 inserts)",
+        );
     }
     let end = match args["end"].as_u64() {
         Some(end) => end as usize,
-        None => return Env::fail("splice", "bad_arguments", "splice needs end", "pass end=start-1 to insert before start, end=start to replace it"),
+        None => {
+            return Env::fail(
+                "splice",
+                "bad_arguments",
+                "splice needs end",
+                "pass end=start-1 to insert before start, end=start to replace it",
+            )
+        }
     };
     if end + 1 < start {
-        return Env::fail("splice", "bad_arguments", format!("start={start} end={end} is not a range"), "end must be >= start-1");
+        return Env::fail(
+            "splice",
+            "bad_arguments",
+            format!("start={start} end={end} is not a range"),
+            "end must be >= start-1",
+        );
     }
     let text = args["text"].as_str().unwrap_or("");
     let full = util::resolve(&ctx.root, path);
     let shown = util::relative(&ctx.root, &full);
     let before = match std::fs::read_to_string(&full) {
         Ok(text) => text,
-        Err(e) => return Env::fail("splice", "not_found", format!("{shown}: {e}"), "use write for a new file"),
+        Err(e) => {
+            return Env::fail(
+                "splice",
+                "not_found",
+                format!("{shown}: {e}"),
+                "use write for a new file",
+            )
+        }
     };
     let lines: Vec<&str> = before.lines().collect();
     if start > lines.len() + 1 {
-        return Env::fail("splice", "out_of_range", format!("{shown} has {} lines; start={start}", lines.len()), "read the file first, then splice inside its range");
+        return Env::fail(
+            "splice",
+            "out_of_range",
+            format!("{shown} has {} lines; start={start}", lines.len()),
+            "read the file first, then splice inside its range",
+        );
     }
     let last = end.min(lines.len());
     let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-    let replacement: Vec<String> = if text.is_empty() { Vec::new() } else { text.lines().map(|l| l.to_string()).collect() };
+    let replacement: Vec<String> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.lines().map(|l| l.to_string()).collect()
+    };
     out.splice(start - 1..last, replacement);
-    let after = out.join("\n") + if before.ends_with('\n') || !out.is_empty() { "\n" } else { "" };
+    let after = out.join("\n")
+        + if before.ends_with('\n') || !out.is_empty() {
+            "\n"
+        } else {
+            ""
+        };
     if let Err(e) = std::fs::write(&full, &after) {
-        return Env::fail("splice", "write_failed", format!("{shown}: {e}"), "check permissions");
+        return Env::fail(
+            "splice",
+            "write_failed",
+            format!("{shown}: {e}"),
+            "check permissions",
+        );
     }
     let env = Env::ok("splice")
         .field("path", shown.clone())
         .field("start", start)
         .field("end", end)
-        .body(format!("spliced {shown} {start}-{end} ({} lines before, {} after)", lines.len(), after.lines().count()));
+        .body(format!(
+            "spliced {shown} {start}-{end} ({} lines before, {} after)",
+            lines.len(),
+            after.lines().count()
+        ));
     ctx.commit(env, &shown, Some(before), Some(after))
 }
 
@@ -219,21 +332,45 @@ pub fn splice(ctx: &Ctx, args: &Value) -> Env {
 pub fn delete(ctx: &Ctx, args: &Value) -> Env {
     let path = args["path"].as_str().unwrap_or("");
     if path.is_empty() {
-        return Env::fail("delete", "bad_arguments", "delete needs a path", "pass the file path, not a directory");
+        return Env::fail(
+            "delete",
+            "bad_arguments",
+            "delete needs a path",
+            "pass the file path, not a directory",
+        );
     }
     let full = util::resolve(&ctx.root, path);
     let shown = util::relative(&ctx.root, &full);
     if full.is_dir() {
-        return Env::fail("delete", "is_directory", format!("{shown} is a directory"), "map(path) first, then delete the files it lists");
+        return Env::fail(
+            "delete",
+            "is_directory",
+            format!("{shown} is a directory"),
+            "map(path) first, then delete the files it lists",
+        );
     }
     let before = match std::fs::read_to_string(&full) {
         Ok(text) => text,
-        Err(e) => return Env::fail("delete", "not_found", format!("{shown}: {e}"), "call map() to see what exists"),
+        Err(e) => {
+            return Env::fail(
+                "delete",
+                "not_found",
+                format!("{shown}: {e}"),
+                "call map() to see what exists",
+            )
+        }
     };
     if let Err(e) = std::fs::remove_file(&full) {
-        return Env::fail("delete", "delete_failed", format!("{shown}: {e}"), "check permissions");
+        return Env::fail(
+            "delete",
+            "delete_failed",
+            format!("{shown}: {e}"),
+            "check permissions",
+        );
     }
-    let env = Env::ok("delete").field("path", shown.clone()).body(format!("deleted {shown}"));
+    let env = Env::ok("delete")
+        .field("path", shown.clone())
+        .body(format!("deleted {shown}"));
     ctx.commit(env, &shown, Some(before), None)
 }
 
@@ -241,16 +378,30 @@ pub fn delete(ctx: &Ctx, args: &Value) -> Env {
 pub fn mkdir(ctx: &Ctx, args: &Value) -> Env {
     let path = args["path"].as_str().unwrap_or("");
     if path.is_empty() {
-        return Env::fail("mkdir", "bad_arguments", "mkdir needs a path", "pass path=\"src/new\"");
+        return Env::fail(
+            "mkdir",
+            "bad_arguments",
+            "mkdir needs a path",
+            "pass path=\"src/new\"",
+        );
     }
     let full = util::resolve(&ctx.root, path);
     let shown = util::relative(&ctx.root, &full);
     if full.is_dir() {
-        return Env::ok("mkdir").field("path", shown.clone()).body(format!("{shown} already exists"));
+        return Env::ok("mkdir")
+            .field("path", shown.clone())
+            .body(format!("{shown} already exists"));
     }
     match std::fs::create_dir_all(&full) {
-        Ok(()) => Env::ok("mkdir").field("path", shown.clone()).body(format!("created {shown}")),
-        Err(e) => Env::fail("mkdir", "mkdir_failed", format!("{shown}: {e}"), "check permissions"),
+        Ok(()) => Env::ok("mkdir")
+            .field("path", shown.clone())
+            .body(format!("created {shown}")),
+        Err(e) => Env::fail(
+            "mkdir",
+            "mkdir_failed",
+            format!("{shown}: {e}"),
+            "check permissions",
+        ),
     }
 }
 
@@ -258,12 +409,22 @@ pub fn mkdir(ctx: &Ctx, args: &Value) -> Env {
 pub fn apply(ctx: &Ctx, args: &Value) -> Env {
     let patch = match args["patch"].as_str() {
         Some(p) if !p.trim().is_empty() => p,
-        _ => return Env::fail("apply", "bad_arguments", "apply needs a unified diff", "pass patch=\"--- a/file\\n+++ b/file\\n@@ ...\""),
+        _ => {
+            return Env::fail(
+                "apply",
+                "bad_arguments",
+                "apply needs a unified diff",
+                "pass patch=\"--- a/file\\n+++ b/file\\n@@ ...\"",
+            )
+        }
     };
     let mut files: Vec<(String, String)> = Vec::new();
     for line in patch.lines() {
         if let Some(rest) = line.strip_prefix("+++ ") {
-            files.push((rest.trim().trim_start_matches("b/").to_string(), String::new()));
+            files.push((
+                rest.trim().trim_start_matches("b/").to_string(),
+                String::new(),
+            ));
             continue;
         }
         if line.starts_with("--- ") {
@@ -275,31 +436,65 @@ pub fn apply(ctx: &Ctx, args: &Value) -> Env {
         }
     }
     if files.is_empty() {
-        return Env::fail("apply", "bad_patch", "no `+++ b/path` header found", "supply a real unified diff; prefer edit(edits=[...])");
+        return Env::fail(
+            "apply",
+            "bad_patch",
+            "no `+++ b/path` header found",
+            "supply a real unified diff; prefer edit(edits=[...])",
+        );
     }
     let mut updates: Vec<(String, String, String)> = Vec::new();
     for (path, hunks) in files {
         let full = util::resolve(&ctx.root, &path);
         let before = match std::fs::read_to_string(&full) {
             Ok(text) => text,
-            Err(e) => return Env::fail("apply", "not_found", format!("{path}: {e}"), "apply edits existing files; use write for a new file"),
+            Err(e) => {
+                return Env::fail(
+                    "apply",
+                    "not_found",
+                    format!("{path}: {e}"),
+                    "apply edits existing files; use write for a new file",
+                )
+            }
         };
         match util::apply_patch(&before, &hunks) {
             Ok(after) => updates.push((path, before, after)),
-            Err(e) => return Env::fail("apply", "bad_patch", format!("{path}: {e}"), "read the file and rebuild the diff, or use edit(edits=[...])"),
+            Err(e) => {
+                return Env::fail(
+                    "apply",
+                    "bad_patch",
+                    format!("{path}: {e}"),
+                    "read the file and rebuild the diff, or use edit(edits=[...])",
+                )
+            }
         }
     }
     let mut changed: Vec<String> = Vec::new();
     for (path, before, after) in &updates {
         let full = util::resolve(&ctx.root, path);
         if let Err(e) = std::fs::write(&full, after) {
-            return Env::fail("apply", "write_failed", format!("{path}: {e}"), "check permissions");
+            return Env::fail(
+                "apply",
+                "write_failed",
+                format!("{path}: {e}"),
+                "check permissions",
+            );
         }
-        if ctx.journal.borrow_mut().record(path, Some(before.clone()), Some(after.clone())) {
+        if ctx
+            .journal
+            .borrow_mut()
+            .record(path, Some(before.clone()), Some(after.clone()))
+        {
             changed.push(path.clone());
         }
     }
-    let mut env = Env::ok("apply").field("paths", changed.clone()).body(format!("applied {} file(s): {}", changed.len(), changed.join(", ")));
+    let mut env = Env::ok("apply")
+        .field("paths", changed.clone())
+        .body(format!(
+            "applied {} file(s): {}",
+            changed.len(),
+            changed.join(", ")
+        ));
     if let Some(first) = changed.first() {
         env.delta = Some(ctx.journal.borrow().diff(Some(first), 6000));
     }

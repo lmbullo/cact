@@ -35,7 +35,12 @@ pub fn relative(root: &Path, path: &Path) -> String {
 }
 
 /// The 1-based line window `start..=end` of `text`, plus the file's line count.
-pub fn line_window(text: &str, start: usize, end: Option<usize>, page: usize) -> (String, usize, usize) {
+pub fn line_window(
+    text: &str,
+    start: usize,
+    end: Option<usize>,
+    page: usize,
+) -> (String, usize, usize) {
     let lines: Vec<&str> = text.lines().collect();
     let total = lines.len();
     let first = start.max(1);
@@ -88,13 +93,19 @@ pub fn run_argv(
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .current_dir(cwd)
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("could not spawn {}: {e}", argv[0]))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("could not spawn {}: {e}", argv[0]))?;
     if let Some(text) = stdin {
         if let Some(mut pipe) = child.stdin.take() {
             let _ = pipe.write_all(text.as_bytes());
@@ -127,7 +138,12 @@ pub fn run_argv(
 }
 
 /// Run `cmd` through `/bin/sh -c` in `cwd`; the explicit shell escape hatch.
-pub fn run_shell(cmd: &str, cwd: &Path, env: &BTreeMap<String, String>, timeout_s: f64) -> Result<Output, String> {
+pub fn run_shell(
+    cmd: &str,
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    timeout_s: f64,
+) -> Result<Output, String> {
     run_argv(
         &["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()],
         cwd,
@@ -146,7 +162,10 @@ pub fn unified_diff(path: &str, before: &str, after: &str) -> String {
         head += 1;
     }
     let mut tail = 0;
-    while tail < a.len() - head && tail < b.len() - head && a[a.len() - 1 - tail] == b[b.len() - 1 - tail] {
+    while tail < a.len() - head
+        && tail < b.len() - head
+        && a[a.len() - 1 - tail] == b[b.len() - 1 - tail]
+    {
         tail += 1;
     }
     let a_mid = &a[head..a.len() - tail];
@@ -205,9 +224,15 @@ pub fn apply_patch(before: &str, patch: &str) -> Result<String, String> {
             }
             j += 1;
         }
-        let at = if old_len == 0 { old_start } else { old_start.saturating_sub(1) };
+        let at = if old_len == 0 {
+            old_start
+        } else {
+            old_start.saturating_sub(1)
+        };
         if at > lines.len() {
-            return Err(format!("hunk @@ -{old_start},{old_len} @@ starts past the end of the file"));
+            return Err(format!(
+                "hunk @@ -{old_start},{old_len} @@ starts past the end of the file"
+            ));
         }
         let end = (at + old_block.len()).min(lines.len());
         if lines[at..end] != old_block[..] {
@@ -228,10 +253,7 @@ pub fn apply_patch(before: &str, patch: &str) -> Result<String, String> {
 
 /// Parse `@@ -a,b +c,d @@` into `(a, b)`; a missing count is one line.
 fn parse_hunk_header(line: &str) -> Result<(usize, usize), String> {
-    let body = line
-        .trim_start_matches('@')
-        .trim_end_matches('@')
-        .trim();
+    let body = line.trim_start_matches('@').trim_end_matches('@').trim();
     let mut parts = body.split_whitespace();
     let old = parts.next().ok_or("bad hunk header")?;
     let old = old.trim_start_matches('-');
@@ -264,7 +286,10 @@ pub fn first_failure(stdout: &str, stderr: &str) -> String {
         r"^\s*([^\s:()]+\.\w+:\d+):\s*(error:.*)$",
         r"^\s*(?:AssertionError|Error|Exception):\s*(.+)$",
     ];
-    let compiled: Vec<regex::Regex> = patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+    let compiled: Vec<regex::Regex> = patterns
+        .iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
+        .collect();
     for text in [stderr, stdout] {
         for line in text.lines() {
             let trimmed = line.trim();
@@ -329,8 +354,14 @@ mod tests {
 
     #[test]
     fn failure_parsing_prefers_the_runner_dialect() {
-        assert_eq!(first_failure("", "(fail) adds two numbers"), "(fail) adds two numbers");
-        assert_eq!(first_failure("FAILED tests/x.py::t", ""), "FAILED tests/x.py::t");
+        assert_eq!(
+            first_failure("", "(fail) adds two numbers"),
+            "(fail) adds two numbers"
+        );
+        assert_eq!(
+            first_failure("FAILED tests/x.py::t", ""),
+            "FAILED tests/x.py::t"
+        );
         assert_eq!(first_failure("plain line", ""), "plain line");
     }
 }

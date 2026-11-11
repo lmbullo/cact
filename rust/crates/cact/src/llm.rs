@@ -81,7 +81,14 @@ pub struct Client {
 
 impl Client {
     /// A client for one endpoint; `cache_dir` of `None` disables the reply cache.
-    pub fn new(api_key: &str, model: &str, effort: Option<&str>, base: &str, timeout: f64, cache_dir: Option<PathBuf>) -> Client {
+    pub fn new(
+        api_key: &str,
+        model: &str,
+        effort: Option<&str>,
+        base: &str,
+        timeout: f64,
+        cache_dir: Option<PathBuf>,
+    ) -> Client {
         Client {
             api_key: api_key.to_string(),
             model: model.to_string(),
@@ -198,12 +205,24 @@ impl Client {
         let _ = std::fs::remove_file(&body_path);
         let status: u32 = out.stdout.trim().parse().unwrap_or(0);
         if out.timed_out || status == 0 {
-            return Err(LlmError(format!("transport: {} {}", if out.timed_out { "timeout" } else { "no response" }, text.trim())));
+            return Err(LlmError(format!(
+                "transport: {} {}",
+                if out.timed_out {
+                    "timeout"
+                } else {
+                    "no response"
+                },
+                text.trim()
+            )));
         }
         if !(200..300).contains(&status) {
-            return Err(LlmError(format!("http {status}: {}", crate::util::clip(text.trim(), 600))));
+            return Err(LlmError(format!(
+                "http {status}: {}",
+                crate::util::clip(text.trim(), 600)
+            )));
         }
-        parse_reply(&text).map_err(|e| LlmError(format!("bad reply: {e}: {}", crate::util::clip(&text, 400))))
+        parse_reply(&text)
+            .map_err(|e| LlmError(format!("bad reply: {e}: {}", crate::util::clip(&text, 400))))
     }
 }
 
@@ -214,7 +233,13 @@ fn retryable(message: &str) -> bool {
         return true;
     }
     if let Some(rest) = lower.strip_prefix("http ") {
-        let code: u32 = rest.split(':').next().unwrap_or("0").trim().parse().unwrap_or(0);
+        let code: u32 = rest
+            .split(':')
+            .next()
+            .unwrap_or("0")
+            .trim()
+            .parse()
+            .unwrap_or(0);
         return code == 429 || code >= 500;
     }
     false
@@ -249,7 +274,9 @@ fn parse_reply(text: &str) -> Result<Reply, String> {
     let usage = Usage {
         prompt: u["prompt_tokens"].as_u64().unwrap_or(0),
         completion: u["completion_tokens"].as_u64().unwrap_or(0),
-        reasoning: u["completion_tokens_details"]["reasoning_tokens"].as_u64().unwrap_or(0),
+        reasoning: u["completion_tokens_details"]["reasoning_tokens"]
+            .as_u64()
+            .unwrap_or(0),
         total: u["total_tokens"].as_u64().unwrap_or(0),
         cache_hit_tokens: u["prompt_cache_hit_tokens"].as_u64().unwrap_or(0),
         cache_miss_tokens: u["prompt_cache_miss_tokens"].as_u64().unwrap_or(0),
