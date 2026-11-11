@@ -2,7 +2,7 @@
  * server.test.ts: the real server process — queue, cancellation, restart and the machine log.
  *
  * WHAT IT IS
- *  Starts `src/server.ts` with CODE_TUI_PYTHON at a fake shell worker and drives the HTTP API:
+ *  Starts `src/server.ts` with CODE_TUI_WORKER at a fake shell worker and drives the HTTP API:
  *  one slot queues the rest, a queued cancel spawns nothing, a SIGKILLed server fails its runner
  *  and promotes the oldest queued task, and logs/<id>.jsonl stays one JSON record per line.
  *
@@ -34,12 +34,12 @@ function temp(prefix: string): string {
   return dir;
 }
 
-/** A fake python3: the prompt text decides whether it sleeps, finishes or prints a long line. */
+/** A fake worker: the prompt text decides whether it sleeps, finishes or prints a long line. */
 function fakeWorker(): string {
   const dir = temp("code-tui-fake-");
   const path = join(dir, "python3");
   writeFileSync(path, `#!/bin/sh
-body=$(cat "$5")
+body=$(cat "$4")
 case "$body" in
   *slow*) exec sleep 30 ;;
   *noise*)
@@ -60,7 +60,7 @@ esac
 type Server = { proc: any; base: string; state: string; stateRoot: string };
 
 /** Spawn the real server and wait for the server.json it writes after listening. */
-async function launch(workspace: string, stateRoot: string, python: string): Promise<Server> {
+async function launch(workspace: string, stateRoot: string, worker: string): Promise<Server> {
   const state = join(stateRoot, "state");
   stateDirs.push(state);
   const proc = Bun.spawn({
@@ -70,7 +70,7 @@ async function launch(workspace: string, stateRoot: string, python: string): Pro
     env: {
       ...process.env,
       CODE_TUI_STATE_ROOT: stateRoot,
-      CODE_TUI_PYTHON: python,
+      CODE_TUI_WORKER: worker,
       CODE_TUI_CONCURRENCY: "1",
       CODE_TUI_CHECK: "",
       DEEPSEEK_API_KEY: "",
