@@ -112,7 +112,7 @@ def main() -> int:
         cache=False,
     )
     budget = config.budget(
-        max(1, args.max_steps),
+        max(0, args.max_steps),
         max(10.0, args.max_wall),
         args.max_output,
     )

@@ -289,13 +289,23 @@ def run(check):
           and "upstream 500" in fail_summary.get("error", ""),
           f"{fail_result.stop} {fail_summary} {fail_result.error!r}")
 
-    push_client = FakeClient([_reply(content="budget summary", finish="stop")])
-    push_result = tool_loop.ToolLoop(push_client, FakeKernel({}), loop.Budget(max_steps=0)).run(
+    push_client = FakeClient([_reply(calls=[_call("p1", "print(1)")]),
+                             _reply(content="budget summary", finish="stop")])
+    push_result = tool_loop.ToolLoop(push_client, FakeKernel({}), loop.Budget(max_steps=1)).run(
         "smoke", "task")
     check("turn: the budget-forced _push counts as an llm call",
-          push_result.steps == 0 and push_result.llm_calls == 1
+          push_result.steps == 1 and push_result.llm_calls == 2
           and push_result.stop == tool_loop.STEP_LIMIT,
           f"steps={push_result.steps} llm_calls={push_result.llm_calls} stop={push_result.stop}")
+
+    unlimited = loop.Budget(max_steps=0, max_wall_s=60)
+    unlimited_result, _, _ = _run_loop(
+        [_reply(calls=[_call("u1", "print(1)")]),
+         _reply(content="done", finish="stop")],
+        {"print(1)": _cell(stdout="1\n")}, budget=unlimited)
+    check("turn: max_steps=0 is unlimited, not an immediate stop",
+          unlimited_result.stop == tool_loop.DONE and unlimited_result.steps == 2,
+          f"{unlimited_result.stop} steps={unlimited_result.steps}")
 
     nudge_client = FakeClient(
         [_reply(calls=[_call(f"n{i}", "print(1)")]) for i in range(5)]

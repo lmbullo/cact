@@ -149,10 +149,11 @@ class ToolLoop(ToolTurns, ToolCalls, ToolSubTools, ToolHealth):
         try:
             while True:
                 self._compact(messages)
-                if tally.steps >= b.max_steps or (time.perf_counter() - t0) > b.max_wall_s:
+                over_steps = b.max_steps > 0 and tally.steps >= b.max_steps
+                if over_steps or (time.perf_counter() - t0) > b.max_wall_s:
                     tally.llm_calls += 1      # _push is a real client.complete
                     final = self._push(messages, usage)
-                    stop = STEP_LIMIT if tally.steps >= b.max_steps else WALL_LIMIT
+                    stop = STEP_LIMIT if over_steps else WALL_LIMIT
                     break
 
                 self._before_turn(messages, tally)
