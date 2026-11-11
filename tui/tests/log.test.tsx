@@ -1,12 +1,12 @@
 /**
- * Live log: the prompt it started from, then the agent's summary in full. Nothing between.
+ * Live log: the prompt it started from, the tool calls as they are made, then the summary.
  *
  * WHAT IT IS
  *  A stub server sends a running task, then `push(seq, event)` feeds synthetic `TaskEvent`s
  *  over the WebSocket exactly as python/worker.py emits them. The frame must open with the whole
- *  prompt under a `▸ you` head, add no row for the loop's transcript (tool calls, lifecycle,
- *  checks), keep the prompt box where it was, and close on the summary block under `▸ summary`
- *  in the same column the prompt used.
+ *  prompt under a `▸ you` head, draw each `cell.start` as a diagnostic row, add no row for the
+ *  lifecycle or checks, keep the prompt box where it was, and close on the summary block under
+ *  `▸ summary` in the same column the prompt used.
  *
  *  The run's state is rendered exactly once — by the log header, from `Task.status` — so the
  *  body must never repeat the status word and the lifecycle events must add no row at all. The
@@ -23,8 +23,8 @@
  *    there without a case here means the panel can drop it silently.
  *  - A prose block is headed by a `▸` word (`you`, `summary`) and its body wraps unclipped; a
  *    diagnostic row (a rejected finish, an error) stays machine-first `field=value`.
- *  - Tool calls are the loop's transcript, not the reader's: a `cell.start` renders no row, so
- *    the body stays the prompt, a notice, an error and the summary.
+ *  - A `cell.start` renders one diagnostic row (`kind=cell tool=… args=…`); a `cell.end` is
+ *    journal history and adds no row, so a call is never named twice.
  *  - Exactly one status word per log is the invariant: the header's. The same holds for the
  *    counters (turn, tokens in/out, price, cache rate, context window): the header prints them
  *    once and the closing block repeats none of them. How the run ended — the stop reason, the
@@ -146,29 +146,42 @@ test("live log opens on the prompt and closes on the summary", async () => {
     await flush();
   };
 
-  // Tool calls are the loop's transcript: the loop is trusted, so a `cell.start` adds no row.
-  // A typed call and a python cell, one long enough to have needed clipping, all leave the
-  // body exactly as it was — the prompt, then the waiting row.
-  const beforeCalls = captureCharFrame();
-  await push(1, { kind: "cell.start", cell: 1, tool: "read", args: { path: "a.py" } });
-  await push(2, { kind: "cell.start", cell: 2, tool: "code", code: `run(${JSON.stringify("x".repeat(400))})` });
-  await push(3, { kind: "cell.start", cell: 3, tool: "exec", args: { argv: ["bun", "test"] } });
-  let frame = captureCharFrame();
-  // The body between the two prompt-box lines is unchanged; the spinner above it may tick.
+  // The body between the two prompt-box lines; the spinner above it may tick, so compare it.
   const body = (whole: string) => {
     const rows = whole.split("\n");
     const top = rows.findIndex((line) => line.includes("─"));
     const bottom = rows.findIndex((line, index) => index > top && line.includes("─"));
     return rows.slice(top + 1, bottom).join("\n");
   };
-  expect(body(frame)).toBe(body(beforeCalls));
-  expect(frame).not.toContain("kind=cell");
-  expect(frame).not.toContain("a.py");
+
+  // Tool calls are drawn as they are made: one diagnostic row with the tool and its arguments.
+  await push(1, { kind: "cell.start", cell: 1, tool: "read", args: { path: "a.py" } });
+  let frame = captureCharFrame();
+  expect(frame).toContain("kind=cell");
+  expect(frame).toContain("tool=read");
+  expect(frame).toContain('args={"path":"a.py"}');
+
+  // A code cell has no named verb, so its first line stands in; a long one is clipped to its
+  // field, never wrapped over the pane.
+  await push(2, { kind: "cell.start", cell: 2, tool: "code", code: `run(${JSON.stringify("x".repeat(400))})` });
+  frame = captureCharFrame();
+  expect(frame).toContain("tool=code");
   expect(frame).not.toContain("x".repeat(120));
+
+  await push(3, { kind: "cell.start", cell: 3, tool: "exec", args: { argv: ["bun", "test"] } });
+  frame = captureCharFrame();
+  expect(frame).toContain("tool=exec");
+  expect(frame).toContain("bun");
+
+  // The result record is journal history, not a row: `tool=read` already named the call.
+  const beforeEnd = captureCharFrame();
+  await push(4, { kind: "cell.end", cell: 1, tool: "read", ok: true, verb_kind: "read", chars: 12, duration_ms: 4 });
+  frame = captureCharFrame();
+  expect(body(frame)).toBe(body(beforeEnd));
 
   // A turn is not rendered at all: no output, no line counts.
   const stdout = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
-  await push(4, { kind: "turn", turn: 1, data: { runs: ["run('pytest')"], observation: { stdout } } });
+  await push(5, { kind: "turn", turn: 1, data: { runs: ["run('pytest')"], observation: { stdout } } });
   frame = captureCharFrame();
   expect(frame).not.toContain("out 200L");
   expect(frame).not.toContain("run('pytest')");
@@ -176,7 +189,7 @@ test("live log opens on the prompt and closes on the summary", async () => {
 
   // A turn carrying a `notice` renders the reason a finish was rejected or staged;
   // a notice-free turn stays silent (asserted above).
-  await push(5, {
+  await push(6, {
     kind: "turn",
     turn: 2,
     data: { notice: "[finish] final_answer rejected: the project check still fails" },
@@ -193,7 +206,7 @@ test("live log opens on the prompt and closes on the summary", async () => {
   // source of truth — no second status word, no copied turn, tokens, cache rate or context
   // window.
   const summary = "DONE: " + "y".repeat(300);
-  await push(6, {
+  await push(7, {
     kind: "final",
     text: summary,
     data: { status: "done", stop: "DONE", steps: 7, calls: 3, errors: 0, wallMs: 1234 },
@@ -254,7 +267,7 @@ test("live log opens on the prompt and closes on the summary", async () => {
   expect(finalRows.every((line) => line.length <= 80)).toBe(true);
 
   // An unknown event kind shows its kind field only: its payload is never dumped.
-  await push(7, { kind: "observation", text: "z".repeat(300), data: { stdout: "w".repeat(300) } });
+  await push(8, { kind: "observation", text: "z".repeat(300), data: { stdout: "w".repeat(300) } });
   frame = captureCharFrame();
   expect(frame).toContain("kind=observation");
   expect(frame).not.toContain("z".repeat(120));
@@ -263,10 +276,10 @@ test("live log opens on the prompt and closes on the summary", async () => {
   // The lifecycle kinds are the task's state, which the header already shows: they add no row.
   // In particular a journal `queued` row can never sit stale above a run that has moved on.
   const before = captureCharFrame();
-  await push(8, { kind: "queued", text: "queued" });
-  await push(9, { kind: "started", text: "agent started (deepseek-flash, effort=low)" });
-  await push(10, { kind: "pid", text: "worker pid 4321" });
-  await push(11, { kind: "finished", text: "done" });
+  await push(9, { kind: "queued", text: "queued" });
+  await push(10, { kind: "started", text: "agent started (deepseek-flash, effort=low)" });
+  await push(11, { kind: "pid", text: "worker pid 4321" });
+  await push(12, { kind: "finished", text: "done" });
   const after = captureCharFrame();
   expect(after).toBe(before);
   expect(after).not.toContain("queued");

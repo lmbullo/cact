@@ -26,6 +26,7 @@
 import type { TextareaRenderable } from "@opentui/core";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { TaskEvent } from "./types";
+import { USES } from "./board-help";
 
 /** What `useBoardViewState` needs: the boxes and refs its callbacks read and write. */
 export interface BoardViewStateOptions {
@@ -41,6 +42,8 @@ export interface BoardViewStateOptions {
   setSelected: Dispatch<SetStateAction<string | null>>;
   /** Event buffer setter, cleared whenever the selection changes. */
   setEvents: Dispatch<SetStateAction<TaskEvent[]>>;
+  /** Prompt state setter, kept in step with the textarea when a use case is loaded. */
+  setInput: Dispatch<SetStateAction<string>>;
   /** View state setter. */
   setView: Dispatch<SetStateAction<"list" | "log">>;
 }
@@ -61,6 +64,8 @@ export interface BoardViewState {
   setPromptRows: Dispatch<SetStateAction<number>>;
   /** Re-measure the prompt's wrapped rows after an edit, a cursor move or a resize. */
   measurePrompt: () => void;
+  /** Load starter use case `index` into the prompt; never queues it. */
+  applyExample: (index: number) => void;
   /** Select a task (or none): clears the event buffer and its watermark. */
   selectTask: (id: string | null) => void;
   /** Open the live run log for a task; only ever called from an explicit user action. */
@@ -94,6 +99,7 @@ export function useBoardViewState({
   eventsSeqRef,
   setSelected,
   setEvents,
+  setInput,
   setView,
 }: BoardViewStateOptions): BoardViewState {
   /** Visual (wrapped) row of the prompt cursor, used for the "3/5" overflow note. */
@@ -122,6 +128,21 @@ export function useBoardViewState({
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 3500);
   }, []);
+
+  /** Load a starter use case into the prompt; the reader still presses ctrl+enter to run it. */
+  const applyExample = useCallback(
+    (index: number) => {
+      const use = USES[index];
+      if (!use) return;
+      inputRef.current?.setText(use.prompt);
+      setInput(use.prompt);
+      setPromptRow(0);
+      setPromptRows(1);
+      notify("example loaded · ctrl+enter runs it");
+      measurePrompt();
+    },
+    [inputRef, setInput, notify, measurePrompt],
+  );
 
   const selectTask = useCallback(
     (id: string | null) => {
@@ -161,6 +182,7 @@ export function useBoardViewState({
     setPromptRow,
     setPromptRows,
     measurePrompt,
+    applyExample,
     selectTask,
     openLog,
     closeLog,

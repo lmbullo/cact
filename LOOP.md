@@ -1,8 +1,8 @@
 # The loop bill: what the agent used to cost, what it costs now
 
-This is a human-readable record, not a contract. The machine contracts stay in `AGENTS.md`,
-the module headers and `docs/`. Every number below comes from a recorded run under
-`bench/ws/runs/` or `bench/evals/results/`.
+This is a measurement record, not a contract. The machine contracts stay in `AGENTS.md`, the
+module headers and `docs/`; the design argument is `docs/how-it-works.md`. Every number below comes
+from a recorded run under `bench/ws/runs/` or `bench/evals/results/`.
 
 The task is the same in every q1 row: add `shortHandle(id)` for a `t-<timestamp>-<5 hex>`
 task id, cover it with a test, keep the suite green, do not commit.

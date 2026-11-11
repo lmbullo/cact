@@ -41,6 +41,7 @@ PAGES = (
     ("evals", "evals.md"),
     ("smoke", "smoke.md"),
     ("tui", "tui.md"),
+    ("tui-tests", "tui-tests.md"),
     ("tui-server", "tui-server.md"),
 )
 DOCS = (INDEX,) + tuple("docs/agent/" + page for _, page in PAGES)
@@ -63,6 +64,8 @@ def subsystem(path):
         return "bench-core"
     if path.startswith("tui/src/server"):
         return "tui-server"
+    if path.startswith("tui/tests/"):
+        return "tui-tests"
     if path.startswith("tui/"):
         return "tui"
     return ""

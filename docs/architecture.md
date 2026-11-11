@@ -1,10 +1,10 @@
 # docs/architecture.md — trees, one cell end to end, loops, observations, the check plan
 
-You are the reader. This file owns the runtime shape: which trees are input, output or generated,
-how one cell travels from a loop to the kernel and back, what the loops are, how a typed
-observation pages, and how the check plan and compaction gate a finish. The invariants these
-mechanics satisfy are `../AGENTS.md` §2/§4; the commands that prove them are `run.md`; module
-headers are the per-module source (`python3 bench/guide.py`).
+This file owns the runtime shape: which trees are input, output or generated, how one cell
+travels from a loop to the kernel and back, what the loops are, how a typed observation pages, and
+how the check plan and compaction gate a finish. The design argument behind those mechanics is
+`how-it-works.md`; the invariants they satisfy are `../AGENTS.md` §2/§4; the commands that prove
+them are `run.md`; module headers are the per-module source (`python3 bench/guide.py`).
 
 ## 1. Trees and fixtures
 

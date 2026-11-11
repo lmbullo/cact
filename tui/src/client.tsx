@@ -64,6 +64,7 @@ export function App({
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [input, setInput] = useState("");
   const [view, setView] = useState<"list" | "log">("list");
+  const [help, setHelp] = useState(false);
   /** How the board arranges its bands; local UI state, cycled by Ctrl-O. Never sent to the server. */
   const [order, setOrder] = useState<BoardOrder>("status");
   /**
@@ -77,8 +78,8 @@ export function App({
   const selectedRef = useRef<string | null>(null);
   const eventsSeqRef = useRef(0);
   /**
-   * The board window survives renders: keeping the previous start is what stops a live
-   * task update from re-pinning (or recentring) the list under the reader.
+   * The board window survives renders: keeping the previous start stops a live task update
+   * from re-pinning the list under the reader.
    */
   const scrollRef = useRef<ScrollState>({ start: 0, focus: -1, selected: null });
 
@@ -91,10 +92,10 @@ export function App({
     eventsSeqRef,
     setSelected,
     setEvents,
+    setInput,
     setView,
   });
   useCopyGesture({ bumpActivity, renderer, copy, notify: ui.notify });
-
   const link = useServerLink({
     httpUrl,
     workspace,
@@ -129,7 +130,6 @@ export function App({
     selectTask: ui.selectTask,
     selectedRef,
   });
-  // A run is live somewhere: the prompt box's top line spins while work is in flight.
   const spinner = useSpinner(board.runningCount > 0);
   const { queue, cancelSelected } = useTaskActions({
     baseUrl: link.baseUrl,
@@ -156,6 +156,9 @@ export function App({
     setPromptRow: ui.setPromptRow,
     setPromptRows: ui.setPromptRows,
     queue,
+    help,
+    setHelp,
+    applyExample: ui.applyExample,
     cycleSelection: board.cycleSelection,
     openLog: ui.openLog,
     closeLog: ui.closeLog,
@@ -172,9 +175,8 @@ export function App({
     return () => clearTimeout(frame);
   }, [input, width, ui.promptRows, ui.measurePrompt]);
 
-  // Layout is always: [log header, log only] / content / hairline / prompt. Only the
-  // content pane swaps between the board and a run log; the prompt box never does. There
-  // is no background fill: the terminal's own colours show through the whole screen.
+  // Layout is always: [log header, log only] / content / hairline / prompt. Only the content
+  // pane swaps; the prompt box never does, and there is no background fill.
   const layout = boardLayout({
     width,
     height,
@@ -214,12 +216,14 @@ export function App({
         width={width}
         now={board.now}
         check={board.logCheck}
-        showingLog={layout.showingLog}
+        showingLog={layout.showingLog && !help}
       />
       <ContentPane
         task={layout.logTask}
         events={events}
         width={width}
+        height={layout.rowBudget + (help && layout.showingLog ? 1 : 0)}
+        help={help}
         listRows={board.listRows}
         visible={layout.visible}
         selected={selected}

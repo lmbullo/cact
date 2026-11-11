@@ -1,15 +1,17 @@
 # AGENTS.md — operating manual for coding agents
 
-You are the reader. No human reads these files; every document in this repo is an interface
-specification for an agent that will edit the code without supervision. Write and edit them the
-same way: facts, entry points, invariants, failure modes, exact commands. No onboarding prose,
-no persuasion, no screenshots-for-humans.
+This is the short contract for an agent that will edit the code without supervision. Every
+document in the repo is an interface specification written for that agent; a human can read the
+same text and get the same facts, which is why the public entry (`README.md`) points here instead
+of restating it. Write and edit them the same way: facts, entry points, invariants, failure modes,
+exact commands. No onboarding prose, no persuasion, no screenshot-as-argument.
 
 Precedence when sources disagree:
 
 1. the module header / the code (`python3 bench/guide.py --query <topic>`)
 2. this file (the short contract)
-3. `docs/` (the document map, invocation, runtime shape) and `README.md` (identity, evals)
+3. `docs/` (the document map, task recipes, the design argument, invocation, runtime shape) and
+   `README.md` (identity, the eval registry, status)
 4. `tui/README.md`, `bench/HARD.md`
 
 Fix the lower layer in the same change that breaks it.
@@ -100,6 +102,8 @@ These are architecture, not style. A change that breaks one is a regression even
 | File | Owns |
 |---|---|
 | `docs/README.md` | The trigger→file map for every document, and the one-owner/path rules the docs gate enforces |
+| `docs/how-it-works.md` | The design argument: the control loop, what replaced each human-shaped affordance, verification, autonomy, non-goals |
+| `docs/how-to.md` | Task recipes: run it, make a task finishable, read a run, the gates, eval cases, adding a verb/plan/case/document, debugging |
 | `docs/run.md` | Invocation: gate ladder, expected exit codes, eval/workspace/TUI commands, knobs, gotchas |
 | `docs/architecture.md` | Runtime shape: tree kinds, one cell end to end, loops, paging, the check plan and compaction |
 | `bench/agent/kernel/` | The action space, split by lifecycle: `protocol.py` (PROTOCOL + Cell wire shapes), `driver.py` (child loop), `prelude.py` (assembled PRELUDE over five fragment assemblers), `run_prelude.py` (assembled RUN_PRELUDE over the `run_prelude_*.py` fragments: exec/git/serve + the mutation and spawn gates), `process.py` (`Kernel`: spawn, supervise, restart, reap) |
@@ -282,8 +286,9 @@ shell verb, add it to `_RUN_SHELL_MUTATORS` / `_RUN_GIT_MUTATORS` and `_HINT` to
 - Prefer one call that does the job over a pipeline of calls; prefer a typed tool over
   `exec(shell=...)`; prefer deleting a duplicate catalog over syncing two copies.
 - One fact, one owner. `AGENTS.md` owns invariants, recipes and failure modes, `README.md` owns
-  identity and the eval registry, `docs/run.md` owns invocation, `docs/architecture.md` owns the
-  runtime shape, `docs/README.md` owns the document map, `tui/README.md` owns the wire contract,
+  identity, the eval registry and status, `docs/how-it-works.md` owns the design argument,
+  `docs/how-to.md` owns the task recipes, `docs/run.md` owns invocation, `docs/architecture.md` owns
+  the runtime shape, `docs/README.md` owns the document map, `tui/README.md` owns the wire contract,
   `HARD.md` owns the evidence, a module header owns that module. Point at the owner instead of
   restating it: `bench/smoke_checks/docs.py` fails on a paragraph that appears in two documents.
 - A doc claim must be executable or checkable. If you cannot verify it, cut it.

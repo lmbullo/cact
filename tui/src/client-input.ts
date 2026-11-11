@@ -3,7 +3,8 @@
  *
  * WHAT IT IS
  *  `useBoardKeys`: Ctrl-C/Q quit, Ctrl-K cancel, Ctrl-R reconnect, Ctrl-O cycle the arrangement,
- *  up/down and Ctrl-N/P move, Enter opens or adds a line, Ctrl-Enter queues, Esc clears.
+ *  up/down and Ctrl-N/P move, Enter opens or adds a line, Ctrl-Enter queues, Esc clears, `?`
+ *  opens the help card and 1–4 on that card load a starter use case.
  *
  * ENTRY POINTS
  *  useBoardKeys(options)     the whole table; it only calls the actions the board passes in
@@ -22,6 +23,7 @@ import type { CliRenderer, KeyEvent, TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import type { Dispatch, SetStateAction } from "react";
 import { nextOrder, orderLabel, type BoardOrder } from "./list-model";
+import { handleHelpKey } from "./board-help";
 import type { Task } from "./types";
 
 /** What the keyboard table needs: the board's actions, its state and the prompt box. */
@@ -56,6 +58,12 @@ export interface BoardKeysOptions {
   setPromptRows: Dispatch<SetStateAction<number>>;
   /** Queue the prompt as a new task (Ctrl-Enter, and Ctrl-Enter on the log). */
   queue: (text: string) => Promise<void>;
+  /** True while the help card is on screen; every key but close/load is swallowed. */
+  help: boolean;
+  /** Help-card toggle, for `?` and for leaving the card. */
+  setHelp: Dispatch<SetStateAction<boolean>>;
+  /** Load starter use case `index` into the prompt (a digit press on the help card). */
+  applyExample: (index: number) => void;
   /** Move the highlight by delta rows (arrows past the prompt, Ctrl-N/Ctrl-P). */
   cycleSelection: (delta: number) => void;
   /** Open the selected task's log (Enter on an empty prompt). */
@@ -87,6 +95,9 @@ export function useBoardKeys({
   setPromptRow,
   setPromptRows,
   queue,
+  help,
+  setHelp,
+  applyExample,
   cycleSelection,
   openLog,
   closeLog,
@@ -103,6 +114,31 @@ export function useBoardKeys({
       renderer.destroy();
       return;
     }
+    const promptText = inputRef.current?.plainText ?? input;
+    const isEnter =
+      key.name === "return" || key.name === "linefeed" || key.name === "kpenter";
+    // The help card is modal: its rule closes it or loads a use case; other keys are swallowed.
+    if (help) {
+      handleHelpKey(key, () => setHelp(false), applyExample);
+      return;
+    }
+    // `?` opens the card on an empty prompt, so a question mark in real prose still gets through.
+    if (!key.ctrl && !key.meta && key.sequence === "?" && promptText.length === 0) {
+      key.preventDefault();
+      key.stopPropagation();
+      setHelp(true);
+      return;
+    }
+    // On an empty board a digit loads one of the starter use cases the empty state lists.
+    if (viewRef.current === "list" && promptText.length === 0 && tasks.length === 0) {
+      const digit = Number(key.sequence);
+      if (!key.ctrl && !key.meta && key.sequence.length === 1 && digit >= 1 && digit <= 4) {
+        key.preventDefault();
+        key.stopPropagation();
+        applyExample(digit - 1);
+        return;
+      }
+    }
     if (key.ctrl && key.name === "k") {
       key.preventDefault();
       key.stopPropagation();
@@ -117,8 +153,7 @@ export function useBoardKeys({
       return;
     }
     if (key.ctrl && key.name === "o") {
-      // Rearrange the board in place: bands and the tasks inside them, never the server's
-      // data. One press is one arrangement, announced on the hairline like any other toast.
+      // Rearrange the board in place: bands and the tasks inside them, never the server's data.
       key.preventDefault();
       key.stopPropagation();
       const next = nextOrder(order);
@@ -127,20 +162,16 @@ export function useBoardKeys({
       return;
     }
     if (viewRef.current === "log") {
-      // The prompt is editable on the log screen too, so ordinary keys fall through to
-      // the textarea. Only the few navigation keys are intercepted.
-      const logPrompt = inputRef.current?.plainText ?? input;
-      const logEnter =
-        key.name === "return" || key.name === "linefeed" || key.name === "kpenter";
-      if (key.ctrl && logEnter) {
+      // The prompt is editable on the log too; only the few navigation keys are intercepted.
+      if (key.ctrl && isEnter) {
         key.preventDefault();
         key.stopPropagation();
-        void queue(logPrompt);
+        void queue(promptText);
         return;
       }
-      if (logEnter) {
+      if (isEnter) {
         // Enter adds a line to the prompt; on an empty prompt it goes back to the list.
-        if (logPrompt.length === 0) {
+        if (promptText.length === 0) {
           key.preventDefault();
           key.stopPropagation();
           closeLog();
@@ -150,7 +181,7 @@ export function useBoardKeys({
       if (key.name === "escape") {
         key.preventDefault();
         key.stopPropagation();
-        if (logPrompt.length > 0) {
+        if (promptText.length > 0) {
           inputRef.current?.setText("");
           setPromptRow(0);
           setPromptRows(1);
@@ -161,7 +192,6 @@ export function useBoardKeys({
       }
       return;
     }
-    const promptText = inputRef.current?.plainText ?? input;
     if (key.name === "up" || key.name === "down") {
       // A prompt that occupies more than one row — typed newlines or wrapped text — owns
       // the arrows: they move the cursor between its rows instead of the highlight.
@@ -184,8 +214,6 @@ export function useBoardKeys({
       cycleSelection(-1);
       return;
     }
-    const isEnter =
-      key.name === "return" || key.name === "linefeed" || key.name === "kpenter";
     if (key.ctrl && isEnter) {
       // Ctrl+Enter queues the whole prompt; plain Enter adds a line to it.
       key.preventDefault();

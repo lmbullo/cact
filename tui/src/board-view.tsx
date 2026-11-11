@@ -26,6 +26,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { RGBA } from "@opentui/core";
 import { C, STATUS, clip, shortPath } from "./theme";
+import { EmptyState } from "./board-help";
 import { taskDuration, taskHandle, taskStats } from "./list-model";
 import type { Stat } from "./list-model";
 import type { CheckState, Task, TaskStatus } from "./types";
@@ -233,14 +234,5 @@ export function LogHeader(props: {
   );
 }
 
-/** The first screen: what this thing is for and the two keys that start a task. */
-export function EmptyState({ width }: { width: number }) {
-  const hint = clip("describe a task below — ctrl+enter queues it · enter opens a run", Math.max(10, width - 4));
-  return (
-    <box style={{ flexDirection: "column", flexShrink: 0, paddingLeft: 2 }}>
-      <text fg={C.text}>{"no tasks yet"}</text>
-      <text fg={C.faint}>{hint}</text>
-      <text fg={C.quiet}>{clip("every run is fire-and-forget: closing the tui leaves it running", Math.max(10, width - 4))}</text>
-    </box>
-  );
-}
+/** The first screen lives with the starter use cases it shows. */
+export { EmptyState };

@@ -10,7 +10,7 @@
  *  HeaderBar(props)    the log header wrapper; zero rows on the board, one on the log
  *  RuleAbove(props)    the prompt box's top line: live spinner + status note
  *  RuleBelow(props)    the prompt box's bottom line
- *  ContentPane(props)  board rows, the empty state, or the live log of the open task
+ *  ContentPane(props)  board rows, the empty state, the help card or the live log
  *
  * INVARIANTS
  *  - The prompt box never unmounts across a view switch, so its text, cursor row, row count and
@@ -27,6 +27,7 @@ import type { TextareaRenderable } from "@opentui/core";
 import type { KeyEvent } from "@opentui/core";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { EmptyState, LogHeader, Rule, SectionHeader, TaskRow } from "./board-view";
+import { HelpView } from "./board-help";
 import { LogView } from "./log-view";
 import { C, clip } from "./theme";
 import type { CheckState, Task, TaskEvent } from "./types";
@@ -167,6 +168,8 @@ export function ContentPane({
   task,
   events,
   width,
+  height,
+  help,
   listRows,
   visible,
   selected,
@@ -179,6 +182,10 @@ export function ContentPane({
   events: TaskEvent[];
   /** Terminal width every row lays itself out in. */
   width: number;
+  /** Rows the content pane may fill, so the help card is clipped instead of overflowing. */
+  height: number;
+  /** True while the help card replaces the board or the log. */
+  help: boolean;
   /** Every board row, so an empty board can draw the empty state. */
   listRows: ListRow[];
   /** The rows on screen this frame (a slice of `listRows`). */
@@ -192,7 +199,9 @@ export function ContentPane({
 }) {
   return (
     <box style={{ flexGrow: 1, flexBasis: 0, minHeight: 0, flexDirection: "column" }}>
-      {task ? (
+      {help ? (
+        <HelpView width={width} height={height} />
+      ) : task ? (
         <LogView task={task} events={events} width={width} />
       ) : listRows.length === 0 ? (
         <EmptyState width={width} />

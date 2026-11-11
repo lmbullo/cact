@@ -1,9 +1,9 @@
 # docs/run.md — every command, its expected result, and the fact it proves
 
-You are the reader. This file owns invocation: the gate order, each command's expected exit code and
-what it proves, and the knobs that change a run. The runtime shape those gates protect is
-`architecture.md`; the eval registry and grading are `../README.md` §3; the source change behind a
-failure is `../AGENTS.md` §6, and its symptom table is `../AGENTS.md` §8.
+This file owns invocation: the gate order, each command's expected exit code and what it proves,
+and the knobs that change a run. Task recipes are `how-to.md`; the runtime shape those gates
+protect is `architecture.md`; the eval registry and grading are `../README.md` §3; the source
+change behind a failure is `../AGENTS.md` §6, and its symptom table is `../AGENTS.md` §8.
 
 ## 1. Gate order
 

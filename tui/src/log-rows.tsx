@@ -16,7 +16,7 @@
  * INVARIANTS
  *  - Truncation is per field (`theme.clip` adds `…`), never per row; only the prompt and the
  *    final summary wrap, whole, unclipped, capped then counted.
- *  - Lifecycle kinds, `cell.start/end` and `check` are silent: the header says the state.
+ *  - Lifecycle kinds, `cell.end` and `check` are silent (the header says the state); `cell.start` draws a tool row.
  *  - A prose block opens with a `▸` word (`you`, `summary`), never a `kind=` token.
  *  - No row contains `─`: the prompt box owns the only hairline.
  * WHERE TO CHANGE
@@ -36,6 +36,8 @@ export const INDENT = "    ";
 
 /** The largest a field's value may grow on its own; the row's share usually clips it sooner. */
 export const FIELD_CAP: Record<string, number> = {
+  args: 80,
+  code: 80,
   notice: 80,
   text: 120,
   prompt: 120,
@@ -78,13 +80,13 @@ export function fields(...entries: Array<[string, string | number | undefined | 
  * would print the same fact twice — and print `queued` forever above a run that left it behind.
  * A `check` event is the same rule: it is how the run's verification ended, which the header
  * says in one row (lastCheck), not something the run's timeline prints.
- * `cell.start` is the loop's transcript — which verb ran with which arguments. The loop is
- * trusted and tool calls are not what the reader keeps: the body stays the prompt, a notice
- * when the loop refused a finish, an error, and the final summary.
+ * `cell.start` is the one exception: the reader watches the loop work, so the tool call is drawn
+ * as a diagnostic row by EventView. Its `cell.end` carries only counts, which the next row would
+ * repeat, so it stays silent.
  * A turn is silent unless it carries a notice (see noticeOf).
  */
 export function isSilent(event: TaskEvent): boolean {
-  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.start" || event.kind === "cell.end" || event.kind === "check") {
+  if (event.kind === "queued" || event.kind === "started" || event.kind === "pid" || event.kind === "finished" || event.kind === "cell.end" || event.kind === "check") {
     return true;
   }
   if (event.kind === "turn") return noticeOf(event) === "";

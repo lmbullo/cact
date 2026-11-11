@@ -1,9 +1,10 @@
 # tui — wire contract for coding agents
 
-You are the reader. `code` is a server-backed, fire-and-forget coding-agent TUI over the agent
-in `../bench` (the `state` loop by default; `CODE_TUI_MODE` switches it). This file is the
-reference for an agent that has to change or run it. The short contract is `../AGENTS.md`; the
-repository map is `../docs/README.md`, and what runs where is `../README.md`.
+`code` is a server-backed, fire-and-forget coding-agent TUI over the agent in `../bench` (the
+`state` loop by default; `CODE_TUI_MODE` switches it). This file is the reference for an agent that
+has to change or run it. The short contract is `../AGENTS.md`; the repository map is
+`../docs/README.md`; what runs where is `../README.md`, and the usage recipes (launch, checks, keys,
+reading a run) are `../docs/how-to.md`.
 
 Read the source headers first:
 
@@ -198,9 +199,10 @@ the task's prompt opens the log as a wrapped body under a `▸ you` head, and th
 summary closes it as a wrapped body under a `▸ summary` head. The heads are words, not
 `kind=` tokens, and the marker carries the status colour; the prose sits in the same `INDENT`
 column at both ends, so the start and the finish of a run line up. The masthead already names the
-model and the effort, so the prompt block does not repeat them. Tool calls are the loop's
-transcript, not the reader's: a `cell.start` draws no row. The loop is trusted, and a tool call is
-not a fact anyone acts on; the summary is.
+model and the effort, so the prompt block does not repeat them. Every tool call the model makes is
+drawn as it happens, as a dim diagnostic row below the prompt: `kind=cell tool=<verb> args=<one-line
+JSON>`. A code cell has no named verb, so its `code` field carries the cell's first line instead.
+The matching `cell.end` adds no row: it is the call's counts, which the start row already named.
 
 The run's state has exactly one source: the status line at the top, drawn from `Task.status`.
 The body never repeats it — no `queued`/`started`/`pid`/`finished` row, no waiting row, no status
@@ -218,7 +220,10 @@ can go on saying `queued` after the run has left that state. Lifecycle events st
      add a retry with exponential backoff and jitter to the fetch helper, and cover the
      503 path with a test
 
- 1.5s kind=turn notice=[finish] final_answer rejected: the project check still fails
+ 1.2s kind=cell tool=read args={"path":"src/fetch.ts"}
+ 2.1s kind=cell tool=edit args={"path":"src/fetch.ts","old":"fetch(url)"}
+ 2.8s kind=cell tool=exec args={"argv":["bun","test"]}
+ 3.4s kind=turn notice=[finish] final_answer rejected: the project check still fails
 
  ▸ summary
 
@@ -270,6 +275,7 @@ Row fields by kind (`src/log-view.tsx`, `EventView`):
 | kind | what is drawn |
 |---|---|
 | `final` | a `▸ summary` head, then the summary body |
+| `cell.start` | `kind=cell tool=<verb> args=<one-line JSON>`; a code cell uses `code=<first line>` instead |
 | `turn` | `kind=turn notice=<the rejected or staged finish, one line>` and `lines=N` when it was several |
 | `error` | `kind=error text=<one line>` and `lines=N` when it was several |
 | `stderr` | `kind=stderr …` |
@@ -277,9 +283,11 @@ Row fields by kind (`src/log-view.tsx`, `EventView`):
 | anything else | `kind=<kind>` only; the payload is never dumped |
 | prompt | a `▸ you` head, then the whole prompt |
 
-`cell.start`, `cell.end`, `check`, the lifecycle kinds and a notice-free `turn` render no row at
-all; their journal entry stays in the machine log. A `cell.start` is the loop's transcript — which
-verb ran with which arguments — and it is deliberately not drawn.
+`cell.end`, `check`, the lifecycle kinds and a notice-free `turn` render no row at all; their
+journal entry stays in the machine log. A `cell.start` is the loop's transcript — which verb ran
+with which arguments — drawn live because that is what a reader watching a run wants to see next.
+Its arguments are clipped inside their field like any diagnostic value, so no call can wrap or
+push the row past the pane.
 
 A diagnostic row (a notice, an error) is machine-first: one dim elapsed gutter, then
 `key=value` fields, each value clipped to the columns its own key leaves (`FIELD_CAP`, then what
@@ -324,6 +332,7 @@ edits a task. The idle window is `autoAdvanceMs` on `App` (default 5000) so test
 | `Ctrl+O` | Cycle the board arrangement: by status → newest first → problems first |
 | `Ctrl+R` | Reconnect the WebSocket |
 | `Ctrl+Q` / `Ctrl+C` | Close the TUI; leave the server running |
+| `?` | Show the help card (keys and four starter use cases); `1`–`4` load one into the prompt |
 | Left-drag | Select text; release copies it and clears the highlight |
 | `Escape` | Clear the prompt, then the highlight |
 | `Enter` / `Escape` (log) | Leave the log when the prompt is empty; otherwise act on the prompt |

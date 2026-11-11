@@ -12,14 +12,14 @@
  *
  * INVARIANTS
  * state has one source: board-view.LogHeader renders Task.status live; the body never repeats it.
- * the body is the two things the reader keeps: the prompt and the summary; tool calls are silent.
+ * the body is the prompt, every tool call as it is made, a notice, an error and the summary.
  * a prose block opens with a `▸` word and a body in the shared INDENT column; a diagnostic row stays `field=value`.
  * only the prompt and the summary wrap, whole and unclipped, capped at SUMMARY_MAX_LINES then `(+N more lines)`.
  * a turn row shows only with a notice; an unknown kind prints `kind=` only; a settled task adds no row.
  * no row contains `─`; a diagnostic row gets a dim `+12s` gutter; the closing block carries only its head.
  * WHERE TO CHANGE
  * kind switch ... EventView + types.ts   silent kinds ... isSilent   last check ... lastCheck
- * fields ... `fields(...)`   clip ... FIELD_CAP/DEFAULT_CAP/KvRow   columns ... INDENT, `since`
+ * tool-call row ... EventView's cell.start case   clip ... FIELD_CAP/DEFAULT_CAP/KvRow   columns ... INDENT, `since`
  */
 import { C, lineCount, oneLine, wrapText } from "./theme";
 import type { CheckState, Task, TaskEvent, TaskStatus } from "./types";
@@ -73,6 +73,16 @@ export function EventView({
   const kind = event.kind;
 
   if (isSilent(event)) return null;
+
+  if (kind === "cell.start") {
+    // The loop's transcript, drawn live: the tool and the arguments it was called with. A code
+    // cell has no named verb, so its first line stands in for the arguments. The row is a
+    // diagnostic, not prose: the value is clipped inside its own field, never wrapped.
+    const typed = event.tool && event.tool !== "code" && event.tool !== "python";
+    const body = typed ? oneLine(JSON.stringify(event.args ?? {})) : oneLine(event.code ?? "");
+    const row = fields(["kind", "cell"], ["tool", event.tool ?? "code"], [typed ? "args" : "code", body]);
+    return <KvRow gutter={gutter} fit={fit} fields={row} color={C.dim} />;
+  }
 
   // A turn is normally silent (tool output is never rendered), but the loop records a
   // `notice` when it rejects or stages a finish: that reason must stay visible.
