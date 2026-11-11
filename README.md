@@ -101,4 +101,4 @@ python3 bench/index.py --write          # regenerate the symbol index (gitignore
   gets a weak verifier, so give it commands (`CODE_TUI_CHECK`, `CODE_TUI_CHECKS`) or a test runner
   it can detect.
 - `bench/remote.py` (Daytona sandboxes) is the only optional third-party import and it is lazy.
-- No license file yet: treat the code as all rights reserved until one is added.
+- MIT: see `LICENSE`.
