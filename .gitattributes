@@ -1,0 +1,7 @@
+# Normalize line endings; keep generated fixtures and lockfiles out of diffs.
+* text=auto eol=lf
+*.lock -diff
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
