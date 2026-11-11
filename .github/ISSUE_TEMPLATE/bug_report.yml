@@ -1,0 +1,84 @@
+name: Bug report
+description: The engine, the TUI or the documented gates do not do what the docs claim.
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste API keys, bearer tokens, private repository contents or personal paths.
+        A security problem goes to the private advisory flow in `SECURITY.md`, never to an issue.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Where the failure shows up.
+      options:
+        - rust engine (rust/)
+        - TUI (tui/)
+        - docs
+        - build or packaging
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened
+      description: The behavior, with the exact command or keystroke that produced it.
+      placeholder: |
+        Command: make -C rust check
+        Output: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: The behavior the README, a module header or a state card led you to expect.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest task, repository state or test that still shows the bug.
+      placeholder: |
+        1. build at commit ...
+        2. run `...`
+        3. observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: The branch and commit (`git rev-parse --short HEAD`).
+      placeholder: rust @ bed0d81
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Rust version, bun version and Python version.
+      placeholder: Linux 6.x, rustc 1.78, bun 1.1, Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: gates
+    attributes:
+      label: Gate output
+      description: The result of `make -C rust check` and `cd tui && bun run typecheck && bun test`, if they run.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed API keys, tokens, private repository contents and personal data from this report.
+          required: true
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
