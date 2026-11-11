@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a change to the typed action space, the engine, the TUI or the docs.
+title: "[feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        cact is deliberately small: one model in a loop, a typed action space, a check plan that
+        gates every finish. Explain the job the change does, not only the API shape.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - typed tools / action space
+        - engine loop or checks
+        - persistent Python cell
+        - TUI
+        - docs
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today, and what do you do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: The behavior you want. Name the tool, file or card if you know it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing tools, scripts or workflows that already cover part of this.
+    validations:
+      required: false
+  - type: textarea
+    id: cost
+    attributes:
+      label: Cost and risk
+      description: New dependency, network call, credential, or a wider blast radius for the agent.
+    validations:
+      required: false
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed API keys, tokens and private repository contents from this request.
+          required: true
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true

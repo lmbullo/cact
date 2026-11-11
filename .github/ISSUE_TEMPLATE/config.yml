@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/lmbullo/cact/security/policy
+    about: Report a vulnerability privately. Never open a public issue for a key leak or a sandbox escape.
+  - name: Documentation
+    url: https://github.com/lmbullo/cact/tree/rust/docs
+    about: Run, architecture, how-it-works and the TUI wire contract.

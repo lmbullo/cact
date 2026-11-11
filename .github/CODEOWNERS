@@ -1,0 +1,13 @@
+# Default owner for everything; a more specific rule wins.
+* @lmbullo
+
+# Engine contract and its offline gate.
+/rust/crates/cact/src/ @lmbullo
+/rust/Makefile @lmbullo
+
+# TUI wire contract, server and tests.
+/tui/src/ @lmbullo
+/tui/tests/ @lmbullo
+
+# Templates, policy and repository metadata.
+/.github/ @lmbullo

@@ -18,3 +18,11 @@ bench/archive/results/tmp/
 
 # generated agent symbol index (python3 bench/index.py --write)
 agents.index.json
+
+# local credentials and tool state; never commit a key
+.env
+.env.*
+!.env.example
+.ruff_cache/
+.DS_Store
+*.log
