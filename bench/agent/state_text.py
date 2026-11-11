@@ -71,7 +71,7 @@ def clip_card(text: str, budget: int, handle: str) -> tuple[str, bool]:
     """
     if len(text) <= budget:
         return text, False
-    marker = "[card clipped: %d chars, full text: %s]" % (len(text), handle)
+    marker = "[card clipped: %d chars total; full text: %s]" % (len(text), handle)
     keep = max(0, int(budget) - len(marker) - 1)
     head = text[:keep]
     kept = set(head.splitlines())

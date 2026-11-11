@@ -2,8 +2,8 @@
 
 WHAT IT IS
   One pure rewrite before dispatch: `exec(command=...)` -> `shell`, `exec(code=...)` -> `python`,
-  `exec(argv=[bash,-c,...])` -> `shell`, `read(_OBS[n])` -> `page`, `git add -A` -> `git add`,
-  and `edit(path, old, new)` -> `edit(edits=[...])`.
+  `exec(argv=[bash,-c,...])` -> `shell`, `read(_OBS[n])` -> `page`, a truncated `_OBS[n`
+  handle closed, `git add -A` -> `git add`, and `edit(path, old, new)` -> `edit(edits=[...])`.
   The model keeps one generic process/edit shape in mind; this turns that shape into the typed
   signature instead of spending a turn on bad_arguments.
 
@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
 _OBS = re.compile(r"^_OBS\[\d+\]$")
+_OBS_OPEN = re.compile(r"^_OBS\[\d+$")
 
 
 @dataclass
@@ -76,10 +77,25 @@ def parse_args(raw) -> tuple[dict, str]:
     return value, ""
 
 
+def _closed_obs(value) -> str | None:
+    """`_OBS[23` -> `_OBS[23]`; None when it is already closed or not a handle at all."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text + "]" if _OBS_OPEN.match(text) else None
+
+
 def repair(name: str, args: dict, allows=None) -> Repair:
     """Rewrite one tool call to the typed signature; leave anything uncertain alone."""
     call = dict(args or {})
     allowed = set(allows) if allows is not None else None
+
+    if name == "page":
+        closed = _closed_obs(call.get("handle"))
+        if closed is not None:
+            note = "page handle %r ran as %r" % (call["handle"], closed)
+            call["handle"] = closed
+            return Repair(name, call, note, True)
 
     if name == "exec":
         if "commands" in call:
@@ -104,15 +120,22 @@ def repair(name: str, args: dict, allows=None) -> Repair:
             return Repair(name, call, "exec(argv=[shell, -c, ...]) ran as shell=<string>", True)
         return Repair(name, call)
 
-    if name == "read" and isinstance(call.get("path"), str) \
-            and _OBS.match(call["path"].strip()):
-        handle = call["path"].strip()
-        if allowed is None or "page" in allowed:
-            page = {"handle": handle}
-            for key in ("offset", "limit", "field"):
-                if key in call:
-                    page[key] = call[key]
-            return Repair("page", page, "read(_OBS[n]) ran as page(handle)", True)
+    if name == "read" and isinstance(call.get("path"), str):
+        note = ""
+        closed = _closed_obs(call["path"])
+        if closed is not None:
+            note = "read handle %r ran as %r" % (call["path"], closed)
+            call["path"] = closed
+        if _OBS.match(call["path"].strip()):
+            handle = call["path"].strip()
+            if allowed is None or "page" in allowed:
+                page = {"handle": handle}
+                for key in ("offset", "limit", "field"):
+                    if key in call:
+                        page[key] = call[key]
+                return Repair("page", page, note or "read(_OBS[n]) ran as page(handle)", True)
+        if note:
+            return Repair(name, call, note, True)
         return Repair(name, call)
 
     if name == "git" and str(call.get("action") or "").lower() == "add":
