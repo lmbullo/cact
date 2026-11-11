@@ -4,15 +4,19 @@ cact is a coding agent that works on a repository while you are away. A model ru
 a persistent Python kernel and a small typed action space; `code`, a terminal UI, runs that loop
 on the directory you start it in and keeps the work going after you close the window.
 
+The loop is Rust (`rust/`, binary `cact`): one build, no runtime dependencies beyond `python3` for
+the cell and `git` for the tree. `bench/` keeps the reference implementation and the evals.
+
 It does not chat, role-play or ask for permission. It reads through bounded observations, changes
 files through a journal, verifies with the project's own commands and stops with a report. The
 design argument is `docs/how-it-works.md`; the operations are `docs/how-to.md`.
 
 ## Run it
 
-Requires Python 3.10+, [bun](https://bun.sh) and a DeepSeek API key.
+Requires Python 3.10+, [bun](https://bun.sh), a Rust toolchain (1.78+) and a DeepSeek API key.
 
 ```bash
+make -C rust build                     # the engine: target/release/cact (~30s, 4 jobs, no debuginfo)
 cd tui && bun install
 export DEEPSEEK_API_KEY=...            # or write it to ~/.config/code-tui/env
 /path/to/cact/tui/bin/code             # run this inside the project you want the agent to work on
@@ -21,16 +25,19 @@ export DEEPSEEK_API_KEY=...            # or write it to ~/.config/code-tui/env
 Type the task, press `Ctrl+Enter`, and close the terminal whenever you like. The agent edits the
 working tree in place; there is no copy and no sandbox. `/path/to/cact/tui/bin/code-stop` stops
 that directory's server. There is no root `package.json`, no `pyproject.toml` and no CI:
-`bun install` in `tui/` is the only install step, and `bench/` is Python standard library only.
+`bun install` in `tui/` and `make -C rust build` are the install steps, and `bench/` is Python
+standard library only.
 
 ## The shape
 
-The repository has two halves. `bench/` is the agent (`bench/agent/`), the failure-mode evals
-(`bench/evals/`) and the archived legacy suites (`bench/archive/`), all Python 3.10+ with no
-third-party imports except an optional, lazy sandbox client. `tui/` is `code`, the server-backed
-terminal UI that runs the same loop on a working tree. A per-workspace server and one worker per
-task (`tui/python/worker.py`) own the board and log views; `python3 bench/eval.py` runs the
-offline loop contracts, or the model-backed failure suite with `--live`.
+The repository has three parts. `rust/` is the engine: the loop, the typed verbs, the state cards,
+the check plan and the `@@TUI@@` worker the TUI spawns (`rust/README.md` documents the modules and
+the build). `bench/` is the reference implementation, the failure-mode evals (`bench/evals/`) and
+the archived legacy suites (`bench/archive/`), all Python 3.10+ with no third-party imports except
+an optional, lazy sandbox client. `tui/` is `code`, the server-backed terminal UI that runs the
+engine on a working tree: a per-workspace server and one worker per task own the board and log
+views. `python3 bench/eval.py` runs the offline loop contracts, or the model-backed failure suite
+with `--live`.
 
 The action space is 21 typed verbs generated from one registry (`bench/agent/verbs.py`): `guide`,
 `skill`, `map`, `read`, `session_diff`, `checks`, `status`, `search`, `recall`, `page`, `outline`,

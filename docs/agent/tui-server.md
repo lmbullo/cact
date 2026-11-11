@@ -5,8 +5,8 @@ source_symbols=bench/index.py
 subsystem=tui-server
 page=docs/agent/tui-server.md
 modules=8
-module=tui/src/server-config.ts symbols=VERSION,ROOT,WORKER,arg,loadEnvFile,workspace,stateDir,tasksDir,eventsDir,promptsDir,logsDir,serverFile,model,effort,profile,MAX_CONCURRENCY,concurrency,maxSteps,maxOutput,maxWall,cellTimeout,allowRun,python,initialChecks,initialKey,serverLog,SOURCE_RECHECK_MS
-entry=arg(name, fallback), loadEnvFile(); VERSION, ROOT, WORKER, workspace, stateDir, tasksDir, | eventsDir, promptsDir, logsDir, serverFile, model, effort, profile, concurrency, maxSteps, | maxOutput, maxWall, cellTimeout, allowRun, python, initialChecks, initialKey, serverLog, | SOURCE_RECHECK_MS
+module=tui/src/server-config.ts symbols=VERSION,ROOT,WORKER,arg,loadEnvFile,workspace,stateDir,tasksDir,eventsDir,promptsDir,logsDir,serverFile,model,effort,profile,MAX_CONCURRENCY,concurrency,maxSteps,maxOutput,maxWall,cellTimeout,allowRun,python,WORKER_CMD,initialChecks,initialKey,serverLog,SOURCE_RECHECK_MS
+entry=arg(name, fallback), loadEnvFile(); VERSION, ROOT, WORKER, WORKER_CMD, workspace, stateDir, | tasksDir, eventsDir, promptsDir, logsDir, serverFile, model, effort, profile, concurrency, | maxSteps, maxOutput, maxWall, cellTimeout, allowRun, python, initialChecks, initialKey, | serverLog, SOURCE_RECHECK_MS
 module=tui/src/server-http.ts symbols=json,route
 entry=json(data, status=200) -> Response   one JSON answer with the server's headers | route(req, srv) -> Response | Promise<Response> | undefined   the route table; undefined only | after an upgrade
 module=tui/src/server-journal.ts symbols=taskFile,eventFile,promptFile,logFile,appendLog,saveTask,appendEvent,readTaskEvents,loadTasks

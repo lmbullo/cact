@@ -14,7 +14,7 @@ INVARIANTS
   read-only: no writes, no network, no bench import, no state; unparsable -> empty header, no raise.
   MAX_HEADER=24; HEADER_ALLOW={path: lines} shrink-only; in_scope = bench/*.py, bench/agent/**,
   tui/src/**, tui/python/**; other paths ungated.  kernel/prelude.py execs this source.
-  SKIP_DIRS skips node_modules, __pycache__, fixtures, traces/ws, dist, build, dot-dirs.
+  SKIP_DIRS skips node_modules, __pycache__, fixtures, traces/ws, dist, build, dot-dirs, rust/.
   guide: x3 path+title, x1 else; score then path; miss -> ok:false/not_found; no match -> note.
   render truncates at chars; _OPEN pins builtins.open: the journal must not reroute reads.
 
@@ -33,7 +33,7 @@ SECTIONS = ("WHAT IT IS", "ENTRY POINTS", "INVARIANTS", "WHERE TO CHANGE")
 SKIP_DIRS = frozenset({
     ".git", "archive", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".tmp", ".cache", "dist", "build", "fixtures", "edge_fixtures", "harness_fixtures",
-    "hard_fixtures", "hard_hidden", "sandbox_fixtures", "sandbox_hidden", "traces", "ws",
+    "hard_fixtures", "hard_hidden", "sandbox_fixtures", "sandbox_hidden", "traces", "ws", "rust",
 })
 LANGUAGES = {".py": "python", ".ts": "ts", ".tsx": "tsx", ".js": "javascript"}
 READ_LIMIT = 400_000

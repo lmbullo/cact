@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/cact"]
+resolver = "2"
+
+# Build memory is the constraint, not compile time: no debuginfo, no LTO on dev, small
+# codegen units. `make build` and `.cargo/config.toml` cap the parallel job count.
+[profile.dev]
+debug = 0
+incremental = true
+opt-level = 1
+codegen-units = 16
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = 0
+
+# `cargo install` / `make dist` profile: enough optimization, no fat LTO.
+[profile.release]
+debug = false
+lto = "thin"
+codegen-units = 4
+opt-level = 2
+panic = "abort"
+strip = true
