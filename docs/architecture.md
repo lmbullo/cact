@@ -128,6 +128,12 @@ Every typed verb answers a refusal with the same
 `{ok:false, kind, error:{code,message,use,signature}}`, and a verb that returns `ok: false` is a
 rejected cell and counts as an error in run metrics.
 
+One more limit sits above the verb page: `StateLoop` gives each turn a card budget
+(`CARD_BUDGET`, `CODE_TUI_CARD_BUDGET`). A card that exceeds it is cut, its `[read]` line is
+recomputed from the lines that survived, and the cut names the exact resume: `read(path,
+start=N)` for a read, `page(_OBS[n])` otherwise. The verb's `[page]` still describes the whole
+result; the `[card]` line says what this turn actually received.
+
 ## 4. The loops
 
 Selected by `CODE_TUI_MODE` in production (default `state`); an eval case builds its loop through

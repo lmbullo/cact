@@ -29,6 +29,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import bench.agent.call_shape as call_shape
 import bench.agent.config as config
 import bench.agent.handoff as handoff
 import bench.agent.llm as llm
@@ -104,6 +105,22 @@ def run(check):
                                    100, "_OBS[3]")
     check("state: a clipped card never hides an error or check line",
           "[error] keep me" in text and "[check] pass" in text, text[:200])
+    read_cell = Cell(stdout="\n".join(f"{n:>6}| line {n}" for n in range(1, 101)),
+                     stderr="", result=None, final=None, duration_ms=1, tool="read",
+                     obs_index=9, reads={"big.txt": {"ranges": [[1, 100]], "total": 100}})
+    probe = state_loop.StateLoop(object(), object(), loop.Budget(), card_budget=600)
+    clipped_read = probe._observe(read_cell, 1)
+    check("state: a clipped read card claims only the lines it kept and names the resume",
+          "[read] big.txt 1-" in clipped_read and "/100" in clipped_read
+          and "[read] big.txt 1-100/100" not in clipped_read
+          and "[card] clipped; resume read('big.txt', start=" in clipped_read,
+          clipped_read[-400:])
+    shape = call_shape.repair("page", {"handle": "_OBS[23", "limit": 10})
+    check("shape: a truncated _OBS handle is closed before dispatch",
+          shape.changed and shape.args.get("handle") == "_OBS[23]", str(shape))
+    shape = call_shape.repair("read", {"path": "_OBS[23"})
+    check("shape: a truncated read handle becomes page(_OBS[n])",
+          shape.name == "page" and shape.args.get("handle") == "_OBS[23]", str(shape))
 
     check("loop: budget defaults", loop.Budget().max_steps == 200)
     check("config: mode is a loop name", config.MODE in ("state", "tool", "repl"))

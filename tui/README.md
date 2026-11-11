@@ -358,6 +358,7 @@ the worker:
 | `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per reply (clamped to 393216) |
 | `CODE_TUI_MAX_CALLS_PER_TURN` | `8` | Tool calls one turn may carry |
 | `CODE_TUI_MAX_TURN_TOKENS` | `8192` | Completion-token ceiling for one turn; `0` uses the run's output cap |
+| `CODE_TUI_CARD_BUDGET` | `5000` | Chars of state card one turn may deliver; a clipped card names the exact resume call |
 | `CODE_TUI_MAX_REPORT_CHARS` | `4000` | Final-report ceiling; the clip names the cut and points at the structured handoff |
 | `CODE_TUI_CODE_MODE` | `0` | `1` exposes the orchestration cell as `code` instead of `python` |
 | `CODE_TUI_INLINE_FINISH` | profile | `1` accepts a passing silent `final_answer` in the same turn; `fast-code`/`fast`/`current`/`code-act` set it, `m3-plan` does not |

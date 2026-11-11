@@ -16,7 +16,7 @@ INVARIANTS
   structured data never dropped by size: every field rendered, a large value clipped and named in `[data] clipped:`.
   coverage = data, never a guess: the loop opens no file; a card delivered exactly Cell.reads (digested: kept lines).
   restart never silent: Cell.restarted -> `[state] kernel restarted` line above the kernel's stderr message.
-  card budget per turn: first card whole, rest share what is left; an error or check line is never cut.
+  card budget per turn: first card whole, rest share what is left; a clipped card recomputes [read] and names the exact resume; an error or check line is never cut.
   _compact cuts only on an assistant tool-call boundary; trigger = real prompt tokens at context_budget (85% of window).
   chg:/[diff] come from Cell.changed/deltas/delta (kernel _commit), never re-parsed; [check] = last_check cheap run.
 WHERE TO CHANGE
@@ -83,16 +83,50 @@ class StateLoop(ToolLoop):
         handle = f"_OBS[{cell.obs_index}]" if cell.obs_index is not None else "_OBS[-1]"
         if self.card_budget > 0:
             room = max(0, self.card_budget - self._card_used)
-            text, clipped = clip_card(text, room, handle)
-            self._card_used += len(text)
+            reserve = min(220, room // 3) if len(text) > room else 0
+            text, clipped = clip_card(text, max(0, room - reserve), handle)
             if clipped:
-                displayed = delivered_ranges(cell.reads, text, digested=True)
+                text, displayed = self._resume_card(text, cell, handle)
+            self._card_used += len(text)
         for path, ranges in displayed.items():
             total = int((cell.reads.get(path) or {}).get("total") or 0)
             entry = self.coverage.setdefault(path, {"ranges": [], "total": 0})
             entry["ranges"].extend(ranges)
             entry["total"] = total or entry["total"]
         return text
+
+    def _resume_card(self, text: str, cell, handle: str) -> tuple[str, dict]:
+        """Rewrite a clipped card's `[read]` claim and name the exact resume call.
+
+        `render_observation` computes `[read]`/`[page]` from the whole card; a clip after
+        that would leave it claiming lines the card dropped. Recompute from the text that
+        survived, then say which call continues: `read(path, start=...)` for a read, else
+        `page(_OBS[n])`. No file is opened and no line is guessed.
+        """
+        displayed = delivered_ranges(cell.reads, text, digested=True)
+        lines = [line for line in text.splitlines() if not line.startswith("[read] ")]
+        resumes: list[tuple[str, int]] = []
+        for path, ranges in sorted(displayed.items()):
+            total = int((cell.reads.get(path) or {}).get("total") or 0)
+            session = (self.coverage.get(path) or {}).get("ranges") or []
+            missing = gaps(list(session) + ranges, total)
+            tail = ""
+            if missing:
+                if len(missing) <= 6:
+                    tail = " unread " + ", ".join("%d-%d" % (a, b) for a, b in missing)
+                else:
+                    tail = " unread %d ranges / %d lines" % (
+                        len(missing), sum(b - a + 1 for a, b in missing))
+                if len(resumes) < 2:
+                    resumes.append((path, missing[0][0]))
+            shown = ", ".join("%d-%d" % (a, b) for a, b in merge_ranges(ranges))
+            lines.append("[read] %s %s/%d%s" % (path, shown, total, tail))
+        if resumes:
+            calls = ", ".join("read(%r, start=%d)" % item for item in resumes)
+            lines.append("[card] clipped; resume " + calls)
+        else:
+            lines.append("[card] clipped; resume page(%s)" % handle)
+        return "\n".join(lines), displayed
 
     def _compact(self, messages: list[dict]) -> None:
         """Fold old turns into one `[session state]` message; cuts only on a tool-call boundary."""
