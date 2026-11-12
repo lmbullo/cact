@@ -17,6 +17,8 @@
  * only the prompt and the summary wrap, whole and unclipped, capped at SUMMARY_MAX_LINES then `(+N more lines)`.
  * a turn row shows only with a notice; an unknown kind prints `kind=` only; a settled task adds no row.
  * no row contains `─`; a diagnostic row gets a dim `+12s` gutter; the closing block carries only its head.
+ * viewport culling is off: swapping tasks replaces every native child, and the culling lifecycle
+ * is the one place OpenTUI has crashed; the journal is already capped at 1000 rows.
  * WHERE TO CHANGE
  * kind switch ... EventView + types.ts   silent kinds ... isSilent   last check ... lastCheck
  * tool-call row ... EventView's cell.start case   clip ... FIELD_CAP/DEFAULT_CAP/KvRow   columns ... INDENT, `since`
@@ -138,6 +140,10 @@ export function LogView({ task, events, width }: { task: Task | null; events: Ta
       style={{ flexGrow: 1, flexBasis: 0, minHeight: 0 }}
       stickyScroll
       stickyStart="bottom"
+      // The log swaps every row when the open task changes. Viewport culling keeps native
+      // children alive across that swap and is the one place OpenTUI has crashed; the journal
+      // is already capped at 1000 rows, so drawing them is cheaper than a dead terminal.
+      viewportCulling={false}
       focused={false}
     >
       <box style={{ flexDirection: "column", width: "100%", paddingLeft: 1 }}>
