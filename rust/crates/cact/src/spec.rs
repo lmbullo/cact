@@ -16,9 +16,9 @@ pub const TOOL_RULES: &str = r#"You are an autonomous coding agent. The task is 
 
 ACT: typed tools for workspace I/O, mutation, process and git; the code cell for computation or a pipeline the typed tools cannot express. One call that the job. Read before you write.
 OBSERVE: typed results are structured. Read [page] before [data]; follow next/has_more/complete. Every refusal carries error.use. Large output is on the _OBS handle; page it. A repeat read is a pointer unless repeat=true.
-CHANGE: tracked edits go through write, edit, splice, delete, mkdir or apply. Keep the diff small: one-line docstring on every public name, no unrelated edits. Read [diff] and [check] after a mutation. A failed check is a repair instruction; never weaken it.
+CHANGE: tracked edits go through write, edit, splice, delete, mkdir or apply. Batch every replacement for one file in one edit(edits=[...]) call. Keep the diff small: one-line docstring on every public name, no unrelated edits. Read [diff] and [check] after a mutation. A failed check is a repair instruction; never weaken it.
 VERIFY: a check you wrote can repeat your own assumption. For a named shape or format, read the code that produces it and test a real value, not only your fixture. A timestamp/id is often base36, not decimal; read the producer before writing its regex.
-FINISH: only when the plan passes; then reply with the report, not another tool call. Report changed paths, exact commands and results, and what is unverified. Facts, not narration; no headings, no restating the task. No human answers: choose and report a defensible default."#;
+FINISH: stop as soon as the plan passes. Do not run status/git/log, re-read files, or clean generated caches (__pycache__, .pytest_cache) after a green check. Finish with final_answer(summary=...): changed paths, exact commands and results, and what is unverified. Facts, not narration; no headings, no restating the task. No human answers: choose and report a defensible default."#;
 
 /// The card contract the state loop appends to `TOOL_RULES`.
 pub const STATE_RULES: &str = r#"
@@ -32,8 +32,8 @@ AUTONOMOUS TASK MODE
 You are running unattended. No human will answer questions or approve actions.
 - Inspect, change, and verify with real commands. Keep working until the task is complete or genuinely blocked.
 - Verify with checks(); a check is clean only when its latest execution passed. Never claim a gate without the run that passed it.
-- Finish with final_answer(<short summary>) in a silent cell. A silent finish that passes the plan ends the turn.
-- When you leave work open, pass final_answer({summary, changed, gates, deferred, untested}); the next task inherits it."#;
+- Finish with final_answer(summary=...), as the typed tool or inside a silent cell. A finish that passes the plan ends the turn.
+- When you leave work open, pass the structured fields {summary, changed, gates, deferred, untested}; the next task inherits them."#;
 
 /// The process-model note: exec is the tool, the journal owns mutation.
 pub const RUN_NOTE: &str = r#"
@@ -86,6 +86,13 @@ pub fn typed_specs() -> Vec<Value> {
         tool("checks", "Run the check plan this task was started with. One row per spec: {name, ok, exit, first_line, detail?}; name= runs that one spec. The plan is checks(); do not run a gate by hand. A failing plan blocks final_answer.", json!({
             "name": {"type": "string"}
         }), &[]),
+        tool("final_answer", "Finish the task. summary is the short report; changed/gates/deferred/untested are the optional structured handoff. The run accepts only after the check plan passes, and a rejection names the failing line. Use this instead of final_answer(...) inside a cell.", json!({
+            "summary": {"type": "string"},
+            "changed": {"type": "array", "items": {"type": "string"}},
+            "gates": {"type": "array", "items": {"type": "string"}},
+            "deferred": {"type": "array", "items": {"type": "string"}},
+            "untested": {"type": "array", "items": {"type": "string"}}
+        }), &["summary"]),
         tool("status", "One call for tree state: branch, capped `git status --short`, ahead/behind, and the session journal's paths with add/del counts (never diff text). A directory outside a git work tree is a valid state (git: false, no_repo: true). Read-only.", json!({
             "cwd": {"type": "string"}
         }), &[]),
@@ -215,8 +222,25 @@ pub struct Scope {
 /// The `fast-code` profile: the lean typed set the measured loop actually uses, plus one cell.
 /// The cell name is `python` unless `CODE_TUI_CODE_MODE=1` overrides it at construction time.
 pub const DEFAULT_TOOLS: &[&str] = &[
-    "code", "read", "edit", "write", "search", "checks", "exec", "status", "outline", "page",
-    "apply", "delete", "mkdir", "splice", "git", "guide", "skill", "map",
+    "code",
+    "read",
+    "edit",
+    "write",
+    "search",
+    "checks",
+    "final_answer",
+    "exec",
+    "status",
+    "outline",
+    "page",
+    "apply",
+    "delete",
+    "mkdir",
+    "splice",
+    "git",
+    "guide",
+    "skill",
+    "map",
 ];
 
 /// The `fast-code` profile tool list: the lean typed set plus one cell.

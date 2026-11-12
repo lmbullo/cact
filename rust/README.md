@@ -11,6 +11,7 @@ worker to spawn (`tui/src/server-config.ts::WORKER_CMD`).
 |---|---|
 | `crates/cact/src/llm.rs` | the chat-completions client: one POST through `curl`, retries, disk reply cache |
 | `crates/cact/src/spec.rs` | the system rules, the tool specs, and `Scope` (the capability set) |
+| `crates/cact/src/shape.rs` | the pre-dispatch repair for the generic call shapes the model emits |
 | `crates/cact/src/tools/` | the typed verbs: read, search, map, outline, guide, skill, mutate, exec, git |
 | `crates/cact/src/kernel.rs` | the persistent Python cell child (RPC verbs, timeout, restart) |
 | `crates/cact/src/kernel_driver.py` | the child side of that protocol (the only Python we ship) |
@@ -18,7 +19,7 @@ worker to spawn (`tui/src/server-config.ts::WORKER_CMD`).
 | `crates/cact/src/engine.rs` | the turn machine, the finish protocol, the stop vocabulary |
 | `crates/cact/src/checks.rs` | the check plan: parse, run in order, first failing line |
 | `crates/cact/src/worker.rs` | the TUI seam: argv, `@@TUI@@` events, status mapping, exit code |
-| `crates/cact/src/selfcheck.rs` | the offline gate: 14 cases, no key, no network |
+| `crates/cact/src/selfcheck.rs` | the offline gate: 19 cases, no key, no network |
 
 ## Build
 
@@ -54,7 +55,7 @@ target/release/cact worker --workspace /path/to/repo --prompt-file /tmp/prompt.t
 
 The LLM client and cache, the `fast-code` tool set (`guide`, `skill`, `map`, `read`, `checks`,
 `status`, `search`, `page`, `outline`, `edit`, `splice`, `write`, `delete`, `mkdir`, `apply`,
-`exec`, `git`, plus the `python` cell), the persistent Python cell, the state card, the journal,
+`exec`, `git`, `final_answer`, plus the `python` cell), the persistent Python cell, the state card, the journal,
 the check plan and verifier, the green-plan stop, the finish protocol, the worker protocol and
 history, and the offline selfcheck.
 

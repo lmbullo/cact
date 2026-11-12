@@ -277,18 +277,8 @@ impl<'a> Engine<'a> {
             }
             let mut turn_values: Vec<(String, Value)> = Vec::new();
             for (index, call) in calls.iter().take(self.scope.max_calls_per_turn).enumerate() {
-                if !self.scope.allows(&call.name) {
-                    let env = Env::fail(
-                        &call.name,
-                        "not_granted",
-                        format!("this run does not grant `{}`", call.name),
-                        "use a granted tool; the tool list is the capability set",
-                    );
-                    messages.push(tool_message(&call.id, &card::render_body(&env)));
-                    continue;
-                }
-                let args: Value = match serde_json::from_str(&call.args) {
-                    Ok(value) => value,
+                let (parsed, json_note) = match crate::shape::parse_args(&call.args) {
+                    Ok(pair) => pair,
                     Err(e) => {
                         let env = Env::fail(
                             &call.name,
@@ -301,12 +291,48 @@ impl<'a> Engine<'a> {
                         continue;
                     }
                 };
+                let shape = crate::shape::repair(&call.name, parsed, &self.scope);
+                let mut name = shape.name;
+                let mut args = shape.args;
+                let mut shape_note = String::new();
+                if !json_note.is_empty() {
+                    shape_note.push_str(&format!("[shape] {json_note}\n"));
+                }
+                if shape.changed {
+                    shape_note.push_str(&format!("[shape] {}\n", shape.note));
+                }
+                if name == "exec" {
+                    if let Some(spec) = plan_spec(&args, self.ctx.plan.as_ref()) {
+                        shape_note.push_str(&format!(
+                            "[shape] exec(plan command) ran as checks({spec:?})\n"
+                        ));
+                        name = "checks".into();
+                        args = json!({"name": spec});
+                    }
+                }
+                if !self.scope.allows(&name) {
+                    let env = Env::fail(
+                        &name,
+                        "not_granted",
+                        format!("this run does not grant `{name}`"),
+                        "use a granted tool; the tool list is the capability set",
+                    );
+                    messages.push(tool_message(&call.id, &card::render_body(&env)));
+                    continue;
+                }
                 result.calls += 1;
-                self.emit(json!({"kind": "cell.start", "cell": index + 1, "tool": call.name, "args": args}));
-                let (cell, text) = self.dispatch(&call.name, &args, step);
+                self.emit(
+                    json!({"kind": "cell.start", "cell": index + 1, "tool": name, "args": args}),
+                );
+                let (cell, text) = self.dispatch(&name, &args, step);
+                let text = if shape_note.is_empty() {
+                    text
+                } else {
+                    format!("{shape_note}{text}")
+                };
                 result.changed = self.ctx.changed();
                 if cell.final_value.is_some() {
-                    turn_values.push((call.name.clone(), cell.final_value.clone().unwrap()));
+                    turn_values.push((name.clone(), cell.final_value.clone().unwrap()));
                 }
                 if let Some(error) = &cell.error {
                     if error.contains("runtime") || error.contains("Error") {
@@ -336,7 +362,7 @@ impl<'a> Engine<'a> {
                 self.emit(json!({
                     "kind": "cell.end",
                     "cell": index + 1,
-                    "tool": call.name,
+                    "tool": name,
                     "ok": ok,
                     "verb_kind": cell.envelope.as_ref().map(|e| e.kind.clone()),
                     "code": refusal.as_ref().map(|e| e.code.clone()),
@@ -417,13 +443,43 @@ impl<'a> Engine<'a> {
     /// Run one call and return both the cell record and the card text the model reads.
     fn dispatch(&mut self, name: &str, args: &Value, step: usize) -> (Cell, String) {
         let state: RunState = self.ctx.state.borrow().clone();
-        if self.green && (name == "exec" || name == "checks") {
-            let env = Env::fail(
-                name,
-                "green_plan",
-                "the check plan already passes for this tree",
-                "reply with the final report, or call final_answer(...) inside a silent code cell",
-            );
+        if name == "final_answer" {
+            let value = if args.get("summary").and_then(|v| v.as_str()).is_some()
+                && args.as_object().map(|o| o.len() == 1).unwrap_or(false)
+            {
+                args["summary"].clone()
+            } else {
+                args.clone()
+            };
+            let env = Env::ok("final_answer")
+                .body("final answer submitted; the check plan decides whether the run stops.");
+            let text = card::render_body(&env);
+            let cell = Cell {
+                tool: "final_answer".into(),
+                envelope: Some(env),
+                final_value: Some(value),
+                changed: self.ctx.changed(),
+                ..Cell::default()
+            };
+            let text = self.fit_card(name, args, &cell, text, step);
+            return (cell, text);
+        }
+        if self.green && name == "exec" && !is_gate_command(args) {
+            // Under a green plan a read-only exec is still useful: the model often checks a
+            // real value the test did not cover. Only a re-run of a gate is refused.
+        } else if self.green && (name == "exec" || name == "checks") {
+            let env = if name == "checks" {
+                Env::ok("checks")
+                    .field("cached", true)
+                    .body("the check plan already passes for this tree (latest run); no new check ran. Reply with the final report, or call final_answer(...) inside a silent code cell.")
+            } else {
+                Env::fail(
+                    name,
+                    "green_plan",
+                    "the check plan already passes for this tree",
+                    "reply with the final report, or call final_answer(...) inside a silent code cell",
+                )
+            };
             let text = card::render_body(&env);
             let cell = Cell {
                 tool: name.to_string(),
@@ -577,6 +633,76 @@ impl<'a> Engine<'a> {
             crate::util::clip(&line, 240)
         )
     }
+}
+
+/// The command lines an `exec` argument would run: argv, each commands row, and shell.
+fn exec_commands(args: &Value) -> Vec<String> {
+    let mut commands = Vec::new();
+    if let Some(argv) = args["argv"].as_array() {
+        commands.push(
+            argv.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    if let Some(rows) = args["commands"].as_array() {
+        for row in rows {
+            if let Some(parts) = row.as_array() {
+                commands.push(
+                    parts
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+            }
+        }
+    }
+    if let Some(shell) = args["shell"].as_str() {
+        commands.push(shell.to_string());
+    }
+    commands
+}
+
+/// True when an `exec` argument runs a verification gate the green plan already owns.
+fn is_gate_command(args: &Value) -> bool {
+    const WORDS: &[&str] = &[
+        "pytest",
+        "unittest",
+        "test",
+        "tests",
+        "typecheck",
+        "tsc",
+        "lint",
+        "clippy",
+        "fmt",
+        "format",
+        "ruff",
+    ];
+    exec_commands(args).iter().any(|command| {
+        command
+            .to_lowercase()
+            .split_whitespace()
+            .any(|word| WORDS.contains(&word))
+    })
+}
+
+/// The plan spec an `exec` argument exactly runs, else None.
+fn plan_spec(args: &Value, plan: Option<&crate::checks::Plan>) -> Option<String> {
+    let plan = plan?;
+    let mut commands = exec_commands(args)
+        .iter()
+        .map(|command| command.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>();
+    if commands.len() != 1 {
+        return None;
+    }
+    let command = commands.pop().unwrap();
+    plan.specs
+        .iter()
+        .find(|spec| spec.cmd.split_whitespace().collect::<Vec<_>>().join(" ") == command)
+        .map(|spec| spec.name.clone())
 }
 
 /// The assistant message that carries content plus tool calls.

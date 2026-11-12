@@ -9,7 +9,7 @@ Precedence when sources disagree: the module header / the code, then this file, 
 ## 0. Fast path
 
 ```bash
-make -C rust check                  # clippy + cargo test + the 17-case selfcheck (no key)
+make -C rust check                  # clippy + cargo test + the 19-case selfcheck (no key)
 make -C rust build                  # release binary at rust/target/release/cact
 cd tui && bun run typecheck && bun test
 ```
@@ -38,8 +38,8 @@ no fallback: `make -C rust build` first. The only Python in the engine is the pe
 - **The journal owns mutation.** `write`/`edit`/`splice`/`delete`/`mkdir`/`apply` go through
   `Ctx::commit`; `exec` refuses a program that would mutate tracked files.
 - **The check plan gates a finish.** `checks::Plan` runs the plan in order and the engine rejects
-  `final_answer` until it passes. A green `checks` closes the verification tail: `exec`/`checks`
-  are refused until a mutation reopens it.
+  `final_answer` until it passes. A green `checks` answers `checks` from the cached verdict and
+  refuses a gate re-run; a non-gate read-only `exec` stays open until a mutation reopens the plan.
 - **Unattended.** No human answers a question. Finish with `final_answer(...)`; the check plan is
   the acceptance authority.
 - **Generated, not duplicated.** The tool list, the descriptions and the JSON schemas live in

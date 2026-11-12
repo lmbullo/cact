@@ -268,6 +268,12 @@ impl Plan {
             .join(", ")
     }
 
+    /// Drop every cached verdict; a mutation makes an earlier green stale.
+    pub fn invalidate(&self) {
+        self.cache.borrow_mut().clear();
+        *self.last.borrow_mut() = None;
+    }
+
     /// Run the applicable specs in order, stopping at the first failure. Cached greens are free.
     pub fn run(&self, paths: Option<&[String]>) -> Option<Check> {
         let mut ran: Vec<String> = Vec::new();
@@ -320,8 +326,15 @@ impl Plan {
                     continue;
                 }
             }
-            let check = run_spec(spec, &self.cwd, 600.0);
-            let mut check = check;
+            if let Some(hit) = self.cache.borrow().get(&spec.cmd) {
+                if hit.ok() {
+                    let mut row = hit.clone();
+                    row.cmd = spec.name.clone();
+                    out.push(row);
+                    continue;
+                }
+            }
+            let mut check = run_spec(spec, &self.cwd, 600.0);
             check.cmd = spec.name.clone();
             self.cache
                 .borrow_mut()

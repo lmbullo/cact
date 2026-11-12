@@ -22,6 +22,7 @@ mod kernel;
 mod llm;
 mod obs;
 mod selfcheck;
+mod shape;
 mod spec;
 mod tools;
 mod util;

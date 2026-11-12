@@ -155,6 +155,9 @@ impl Ctx {
         let recorded = self.journal.borrow_mut().record(path, before, after);
         let mut env = env;
         if recorded {
+            if let Some(plan) = &self.plan {
+                plan.invalidate();
+            }
             env.changed = vec![path.to_string()];
             env.delta = Some(self.journal.borrow().diff(Some(path), 6000));
         }
