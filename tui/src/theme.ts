@@ -14,6 +14,8 @@
  * pure functions only: a view may call them in render and they are cheap enough for that.
  * palette values are hex literals, never ansi() slots; no background colour anywhere (the terminal paints the ground).
  * colour is the exception: accent for brand/cursor/selection, three status hues for a dot or one word, the rest is the grey ramp.
+ * asText is the one payload-to-text rule: a string as-is, null/undefined empty, an object as
+ * pretty JSON. Every render helper below coerces with it, so a structured final cannot crash a view.
  * clip collapses whitespace first, so a multi-line payload never breaks a row; wrapText never loses a line, past SUMMARY_MAX_LINES it reports overflow.
  * elapsed never returns a negative or fractional second past 10s; the bar is not a stopwatch.
  *
@@ -66,21 +68,39 @@ export const PROMPT_MAX_ROWS = 5;
  */
 export const SUMMARY_MAX_LINES = 400;
 
+/**
+ * The text of one payload value. A worker can send a structured `final` (the typed final_answer
+ * carries an object), and an older journal can already hold one; render it as pretty JSON rather
+ * than crashing the whole screen on `text.replace`.
+ */
+export function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 /** `text` on one line, at most `width` chars, elided with `…`; width<=1 renders nothing. */
-export function clip(text: string, width: number): string {
+export function clip(text: unknown, width: number): string {
   if (width <= 1) return "";
-  const flat = text.replace(/\s+/g, " ").trim();
+  const flat = asText(text).replace(/\s+/g, " ").trim();
   return flat.length <= width ? flat : `${flat.slice(0, Math.max(0, width - 1))}…`;
 }
 
 /** Collapse any multi-line blob onto one space-separated line. */
-export function oneLine(text: string): string {
-  return text.replace(/\r/g, "").replace(/\s+/g, " ").trim();
+export function oneLine(text: unknown): string {
+  return asText(text).replace(/\r/g, "").replace(/\s+/g, " ").trim();
 }
 
 /** Count non-empty lines, so a big error dump reads `(+42L)` instead of 42 rows. */
-export function lineCount(text: string): number {
-  return text.replace(/\r/g, "").split("\n").filter((line) => line.trim().length > 0).length;
+export function lineCount(text: unknown): number {
+  return asText(text).replace(/\r/g, "").split("\n").filter((line) => line.trim().length > 0).length;
 }
 
 /**
@@ -91,10 +111,11 @@ export function lineCount(text: string): number {
  * Returns the wrapped rows plus how many were cut past `maxLines` (never silently).
  */
 export function wrapText(
-  text: string,
+  text: unknown,
   width: number,
   maxLines: number = SUMMARY_MAX_LINES,
 ): { lines: string[]; dropped: number } {
+  const source = asText(text);
   const limit = Math.max(4, Math.floor(width));
   const lines: string[] = [];
   let dropped = 0;
@@ -103,7 +124,7 @@ export function wrapText(
     else dropped += 1;
   };
 
-  for (const raw of text.replace(/\r/g, "").split("\n")) {
+  for (const raw of source.replace(/\r/g, "").split("\n")) {
     const line = raw.replace(/\t/g, "  ").trimEnd();
     if (!line.trim()) {
       keep("");

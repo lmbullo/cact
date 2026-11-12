@@ -51,6 +51,9 @@ case "$body" in
     printf '\\n'
     printf '%s\\n' '@@TUI@@{"kind":"final","status":"done","final":"long","stop":"DONE","steps":1,"calls":0,"llmCalls":1,"errors":0,"usage":{},"wallMs":5}'
     ;;
+  *structured*)
+    printf '%s\\n' '@@TUI@@{"kind":"final","status":"done","final":{"summary":"structured report"},"stop":"DONE","steps":1,"calls":0,"llmCalls":1,"errors":0,"usage":{},"wallMs":5}'
+    ;;
   *) exit 0 ;;
 esac
 `);
@@ -245,4 +248,20 @@ test("the machine log is JSONL, append-only and truncates a long stdout line", a
   const fallback = longRecords.find((record: any) => record.kind === "event" && record.event.kind === "log");
   expect(fallback.event.text.endsWith("… truncated")).toBe(true);
   expect(fallback.event.text.length).toBe(3000 + "\n… truncated".length);
+}, 20000);
+
+
+test("a structured final_answer is stored as text, not an object", async () => {
+  const workspace = temp("code-tui-ws-");
+  const stateRoot = temp("code-tui-state-");
+  const server = await launch(workspace, stateRoot, fakeWorker());
+
+  const task = (await post(server, "/api/tasks", { prompt: "structured" })).body.task;
+  const done = await until(server, task.id, "done");
+  expect(typeof done.final).toBe("string");
+  expect(done.final).toContain('"summary": "structured report"');
+  const events = (await get(server, `/api/tasks/${done.id}/events`)).events;
+  const final = events.find((event: any) => event.kind === "final");
+  expect(typeof final.text).toBe("string");
+  expect(final.text).toContain("structured report");
 }, 20000);

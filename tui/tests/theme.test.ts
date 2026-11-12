@@ -178,4 +178,8 @@ test("wrapText keeps every word of a summary and never exceeds the width", () =>
   const long = wrapText(Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n"), 40, 10);
   expect(long.lines.length).toBe(10);
   expect(long.dropped).toBe(20);
+
+  // A typed final_answer is journaled as an object by the wire; the log must render it, not throw.
+  const structured = wrapText({ summary: "structured report", changed: ["a.ts"] }, 40);
+  expect(structured.lines.join("\n")).toContain('"summary": "structured report"');
 });

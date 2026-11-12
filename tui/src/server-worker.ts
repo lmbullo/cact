@@ -15,6 +15,8 @@
  *    only what the server managed to parse out of it.
  *  - `final` replaces the live estimate: `progress` is dropped and its context/window move onto
  *    the task, so the board never prefers stale numbers.
+ *  - `task.final` is always text: a structured `final` is serialized with `textOf`, never stored
+ *    as an object (the typed `final_answer` carries one).
  *  - An unknown kind is one journal record and no task state.
  *
  * WHERE TO CHANGE
@@ -22,7 +24,7 @@
  */
 import type { Task, TaskEvent } from "./types";
 import { foldTurn } from "./list-model";
-import { capString, capValue, journalWorkerEvent, parseWorkerLine } from "./worker-events";
+import { capString, capValue, journalWorkerEvent, parseWorkerLine, textOf } from "./worker-events";
 import { appendEvent, appendLog, saveTask } from "./server-journal";
 import { broadcast } from "./server-state";
 
@@ -80,7 +82,7 @@ export function handleWorkerLine(task: Task, raw: string): void {
       break;
     }
     case "error":
-      task.error = String(capString(message.text, 8000));
+      task.error = capString(textOf(message.text), 8000) as string;
       appendLog(task, { kind: "error", text: task.error });
       appendEvent(task, { kind: "error", text: task.error });
       break;
@@ -98,7 +100,7 @@ export function handleWorkerLine(task: Task, raw: string): void {
       task.context = task.progress?.context;
       task.window = task.progress?.window;
       task.progress = undefined;
-      task.final = capString(message.final ?? "", 64000) as string;
+      task.final = capString(textOf(message.final), 64000) as string;
       // The run's numbers in one record, so an agent gets usage/errors without folding the turns.
       appendLog(task, {
         kind: "usage",

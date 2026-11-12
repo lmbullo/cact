@@ -18,6 +18,8 @@
  * task-mutating kinds stay in server.ts handleWorkerLine: turn folds progress, error sets Task.error, final installs the counters.
  * cell.end carries no payload body: text and args are absent by construction; only the notes are capped (free text the agent wrote).
  * an unknown kind journals the raw line as `log`, so a newer worker still leaves a readable journal.
+ * a structured `final` is rendered to text with `textOf` at the journal boundary: `Task.final` and
+ * `TaskEvent.text` stay strings even when the typed `final_answer` carried an object.
  *
  * WHERE TO CHANGE
  * a worker message kind ... the cact worker (source of truth) + types.ts WorkerMessage   what a kind journals ... journalWorkerEvent
@@ -34,6 +36,20 @@ export type JournalEvent = Omit<TaskEvent, "seq" | "ts">;
 /** A string capped at `limit` chars (the cut is marked), or the value untouched. */
 export function capString(value: unknown, limit: number): unknown {
   return typeof value === "string" && value.length > limit ? `${value.slice(0, limit)}\n… truncated` : value;
+}
+
+/** The text of one wire value: a string as-is, a structured value as pretty JSON. */
+export function textOf(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 }
 
 /** The same caps applied recursively to a journaled payload: strings, 40 items, depth 12. */
@@ -104,13 +120,13 @@ export function journalWorkerEvent(
         kind: "check",
         check: {
           ok: Boolean(message.ok),
-          name: String(capString(message.name ?? "", 200)),
-          line: String(capString(message.line ?? "", 600)),
+          name: capString(textOf(message.name), 200) as string,
+          line: capString(textOf(message.line), 600) as string,
         },
       });
       return;
     case "log":
-      append({ kind: "log", text: capString(message.text, 4000) as string });
+      append({ kind: "log", text: (capString(textOf(message.text), 4000) as string) });
       return;
     default:
       append({ kind: "log", text: line.slice(0, 3000) });

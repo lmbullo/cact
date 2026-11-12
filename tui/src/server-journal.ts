@@ -13,7 +13,8 @@
  *  - Paths are derived, never stored, so an older task file still finds its machine log.
  *  - A failed write never breaks a run: it logs to console.error and returns.
  *  - Task files are written tmp+rename; `seq` comes from server-state, `ts` is stamped here.
- *  - loadTasks reaps a task's worker left `running` by a previous process (a crashed server),
+ *  - loadTasks normalises a legacy structured `final`/`error` to text before publishing the task,
+ *    then reaps a task's worker left `running` by a previous process (a crashed server),
  *    then fails the task and records why.
  *
  * WHERE TO CHANGE
@@ -27,6 +28,7 @@ import { broadcast, nextSeq, taskById, tasks } from "./server-state";
 import { reapWorker } from "./server-procs";
 import { pump } from "./server-tasks";
 import type { Task, TaskEvent } from "./types";
+import { textOf } from "./worker-events";
 
 /** `tasks/<id>.json`: the task's atomic snapshot. */
 export function taskFile(id: string): string {
@@ -108,6 +110,10 @@ export function loadTasks(): void {
       // The path is derived, not stored history: a task file written by an older server still gets
       // its machine log location, because the formula is the state dir's.
       task.log = logFile(task.id);
+      // A structured final_answer is journaled as an object; a task saved by an older server may
+      // still carry it. Normalise here so every reader gets the Task contract (a string).
+      if (task.final !== undefined) task.final = textOf(task.final);
+      if (task.error !== undefined) task.error = textOf(task.error);
       tasks.push(task);
       taskById.set(task.id, task);
     } catch (error) {
