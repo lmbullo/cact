@@ -8,6 +8,8 @@
 //!   a command that would mutate a tracked file inside the workspace is refused before it runs
 //!   (wrong_call): the journal owns mutation, and a process write would bypass diff()/undo().
 //!   scratch (/tmp, /var/tmp, /dev/shm, $TMPDIR) and paths outside the workspace are not gated.
+//!   the shell scan is quote-aware: a `>` or `|` inside a regex or a quoted string is not a
+//!   redirect or a command boundary.
 //!   output is bounded and the full text is on an _OBS handle, never silently dropped.
 
 use crate::envelope::Env;
@@ -217,7 +219,7 @@ fn gate_shell(
 ) -> Option<String> {
     let mut vars: BTreeMap<String, String> = std::env::vars().collect();
     vars.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
-    for token in command.split([';', '|', '&', '\n']) {
+    for token in shell_segments(command) {
         let mut words: Vec<String> = token.split_whitespace().map(|w| w.to_string()).collect();
         while words
             .first()
@@ -251,22 +253,110 @@ fn gate_shell(
             return Some(reason);
         }
     }
-    // `>` and `>>` targets: a redirect into the workspace bypasses the journal.
-    let mut rest = command;
-    while let Some(pos) = rest.find('>') {
-        let after = rest[pos..].trim_start_matches('>').trim_start();
-        let target: String = after
-            .chars()
-            .take_while(|c| !c.is_whitespace() && *c != ';' && *c != '|')
-            .collect();
-        if !target.is_empty() && writes_inside(root, &target, &vars) {
+    // `>` and `>>` targets: a redirect into the workspace bypasses the journal. The scan is
+    // quote-aware, so a `>` inside a regex or a quoted string is not a redirect.
+    for target in redirect_targets(command) {
+        if target.starts_with('&') {
+            continue;
+        }
+        if writes_inside(root, &target, &vars) {
             return Some(format!(
                 "redirect into `{target}` would mutate a tracked file"
             ));
         }
-        rest = &rest[pos + 1..];
     }
     None
+}
+
+/// Split a shell string on `;`, `|`, `&` and newlines outside single/double quotes.
+fn shell_segments(command: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote != Some('\'') {
+            current.push(ch);
+            escaped = true;
+            continue;
+        }
+        match quote {
+            Some(q) if ch == q => {
+                quote = None;
+                current.push(ch);
+            }
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            None if matches!(ch, ';' | '|' | '&' | '\n') => {
+                if !current.trim().is_empty() {
+                    out.push(current.clone());
+                }
+                current.clear();
+            }
+            None => current.push(ch),
+        }
+    }
+    if !current.trim().is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+/// The redirect targets in a shell string, ignoring `>` characters inside quotes.
+fn redirect_targets(command: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut chars = command.chars().peekable();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+        if ch != '>' {
+            continue;
+        }
+        while chars.peek() == Some(&'>') {
+            chars.next();
+        }
+        while chars.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+            chars.next();
+        }
+        let mut target = String::new();
+        while let Some(&next) = chars.peek() {
+            if next.is_whitespace() || matches!(next, ';' | '|' | '&' | '\n') {
+                break;
+            }
+            target.push(next);
+            chars.next();
+        }
+        if !target.is_empty() {
+            out.push(target);
+        }
+    }
+    out
 }
 
 /// True when `target` resolves inside the workspace and is not an explicit scratch path.

@@ -16,6 +16,8 @@
 //!   an unsupported prompt constraint never ends the run, it is a repair instruction.
 //!   the turn is bounded: at most `max_calls_per_turn` calls, steps, wall clock, total tokens and
 //!   the card budget from `Budget`; a clipped card always names the exact resume call.
+//!   every assistant `tool_call` gets exactly one `tool` message, including a call skipped by the
+//!   per-turn budget or by a terminal `final_answer`; an unpaired call is a provider 400.
 
 use crate::card;
 use crate::contract::{self, Evidence};
@@ -276,7 +278,18 @@ impl<'a> Engine<'a> {
                 }
             }
             let mut turn_values: Vec<(String, Value)> = Vec::new();
-            for (index, call) in calls.iter().take(self.scope.max_calls_per_turn).enumerate() {
+            let mut terminal = false;
+            for (index, call) in calls.iter().enumerate() {
+                if let Some(notice) = skip_notice(
+                    terminal,
+                    index >= self.scope.max_calls_per_turn,
+                    self.scope.max_calls_per_turn,
+                ) {
+                    // Every assistant tool_call must get exactly one tool message, including the
+                    // ones we refuse to run; otherwise the next request is a provider 400.
+                    messages.push(tool_message(&call.id, &notice));
+                    continue;
+                }
                 let (parsed, json_note) = match crate::shape::parse_args(&call.args) {
                     Ok(pair) => pair,
                     Err(e) => {
@@ -380,7 +393,7 @@ impl<'a> Engine<'a> {
                 }));
                 messages.push(tool_message(&call.id, &text));
                 if !turn_values.is_empty() && self.scope.inline_finish {
-                    break;
+                    terminal = true;
                 }
             }
             // A final_answer inside a cell: accept in place when silent and the plan passes.
@@ -635,6 +648,22 @@ impl<'a> Engine<'a> {
     }
 }
 
+/// The tool message one skipped call gets; None means the call is allowed to run.
+fn skip_notice(terminal: bool, over_budget: bool, max_calls: usize) -> Option<String> {
+    if terminal {
+        return Some(
+            "[observation] skipped: final_answer in this turn is terminal intent, so this call did not run."
+                .into(),
+        );
+    }
+    if over_budget {
+        return Some(format!(
+            "[observation] skipped: this task allows at most {max_calls} tool calls per turn; split the work across turns."
+        ));
+    }
+    None
+}
+
 /// The command lines an `exec` argument would run: argv, each commands row, and shell.
 fn exec_commands(args: &Value) -> Vec<String> {
     let mut commands = Vec::new();
@@ -745,4 +774,24 @@ fn usage_add(total: &mut Usage, add: &Usage) {
     total.total += add.total;
     total.cache_hit_tokens += add.cache_hit_tokens;
     total.cache_miss_tokens += add.cache_miss_tokens;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::skip_notice;
+
+    #[test]
+    fn every_extra_call_gets_a_pairing_notice() {
+        let max = 2;
+        let notices: Vec<Option<String>> =
+            (0..5).map(|i| skip_notice(false, i >= max, max)).collect();
+        assert!(notices[0].is_none() && notices[1].is_none());
+        assert!(notices[2..].iter().all(|notice| notice.is_some()));
+    }
+
+    #[test]
+    fn a_call_after_a_final_answer_is_skipped() {
+        assert!(skip_notice(true, false, 8).is_some());
+        assert!(skip_notice(false, false, 8).is_none());
+    }
 }

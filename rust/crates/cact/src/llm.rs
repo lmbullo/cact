@@ -16,6 +16,8 @@
 //!   retries: 4 attempts, 1.5s x attempt, only for 429/5xx and transport errors; anything else
 //!   is an `LlmError` the loop turns into stop=LLM_FAILED, never a crash.
 //!   finish == "length" means the turn was truncated; the loop maps it to TRUNCATED.
+//!   the request body is a scratch file passed to curl as `@path`, never argv: a long transcript
+//!   cannot hit ARG_MAX, and a retry reuses the same bytes.
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -170,10 +172,15 @@ impl Client {
         Err(LlmError(last))
     }
 
-    /// One HTTP POST through curl; the body lands in a scratch file, the code on stdout.
+    /// One HTTP POST through curl; both the request body and the response live in scratch files,
+    /// so a long transcript never becomes an argv string (ARG_MAX) and retries cannot truncate it.
     fn post(&self, data: &str) -> Result<Reply, LlmError> {
         let stamp = format!("{}-{}", std::process::id(), now_nanos());
-        let body_path = std::env::temp_dir().join(format!("cact-llm-{stamp}.json"));
+        let body_path = std::env::temp_dir().join(format!("cact-llm-out-{stamp}.json"));
+        let request_path = std::env::temp_dir().join(format!("cact-llm-in-{stamp}.json"));
+        if let Err(e) = std::fs::write(&request_path, data) {
+            return Err(LlmError(format!("transport: could not write request: {e}")));
+        }
         let url = format!("{}/chat/completions", self.base);
         let out = crate::util::run_argv(
             &[
@@ -192,15 +199,16 @@ impl Client {
                 "-X".into(),
                 "POST".into(),
                 "--data-binary".into(),
-                data.to_string(),
+                format!("@{}", request_path.to_string_lossy()),
                 url,
             ],
             &std::env::temp_dir(),
             &std::collections::BTreeMap::new(),
             None,
             self.timeout + 30.0,
-        )
-        .map_err(|e| LlmError(format!("transport: {e}")))?;
+        );
+        let _ = std::fs::remove_file(&request_path);
+        let out = out.map_err(|e| LlmError(format!("transport: {e}")))?;
         let text = std::fs::read_to_string(&body_path).unwrap_or_default();
         let _ = std::fs::remove_file(&body_path);
         let status: u32 = out.stdout.trim().parse().unwrap_or(0);

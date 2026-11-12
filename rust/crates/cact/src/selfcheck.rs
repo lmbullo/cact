@@ -297,6 +297,15 @@ pub fn run() -> i32 {
         let _ = std::fs::remove_file("/tmp/cact-selfcheck-scratch.txt");
         let read_only = tools::call(&ctx, "exec", &json!({"argv": ["printf", "hello"]}));
         check(read_only.ok && read_only.body.clone().unwrap_or_default().contains("hello"), "read-only argv refused")?;
+        let quoted = tools::call(
+            &ctx,
+            "exec",
+            &json!({"shell": "printf '%s' 'a>b'"}),
+        );
+        check(
+            quoted.ok && quoted.body.clone().unwrap_or_default().contains("a>b"),
+            "a `>` inside quotes was treated as a redirect",
+        )?;
         let vars = tools::call(
             &ctx,
             "exec",
