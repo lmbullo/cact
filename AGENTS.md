@@ -1,7 +1,7 @@
 # AGENTS.md — operating manual for coding agents
 
-This branch is the Rust engine. The Python reference implementation and its evals were removed;
-they remain on `main`. The source of truth is the code and its `//!` headers, not this file.
+`main` is the Rust engine. The Python reference implementation and its evals were removed. The
+source of truth is the code and its `//!` headers, not this file.
 
 Precedence when sources disagree: the module header / the code, then this file, then `README.md`,
 `rust/README.md` and `tui/README.md`.
@@ -75,5 +75,7 @@ public item carries a one-line docstring that states its contract.
 ## 5. Docs
 
 `README.md` owns the project identity and run steps, `rust/README.md` owns the module map and the
-Rust build, `tui/README.md` owns the wire contract. `docs/` and `LOOP.md` are the Python-era
-record kept from `main`; they are historical, not a contract for this branch.
+Rust build, `tui/README.md` owns the wire contract. `docs/README.md` is the index: `docs/run.md`
+owns the gate ladder, `docs/how-to.md` the recipes, `docs/architecture.md` the runtime shape and
+`docs/how-it-works.md` the design argument. A backticked path must exist; a doc that names a
+removed file is a bug.

@@ -1,120 +1,69 @@
-# docs/architecture.md — trees, one cell end to end, loops, observations, the check plan
+# docs/architecture.md — trees, one cell end to end, cards, the check plan
 
 This file owns the runtime shape: which trees are input, output or generated, how one cell travels
-from a loop to the kernel and back, what the loops are, how a typed observation pages, and how the
-check plan and compaction gate a finish. The design argument is `how-it-works.md`; the invariants
-are `../AGENTS.md` §2/§4; the commands that prove them are `run.md`; module headers are the
-per-module source (`python3 bench/guide.py`).
+from the engine to the kernel and back, how a typed observation pages, and how the check plan and
+the card budget gate a finish. The design argument is `how-it-works.md`; the invariants are
+`../AGENTS.md`; the commands that prove them are `run.md`; the module map is `../rust/README.md`.
 
-## 1. Trees and fixtures
+## 1. Trees
 
-A module's one-line contract is its header, not this file: `python3 bench/guide.py` prints every
-module under `bench/` and `tui/` with that line. What a header cannot say is which trees are
-input, which are output and which are rebuilt:
+A module's one-line contract is its `//!` header, not this file; the engine's `guide` verb prints
+every module with that line. What a header cannot say is which trees are input, output or rebuilt:
 
 | Tree | Kind | Note |
 |---|---|---|
-| `bench/evals/fixtures.py` | input, built per case | the eval workspaces, never a committed tree that can drift |
-| `bench/evals/oracle.py` | oracle, source | the hidden answers, outside every workspace |
-| `bench/evals/results/` | output, append-only | one JSON row per eval pass, with `tokens/pass` |
-| `bench/archive/legacy/` | archived input | the old read/mutation/edge/harness/hard/sandbox suites and their fixtures; a read-only record, not runnable in place (its modules still import the pre-archive `bench.<suite>` names) |
-| `bench/archive/results/traces/` | archived output | the recorded legacy traces and sweep summaries |
-| `bench/archive/results/ws/` | archived output | the old frozen TUI workspaces and `runs/` journals |
-| `bench/.tmp/`, `bench/.cache/` | output, gitignored | eval copies and the LLM reply cache |
-| `agents.index.json` | output, gitignored | the symbol index `python3 bench/index.py --write` regenerates from the source headers |
-| `bench/archive/results/tmp/` | output, gitignored | scratch workspaces from the retired suites; the archived H3 CSV is likewise regenerated and ignored |
-| `tui/node_modules/`, TUI state root | output, gitignored | the install tree and `~/.local/state/code-tui/` |
-
-`bench/agent/kernel/` is the one package split by lifecycle rather than by feature: `protocol.py`
-(the wire), `driver.py` (the child loop, over `driver_*.py`), five `prelude_*.py` fragment
-assemblers, `prelude.py` (assembled `PRELUDE`), `run_prelude.py` (assembled `RUN_PRELUDE` over the
-`run_prelude_*.py` fragments: exec, git, serve and the mutation and spawn gates), and
-`process.py` (the parent-side supervisor, over `process_*.py`). To change a verb, the header of
-the fragment that owns it says so.
+| `rust/crates/cact/src/` | input, source | one module per file, each opening with the four-section header |
+| `rust/crates/cact/src/kernel_driver.py` | input, source | the cell child: the only Python the project ships |
+| `rust/crates/cact/src/selfcheck.rs` | input, source | the 19 offline cases, each in its own scratch tree |
+| `rust/target/`, `tui/node_modules/` | output, gitignored | the build and the install tree |
+| `~/.local/state/code-tui/` | output, gitignored | the TUI state root; `$CODE_TUI_STATE_ROOT` or `$XDG_STATE_HOME/code-tui` move it |
+| `<state>/.cache/llm/` | output, gitignored | the reply cache; `BENCH_LLM_CACHE` moves it |
+| the engine's state dir | output, gitignored | `$CODE_TUI_STATE`, else `$XDG_STATE_HOME/code-tui/<hash>`: `history.jsonl` and the task logs |
 
 ## 2. How one cell flows
 
 ```
-bench/eval.py                       tui/bin/code
-   │                                    │
-   │ builds a temp workspace per case    │ launcher.ts -> detached server.ts (per workspace)
-   │ builds Kernel + Loop               │            │ spawns python/worker.py per task
-   └──────────────┬─────────────────────┘            │
-                  ▼                                  ▼
-        bench/agent/*.py  ── LLM (DeepSeek) ──►  typed tool call / python cell
-                  │
-                  ▼
-        Kernel (subprocess, one per task)
-          stdin/stdout JSON, @@K@@ marker per request
-          ├─ PRELUDE: guide/skill/map/read/session_diff/checks/revert_check/
-          │           status/search/recall/page/outline, edit/splice/write/
-          │           delete/mkdir/apply + python helpers
-          │           guide/grep/recall/page/verbs/diff/changes/undo/commit/help, final_answer/emit
-          └─ RUN_PRELUDE: exec (argv/commands/shell) + git + serve; run() only in repl/bare
-                  │
-                  ▼
-              the workspace
+cact worker (the TUI's child)            cact run (a terminal)
+   │  @@TUI@@{json} events on stdout        │  the cards, then the report
+   └────────────────┬────────────────────────┘
+                    ▼
+        engine.rs: one model reply = one turn
+          ├─ llm.rs ── one POST /chat/completions through curl ──► the provider
+          ├─ shape.rs: repair a generic call shape before dispatch
+          ├─ spec.rs::Scope::filter + tools::call: dispatch
+          │     ├─ the typed verb, in process (read, search, map, outline, guide, skill,
+          │     │   mutate, exec, git, checks, status, page, final_answer)
+          │     └─ code/python ──► kernel.rs ──► kernel_driver.py (the persistent child)
+          └─ card.rs: one state card per call
+                    │
+                    ▼
+                the workspace
 ```
 
 What the diagram does not show:
 
-- **Parent-side tools.** `docs(url)` (`bench/agent/docs.py`) and `delegate`
-  (`bench/agent/subagent.py`) never reach the kernel: the parent loop fetches the page or runs a
-  read-only child and returns one observation. `Skeptic` (`bench/agent/skeptic.py`) reuses the
-  subagent as the reviewer that must falsify a finish. They are wired per run (`docs=`/`subagent=`/
-  `skeptic=` on the loop; `CODE_TUI_DOCS` on unless `0`, `CODE_TUI_SUBAGENTS=1`,
-  `CODE_TUI_SKEPTIC=1` in the TUI), so the typed registry stays the one catalog.
-- **Model client.** `bench/agent/llm.py` posts to `https://api.deepseek.com/chat/completions`
-  (`DEEPSEEK_BASE_URL` overrides) and makes four attempts, retrying 429, 5xx and network errors
-  with a linear backoff. Responses cache under `bench/.cache/llm/` by request hash when
-  `Client(cache=True)`; the TUI worker constructs the client with `cache=False`. The reply is
-  `content`, `reasoning` (the provider's `reasoning_content`), `tool_calls`, `usage`, `finish`;
-  the loop appends `{"role": "assistant", "content", "tool_calls"}` to its history and keeps
-  `reasoning` in the turn record only, so a later turn does not replay it.
-- **One cell pipeline.** `Kernel.run(code)` and `Kernel.call(tool, args)` write one `CellRequest`
-  JSON line (`PROTOCOL` + `kind`/`code` or `kind`/`tool`/`args`, `timeout`, `check_cache`), read
-  one `@@K@@` `CellReply` line, and return a `Cell` (`stdout`, `stderr`, `result`, `final`,
-  `duration_ms`, `restarted`, `answer`, `runs`, `obs_index`, `mutated`, `changed`, `deltas`,
-  `delta`, `timeout`, `reads`, `tool`, `failed`, `rejected`, `envelope`). A reply whose `protocol`
-  does not match `PROTOCOL` is never read through the current shape: the child restarts and the
-  cell returns an error. A dead or hung kernel is killed and restarted with an empty namespace,
-  and the loop says so instead of hiding it.
-- **TUI event shapes.** `tui/python/worker.py::StreamingKernel` emits `cell.start` before every
-  request and a compact `cell.end` after it: `{cell, tool, ok, verb_kind, code, page:{shown,
-  total, unit, has_more, truncated, complete}, chars, duration_ms, notes:[one-line]}`. `chars` is
-  `len(stdout)+len(json result)` as delivered and no payload body is copied, so the journal stays
-  about the same size. `turn` events (and `turn.observation`) are unchanged, so a client that
-  predates `cell.end` still reads the run; `bench/task_journal.py` prefers `cell.end` for
-  `obs_chars`, `rejected` and `dupe_note_turn`, and counts `restarts` from the observation's
-  boolean `restarted` rather than searching delivered text.
-- **Call shaping.** Before dispatch, `call_shape.repair` rewrites one generic model shape to the
-  typed signature: `exec(command=)` to `shell`, `exec(code=)` to the python cell, an argv
-  `[shell, -c, ...]` to `shell`, `read(_OBS[n])` to `page`, `git add -A` to `git add`, and a
-  single `edit(path, old, new)` to `edit(edits=[...])`; trailing text after the JSON object is
-  dropped with a note. A call whose target is outside the scope is left for the kernel's
-  `bad_args`; each rewrite prefixes one `[shape]` line. An `exec` that exactly runs one plan
-  command becomes `checks(<name>)`, and `read` also coerces a JSON-list or space/comma-separated
-  path string (`_coerce_paths`).
-- **Results are dicts that also answer attributes.** `exec(...)` and `run()` return
-  `result['stdout']` (or `result.stdout`); `read(raw=True)[:n]` and `read(...)['content']` work,
-  so a natural model mistake does not cost a cell. The canonical keys are the contract.
-- **Journalling.** The prelude snapshots the tree at start; every cell diffs it. That is what
-  `changes()`, `diff()`, `undo()` and `[state] changed:` read. The snapshot is bounded by
-  `KERNEL_SNAPSHOT_BYTES` (default 64 MB) and `KERNEL_SNAPSHOT_FILES` (default 40000); past the
-  budget the views cover the watched prefix and report `snapshot_partial`, so pointing `code` at
-  a home directory cannot pin gigabytes. Typed mutations past the prefix stay visible and
-  undoable from the journal, and every other verb (read/search/map/edit/exec/git) is untouched.
-- **Sandbox switch.** `exec`/`git`/`run()` enabled means the kernel is a plain
-  `python3 -u -c DRIVER` child. Disabled (`CODE_TUI_ALLOW_RUN=0`, `worker.py --allow-run 0`) means
-  the child runs under `bwrap` with a read-only `/` plus a writable bind of the workspace only, and
-  the `exec`/`git` verbs are removed from the spec list.
+- **One engine.** `worker` and `run` share `Engine::run`; they differ only in the event sink and
+  the output. The rules the model sees are `TOOL_RULES` + `STATE_RULES` + `AUTONOMOUS`, plus
+  `RUN_NOTE` when `--allow-run 1`.
+- **The cell is a child, not a second agent.** `kernel.rs` spawns `python3 -u -c
+  kernel_driver.py`. A typed verb called inside a cell sends one `rpc` line to the parent, the
+  parent runs the real Rust verb, and the cell receives the same observation text a typed call
+  would have produced. A timeout kills the child; the next cell restarts it and the card says
+  `[state] kernel restarted`.
+- **The journal owns mutation.** `journal.rs` records every tracked edit with its diff.
+  `mutate.rs` reads the before-body, writes, and records; `session_diff` and `status` read the
+  journal back; `undo` reverts the last entry. "What changed" is a fact, not a reconstruction.
+- **Memory is per workspace.** `history.rs` keeps one `history.jsonl` (last 50 rows) and renders
+  the `[workspace history]` prefix the worker prepends to the next task's prompt.
+- **The first message carries a probe.** `env.rs` renders one `[env]` card: the resolved root,
+  the git root or `none`, a capped top-level listing, files at depth 2, the check plan, and any
+  task-mentioned path that does not exist with the closest path that does.
 
 ## 3. Reading a typed result
 
-The verb registry (`bench/agent/verbs.py`) is the only catalog: name, JSON schema, one-line
-summary, `mutates`, implementing function. `bench/agent/tools.py` builds the provider specs from
-it, and `help(tool)` prints the live signature, so there is no tool table in this file to keep in
-sync. The registry entry and the function docstring are what an agent reads.
+Every verb returns one envelope (`envelope.rs`): `ok`, `op`, `kind`, `data`, `page`, `handle`,
+`notes`, `error`, `changed`. `card.rs` renders it as `[s]`/`[obs]`/`[page]`/`[data]`/`[read]`,
+never as a transcript.
 
 The paging contract is shared by every paged verb: `[page]` carries
 `shown/total/offset/next/unit/has_more/truncated/complete`; `offset` is the start of what this
@@ -124,76 +73,49 @@ caller did not ask to have cut; `complete` is exactly `not truncated`, and an ex
 (`end`, `max_files`, `max_entries`, `max_results`, `max_chars`) is complete with `has_more` true.
 A window of 0 removes the cap instead of serving a page: `map(max_files=0)` and
 `search(max_results=0)` return every row or hit in one answer. Trust `complete`, not a prose tail.
-Every typed verb answers a refusal with the same
-`{ok:false, kind, error:{code,message,use,signature}}`, and a verb that returns `ok: false` is a
-rejected cell and counts as an error in run metrics.
 
-One more limit sits above the verb page: `StateLoop` gives each turn a card budget
-(`CARD_BUDGET`, `CODE_TUI_CARD_BUDGET`). A card that exceeds it is cut, its `[read]` line is
-recomputed from the lines that survived, and the cut names the exact resume: `read(path,
-start=N)` for a read, `page(_OBS[n])` otherwise. The verb's `[page]` still describes the whole
-result; the `[card]` line says what this turn actually received.
+Large output goes to the session's `_OBS[n]` store (`obs.rs`) and is read back with `page`. A
+repeat read returns a pointer unless the caller passes `repeat=true`.
 
-## 4. The loops
+Every refusal has the same shape: `{ok:false, kind, error:{code, message, use, signature}}`, and a
+verb that answers `ok: false` is a rejected cell.
 
-Selected by `CODE_TUI_MODE` in production (default `state`); an eval case builds its loop through
-`bench/evals/loops.py::run_loop`.
+One more limit sits above the verb page: `Budget.card_budget` (`CODE_TUI_CARD_BUDGET`, default
+5000) caps the card chars one turn may deliver. A card that exceeds it is cut, its `[read]` line is
+recomputed from the lines that survived, and the cut names the exact resume: `read(path, start=N)`
+for a read, `page(_OBS[n])` otherwise. The verb's `[page]` still describes the whole result; the
+`[card]` line says what this turn actually received.
 
-| mode | Loop | Action space | Rules constant |
-|---|---|---|---|
-| `repl` | `ReplLoop` | one fenced python block per reply | `repl.REPL_RULES` |
-| `tool` | `ToolLoop` | typed verbs + the `code` orchestration cell | `tool_loop.TOOL_RULES` |
-| `state` | `StateLoop` | the same, observations rendered as state cards | `state_loop.STATE_RULES` |
-| `bare` | `ToolLoop` with `goal=None` and no file helpers (the archived control) | one function: `python` | `bench/archive/legacy/run.py` (`BARE_TOOL_RULES`) |
+## 4. The turn machine
 
-All loops share `Budget` (`max_steps`, `max_wall_s`, `max_output_tokens`, `max_total_tokens`,
-where 0 means unlimited), `RunResult` and the `Client`. `ToolLoop.run` is the turn machine;
-`StateLoop` adds cards and compaction; `ReplLoop` overrides `_reply`, `_observe`, `_before_turn`
-and the stop/history switches, so budget stops, usage accounting, goal gating and trace writing
-are one implementation. The base machine adds one wrap-up nudge at 80% of `max_steps` and one
-last-turn nudge at `max_steps - 1`; subclasses change the wording, not the timing. This is the
-stop signal an open-ended refactor needs, not a lower step cap. A turn record's `calls` holds one
-`CallRecord` per tool call (code, observation, runs, reads, notice, stop).
+`Engine::run` is the only loop: send the transcript, read one reply, dispatch every call, append
+one state card per call, and stop on the finish protocol.
 
-The stop vocabulary is `tool_loop.STOPS` (one comment per value says what sets it); this file does
-not repeat it, and the TUI maps it to a status word in `tui/python/worker.py`.
-`check_run.py::run_check` wraps tsc, bun test and pytest output into a `Check` with parsed failure
-lines and distinguishes `unrunnable` (broken check) from `failed` (real failure).
+- The turn is bounded: at most `max_calls_per_turn` calls, and the run is bounded by steps, wall
+  clock, total tokens and the card budget. A call the per-turn budget skips still gets its paired
+  `tool` message, because an unpaired call is a provider 400.
+- The stop vocabulary is one closed set in `engine.rs::stops`: `DONE`, `VERIFIED`, `STEP_LIMIT`,
+  `WALL_LIMIT`, `GOAL_UNMET`, `TRUNCATED`, `LLM_FAILED`, `TOKEN_LIMIT`.
+- The worker maps that set to a task status: `DONE`/`VERIFIED` are `done`, a spent budget with a
+  summary is `partial`, everything else is `failed`. The exit code is 0 only for `done`.
 
-## 5. Check plan and compaction
+## 5. The check plan
 
-`bench/agent/check_plan.py` holds an ordered list of `{name, cmd, cheap, scope}` and the
-`Verifier` that owns it: the cheap subset, the `scope` filter, the `HEALTH_WINDOW` throttle, the
-check cache and `Check` rendering. Results cache until the next mutating cell: a matching
-`run()`/`exec` is answered from `check_cache` (`kind: "check_cached"`) instead of spawning the
-same command twice.
+`checks.rs` holds `Spec {name, cmd, cheap, scope}`, built from the worker's `--checks` JSON.
+`tui/src/detect-checks.ts` builds that JSON from the tree when the user sets no override:
+`CODE_TUI_CHECKS` (a JSON list) wins over `CODE_TUI_CHECK` (one command), and an empty
+`CODE_TUI_CHECK` disables verification. Otherwise it reads `ruff.toml` or a `Cargo.toml` root and
+the `lint`, `typecheck`, `format:check` and `test` scripts of the root and `tui/package.json`, and
+marks `lint`, `typecheck` and `format` cheap so a mutating cell cannot leave a tree the project
+itself would reject.
 
-Cheap entries are health checks: they re-run after a mutating cell in their `scope` (at most every
-20s) and print as the one-line `[check]` card (`pass`, else `<spec> : <first failing line>` with
-the full output behind the queued `_OBS[n]`). They never end a run. The whole plan is the goal:
-`final_answer` is rejected (`GOAL_UNMET`) until every entry passes, then the task lands `done`
-with `verified: <names> passed`. The agent calls the plan with `checks(name=None)`; it returns one
-`{name, ok, exit, first_line, detail?}` row per spec and reuses the Verifier's cache, so a green
-spec is never spawned twice. `detail` is the last count or result line of a passing run
-(`Check.summary`), so a suite row names its own totals. `status()` covers tree state (branch,
-capped short status, ahead/behind, and the journal's add/del summary).
-
-Production passes `goal_stops=False`, so a passing health check after a mutation is evidence, not
-a verdict: the model keeps working until it calls `final_answer` and the whole plan accepts that
-claim. A failing check only rejects the finish. Once a `checks` payload has `ok` and at least one
-row, `GreenGate` (`green_gate.py`) opens: a later `exec` or `checks` is refused with `GREEN` and
-the observation carries a pass line, while code cells and typed mutations still run (they count
-for the record); any reported change closes the gate until the next `checks`. An `exec` that runs
-a lint/typecheck/format gate outside the plan is answered as a plan-authority note, not run.
-`StateLoop._compact` folds the message list once the provider's real prompt token count reaches
-`config.COMPACT_AT_TOKENS` (85% of the 1M window); it cuts only on an assistant tool-call boundary
-and replaces the dropped span with one `[session state]` message carrying the changed files, the
-current diff, the per-file read coverage and the last check, so no tool result is orphaned and the
-workspace stays authoritative. `Budget.max_total_tokens` is a runaway guard a live case or a child
-agent sets, not a working budget; production leaves it 0 (unlimited).
-
-The TUI detects the plan per task: `CODE_TUI_CHECKS` (JSON) wins, else `CODE_TUI_CHECK`, else
-`python3 bench/smoke.py`/`ruff`, a `Cargo.toml` root's `cargo fmt`/`clippy`/`test`, plus the
-project's `lint`/`typecheck`/`format:check`/`test` scripts (or `build` when neither exists);
-`../tui/README.md` §7 owns the order. The runner follows the lockfile (`bun.lock`/`bun.lockb` to
-bun, `package-lock.json` to npm). An empty `CODE_TUI_CHECK` opts out.
+- Order is contract: cheap specs run first, so a broken tree is reported before the slow suite.
+- "Unrunnable" (spawn failure, timeout) is a broken check, never a failed project.
+- A green spec is cached for the run by `(cmd, digest of the scope files)`, so a repeat is free.
+- Once the plan is green, `checks` answers from that cache and a gate re-run through `exec` is
+  refused with `green_plan`; a mutation or a cell that changed files reopens verification. A
+  read-only `exec` stays open, because the model often checks a value the tests do not cover.
+- `final_answer` is rejected until the plan passes and the prompt's explicit imperatives are
+  supported. `contract.rs` parses those imperatives (`commit`, `branch`, `push`, `verify`,
+  `change`, and their negations) into plan items, and `Evidence` records what the run actually
+  did; prose is never evidence.

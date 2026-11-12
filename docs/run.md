@@ -2,132 +2,115 @@
 
 This file owns invocation: the gate order, each command's expected exit code and what it proves,
 and the knobs that change a run. Task recipes are `how-to.md`; the runtime shape those gates
-protect is `architecture.md`; the eval registry and grading are in `../README.md` under "Evals
-and grading"; the source change behind a failure is `../AGENTS.md` §6, and its symptom table is
-`../AGENTS.md` §8.
+protect is `architecture.md`; the TUI's wire contract and env table are `../tui/README.md`; the
+source change behind a failure is `../AGENTS.md`.
 
 ## 1. Gate order
 
 Run in this order. A failure is a contract change, not a flaky test: fix the code or the document
-in the same change. Inside an agent run the same plan is `checks()` (one call,
-`bench/agent/check_plan.py`); it reuses a cached green spec and its rows are the verdict. Do not
-run this ladder by hand.
+in the same change. Inside an agent run the same plan is `checks()`; its rows are the verdict.
 
 | Command | Covers | Expected |
 |---|---|---|
-| `python3 bench/guide.py --check` | every module header has its four sections and fits the 24-line budget | exit 0 |
-| `python3 bench/index.py --check` | the same header problems through the symbol-index CLI | exit 0 |
-| `python3 -m ruff check .` | code: E/F/W/B against `ruff.toml` (fixtures and generated trees are excluded there) | exit 0 |
-| `python3 bench/smoke.py` | the offline contract check, one group per area (the list is the module's own header), from the header/docs gates and the check plan through the kernel's files/verbs/gates, `revert_check`, `serve`, the finish handoff, the capability scope, the turn machine, the journal kinds and style | exit 0 |
-| `python3 bench/eval.py` | the 16 scripted loop contracts | exit 0 |
-| `python3 -m compileall -q bench tui/python` | syntax | exit 0 |
-| `cd tui && bun run typecheck` | TS types | exit 0 |
-| `cd tui && bun test` | rendering, detection and selection tests | 0 fail; React `act(...)` warnings are expected noise |
+| `make -C rust fmt` | `cargo fmt --all --check` over the engine | exit 0 |
+| `make -C rust check` | `cargo clippy --all-targets -- -D warnings`, `cargo test`, the 19-case selfcheck | exit 0, `19/19 cases passed` |
+| `cd tui && bun run typecheck` | TS types through `tsc --noEmit` | exit 0 |
+| `cd tui && bun test` | the TUI tests: board, log, prompt, views, selection, server, detection | 0 fail; React `act(...)` warnings are expected noise |
 
-Smoke is the fast signal: no key, no network, nothing written outside a temp dir. Python has no
-unit-test framework, so smoke plus one real task is the whole story.
+`make -C rust check` is `lint test selfcheck` in one call, and it needs no key and no network: the
+selfcheck creates one scratch tree per case under the temp directory. `make -C rust selfcheck`
+runs only that part, and `rust/target/debug/cact selfcheck` is the same binary without `make`.
 
-## 2. Evals
+The TUI gate is `bun test` with 0 fail, not a fixed count.
 
-```bash
-python3 bench/guide.py
-python3 bench/guide.py --query checks
-python3 bench/guide.py --module bench/agent/check_plan.py
-python3 bench/guide.py --json --query checks
-python3 bench/guide.py --check
-python3 bench/index.py --write            # regenerate agents.index.json (gitignored)
-python3 bench/index.py --check            # gate: every header is complete and within budget
-
-python3 bench/eval.py                      # 16 scripted loop contracts, no key, no network
-python3 bench/eval.py --list               # ids, kinds, failure tags
-python3 bench/eval.py --tasks L04_bad_args,L15_autonomy
-DEEPSEEK_API_KEY=... python3 bench/eval.py --live   # 14 model-backed failure cases
-```
-
-`--live` needs network and a key; the offline pass is the regression gate. Without a key, stop at
-the offline gates and say so. Case ids and their failure tags are `bench/eval.py --list`; the
-grading rule and the result row are in `../README.md` under "Evals and grading".
-
-Knobs: `--tasks`, `--model`, `--effort` (the provider's `reasoning_effort`, default `low`;
-`--effort ""` omits it, `CODE_TUI_EFFORT=none` in the TUI), `--tag`, `--no-write`. The TUI uses
-300 steps / 1800s / 120s per cell; a live eval per case uses the `Budget` in its case definition,
-including `max_total_tokens`.
-
-## 3. Workspaces and live runs
+## 2. Build
 
 ```bash
-python3 bench/smoke.py                 # offline contract check
-python3 -m bench.snapshot freeze SRC DST   # clone + write DST.manifest.json
-python3 -m bench.snapshot diff  DST        # added/modified/deleted vs the manifest
-python3 bench/live.py --base bench/archive/results/ws/tui-base --tag r4 --prompt "make typecheck pass" \
-        --check "bun run typecheck" --legacy r3
-python3 bench/live.py --base bench/archive/results/ws/tui-base --tag sb1 --prompt "say hi" \
-        --check "python3 -c 'print(1)'" --sandbox daytona   # same case on a disposable box
-python3 bench/task_journal.py ~/.local/state/code-tui/workspaces/<hash> <task-id>
-python3 bench/task_journal.py --compare ~/.local/state/code-tui/workspaces/<hash> A B  # an A/B
-python3 bench/task_journal.py --recent 10  # newest tasks across every workspace
-python3 -m bench.remote --check        # optional: is the Daytona SDK + key usable (offline)
-python3 -m bench.remote --self-test    # optional: create a sandbox, run, delete (spends credit)
+make -C rust dev                    # debug binary, opt-level 1, no debuginfo
+make -C rust build                  # release binary at rust/target/release/cact
+make -C rust install                # the release binary into ~/.local/bin/cact
+JOBS=2 make -C rust build           # when the machine is busy; JOBS=8 when it is idle
 ```
 
-`bench/remote.py` is the only third-party dependency in `bench/` and it is lazy: importing it
-never requires the SDK, and every entry point answers `RemoteError` with the install line when it
-is missing (`python3 -m pip install --user daytona`). The key is `DAYTONA_API_KEY`, read from the
-environment or the same `~/.config/code-tui/{env,.env}` the TUI launcher loads — never from the
-repo. `create()` always sets an auto-stop interval, so a crashed caller cannot leave a sandbox
-billing.
+`rust/.cargo/config.toml` caps `jobs` at 4 and `rust/Cargo.toml` sets `debug = 0`, plus
+`lto = "thin"` and `opt-level = 2` for release. There is no debuginfo to write, so a clean release
+build is short and stays under ~1.5GB peak. The build table is `../rust/README.md`.
 
-`task_journal.py <state-dir> <task-id>` prints one row per task: status, stop, steps, writes and
-edits, restarts, rejections, the tool and verb mix, then the escape metrics `exec_verb_dupes`,
-`python3_c`, `shell`, `obs_chars` and `first_mutation_turn` (the turn of the first mutating cell),
-then the causal keys `dupe_note_turn`, `dupes_after_note`, `paged_followups` and
-`obs_chars_per_turn`. The counts come from the `cell.start` records a TUI run writes, so
-`sum(tools.values()) == cells`; `obs_chars`, `rejected` and `dupe_note_turn` read its
-one-record-per-call `cell.end` (falling back to `turn.observation` on archived journals), and
-`restarts` reads the observation's boolean `restarted`. `--compare <state-dir> A B` prints the same
-row for two tasks side by side with deltas; `--recent N` scans every workspace's tasks, newest
-first, with no server or key. The key list is the contract in `bench/task_journal.py`.
-
-`live.py` is the end-to-end test: it clones `bench/archive/results/ws/tui-base`, drives
-`tui/python/worker.py`, records `<tag>.events.jsonl`, `<tag>.prompt.txt`,
-`<tag>.summary.json`, runs the check and diffs the tree. `--sandbox local` (the default) is that
-path unchanged. `--sandbox daytona` runs the same worker case in a sandbox and writes the same
-local artifacts: `/work/harness` is this repo minus `bench/archive`, `bench/ws`, `bench/.cache`,
-`bench/.tmp`, `.git` and `node_modules`; `/work/ws` is the frozen base; the worker inherits every
-`CODE_TUI_*` override except host-path settings, and the key is passed only in the worker's exec
-`env=`. The sandbox is deleted in a `finally` (the final JSON line reports its id, wall time and
-`deleted: true`), so only the snapshot survives. The snapshot is named by
-`CODE_TUI_DSNAPSHOT`, default `code-tui-py-bun`, built once from `python:3.12` with bun at the
-pinned `remote.BUN_VERSION`, then reused by name on later runs. Without the `daytona` SDK or key
-the flag is a structured refusal before any network call.
-
-## 4. TUI
+## 3. One task, no TUI
 
 ```bash
-cd tui && bun install
-bun run typecheck      # tsc --noEmit; noUnusedLocals/noUnusedParameters are on
-bun test               # 0 fail; React act(...) warnings are expected noise
-./bin/code             # inside the target project; starts/reuses its server
-./bin/code-stop        # SIGTERM the server for this directory
+# one headless task: prints the state cards and the final report
+rust/target/release/cact run --workspace /path/to/repo --prompt 'Add fib.py and a test' \
+    --model deepseek-flash --checks '[{"name":"test","cmd":"python3 -m pytest -q"}]'
+
+# the process the TUI spawns: same engine, `@@TUI@@` lines on stdout
+rust/target/release/cact worker --workspace /path/to/repo --prompt-file /tmp/prompt.txt \
+    --model deepseek-flash --effort low --max-steps 300 --max-wall 1800 \
+    --checks '[{"name":"test","cmd":"python3 -m pytest -q"}]'
+
+rust/target/release/cact selfcheck  # the offline contract gate
+rust/target/release/cact version    # the crate version
 ```
 
-The agent's Python kernel is `python3` from `PATH` (`CODE_TUI_PYTHON` overrides); it imports
-`bench.agent` from this repo, so the checkout path matters. `../tui/README.md` owns the server's
-HTTP/WS surface, its env vars and the status mapping; this file owns only the commands.
+`cact run` needs `--key` or `DEEPSEEK_API_KEY`. The defaults are the ones the TUI passes:
+`--model deepseek-flash`, `--effort low` (`--effort none` omits the field), `--max-steps 300`
+(`0` means unlimited), `--max-wall 1800`, `--cell-timeout 120`, `--max-output 32000`,
+`--allow-run 1`. `--allow-run 0` removes `exec` and `git` from the scope. An unknown subcommand,
+a missing key or an empty prompt exits 2 before any kernel is spawned. The worker's exit code is
+the verdict: 0 only for a `done` run.
 
-## 5. Gotchas that change a run
+## 4. Live
 
-- `bench/eval.py` has two import blocks: script mode inserts the repo root on `sys.path`; package
-  mode uses relative imports. Keep both working.
-- A live eval's oracle is the verdict. The model's prose is never the pass condition, and
-  `autonomy=True` rejects a finish that asks a human.
+```bash
+export DEEPSEEK_API_KEY=...
+make -C rust live                   # = rust/scripts/live.sh
+```
+
+`rust/scripts/live.sh` initialises a throwaway git repository, writes a prompt that asks for
+`fib.py` and pytest tests, and runs `cact run --max-steps 20 --max-wall 600` with
+`python3 -m pytest -q` as the plan. It prints `live: ok (exit <code>, fib.py present, pytest
+green)` only when the file exists and the suite passes. This is the one gate that costs money;
+without a key, stop at the offline gates and say so.
+
+## 5. TUI
+
+```bash
+cd tui && bun install               # once
+cd tui && bun run typecheck
+cd tui && bun test
+./bin/code                          # inside the target project; starts or reuses its server
+./bin/code-stop                     # SIGTERM the server for this directory
+```
+
+There is no root `package.json`, no `pyproject.toml` and no CI: `bun install` in `tui/` and
+`make -C rust build` are the install steps. The server resolves its worker once at boot
+(`tui/src/server-config.ts::WORKER_CMD`): `CODE_TUI_WORKER` if set, else
+`rust/target/release/cact worker` or `rust/target/debug/cact worker`. There is no Python
+fallback, so build the engine before starting the TUI.
+
+## 6. Knobs
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | unset | the model key; `--key` is the `run` alternative, and a missing key exits 2 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | the chat-completions endpoint |
+| `CODE_TUI_MODEL` / `CODE_TUI_EFFORT` | `deepseek-flash` / `low` | what the server passes the worker |
+| `CODE_TUI_ALLOWED_TOOLS` | unset | a comma-separated tool list that narrows the scope |
+| `CODE_TUI_ALLOW_RUN` | `1` | `0` drops `exec` and `git` from the scope |
+| `CODE_TUI_STATE` | unset | the worker's state directory, else `$XDG_STATE_HOME/code-tui/<hash>` |
+| `CODE_TUI_CARD_BUDGET` | `5000` | chars of state card one turn may deliver |
+| `CODE_TUI_MAX_TOTAL_TOKENS` | `30000000` | the run's total token ceiling |
+| `PYTHON` | `python3` | the interpreter the kernel child runs |
+| `BENCH_LLM_CACHE` | `<state>/.cache/llm` | the on-disk reply cache |
+| `RUST_LOG=1` | unset | worker events on stderr |
+| `CODE_TUI_CHECK` / `CODE_TUI_CHECKS` | unset | the plan override: one command, or the JSON list |
+| `CODE_TUI_WORKER` | unset | the worker argv override: a test and sandbox hook |
+
+## 7. Gotchas that change a run
+
+- `make -C rust check` does not run `fmt`; `make -C rust fmt` is its own gate.
+- A live run's plan is the verdict. The model's prose is never the pass condition.
 - The TUI server detects the check plan when a task starts, so a script an earlier task added to
   `package.json` is picked up without a restart.
-- `bench/archive/results/ws/tui-base` and `tui-broken` are archived frozen snapshots. Recreate a
-  base with `python3 -m bench.snapshot freeze tui <dst>`; `bench/ws/` is generated and gitignored.
-- Tests are TS only: the gate is `bun test` with 0 fail, not a fixed count. React `act(...)`
-  warnings are expected noise. `bench/smoke.py` is the Python gate: its `style` group runs
-  `ruff.toml` plus the "every public name has a docstring" check, and its `docs` group fails when
-  a checked document names a path that no longer exists or copies a paragraph from another.
-- Commit style: `area(scope): lowercase summary`, e.g.
-  `bench(agent/kernel): add grep, write, edit` or `tui(tests): add log and prompt tests`.
+- Commit style: `area(scope): lowercase summary`, e.g. `rust(engine): pair every tool call` or
+  `tui(tests): add log and prompt tests`.

@@ -36,9 +36,9 @@ views.
 
 The action space is the lean `fast-code` set generated in `rust/crates/cact/src/spec.rs`:
 `guide`, `skill`, `map`, `read`, `checks`, `status`, `search`, `page`, `outline`, `edit`, `splice`,
-`write`, `delete`, `mkdir`, `apply`, `exec`, `git`, plus the persistent `python` cell. `exec` is
-the only process tool and `git` the only VCS tool; both are gated where they could bypass the edit
-journal. The cell covers computation and anything the typed tools cannot express.
+`write`, `delete`, `mkdir`, `apply`, `exec`, `git`, `final_answer`, plus the persistent `python`
+cell. `exec` is the only process tool and `git` the only VCS tool; both are gated where they could
+bypass the edit journal. The cell covers computation and anything the typed tools cannot express.
 
 The turn machine, the finish protocol, the card renderer, the journal and the kernel child are
 documented by their `//!` headers under `rust/crates/cact/src/`.
@@ -48,7 +48,7 @@ documented by their `//!` headers under `rust/crates/cact/src/`.
 The offline gates need no key and no network:
 
 ```bash
-make -C rust check                 # clippy + cargo test + the 17-case selfcheck
+make -C rust check                 # clippy + cargo test + the 19-case selfcheck
 cd tui && bun run typecheck && bun test
 ```
 
