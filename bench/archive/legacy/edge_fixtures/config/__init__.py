@@ -1,1 +1,0 @@
-from .tight import LIMIT

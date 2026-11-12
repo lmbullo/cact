@@ -3,7 +3,7 @@
  *
  * WHAT IT IS
  *  The process half of the queue: `workerSpawn` (the Bun.spawn options every worker shares) and
- *  `signalTree`/`reapWorker`, which reach the python worker plus the kernel child and run()
+ *  `signalTree`/`reapWorker`, which reach the Rust worker plus the kernel child and run()
  *  children it starts. server-tasks.ts spawns and cancels; server.ts signals every worker on
  *  shutdown; server-journal.ts reaps one left behind by a crashed server.
  *
@@ -24,7 +24,7 @@
  *  Spawn flags .... workerSpawn    One signal .... signalTree    Crash cleanup .... reapWorker
  */
 import { readFileSync } from "node:fs";
-import { WORKER } from "./server-config";
+import { WORKER_CMD } from "./server-config";
 
 /** The spawn options every worker shares: detached group leader, piped output, no stdin. */
 export function workerSpawn(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
@@ -79,7 +79,7 @@ export function reapWorker(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
     const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    if (!cmdline.includes(WORKER)) return false;
+    if (!cmdline.includes(WORKER_CMD[0]!)) return false;
   } catch {
     return false;
   }

@@ -7,10 +7,10 @@
  *  because both must happen before a worker can spawn.
  *
  * ENTRY POINTS
- *  arg(name, fallback), loadEnvFile(); VERSION, ROOT, WORKER, workspace, stateDir, tasksDir,
- *  eventsDir, promptsDir, logsDir, serverFile, model, effort, profile, concurrency, maxSteps,
- *  maxOutput, maxWall, cellTimeout, allowRun, python, initialChecks, initialKey, serverLog,
- *  SOURCE_RECHECK_MS
+ *  arg(name, fallback), loadEnvFile(); VERSION, ROOT, WORKER_CMD, workspace, stateDir,
+ *  tasksDir, eventsDir, promptsDir, logsDir, serverFile, model, effort, profile, concurrency,
+ *  maxSteps, maxOutput, maxWall, cellTimeout, allowRun, python, initialChecks, initialKey,
+ *  serverLog, SOURCE_RECHECK_MS
  *
  * INVARIANTS
  *  - loadEnvFile() runs before any env read; every constant is computed once, so a later
@@ -33,9 +33,6 @@ import type { CheckSpec } from "./types";
 export const VERSION = "0.1.0";
 /** The tui/ directory: `import.meta.dir` is tui/src at runtime. */
 export const ROOT = resolve(import.meta.dir, "..");
-/** The one worker entry point every task runs: python/worker.py. */
-export const WORKER = join(ROOT, "python", "worker.py");
-
 /** One `--flag value` from argv, or `fallback` when the flag or its value is missing. */
 export function arg(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);
@@ -113,6 +110,21 @@ export const cellTimeout = Math.max(5, Number(process.env.CODE_TUI_CELL_TIMEOUT 
 export const allowRun = process.env.CODE_TUI_ALLOW_RUN !== "0";
 /** The interpreter a worker is spawned with. */
 export const python = process.env.CODE_TUI_PYTHON ?? "python3";
+
+/**
+ * The worker's full argv, resolved once at boot: CODE_TUI_WORKER, else the built Rust binary
+ * (`rust/target/{release,debug}/cact worker`). There is no Python fallback: build the engine
+ * with `make -C rust build`. CODE_TUI_WORKER is the test/sandbox hook.
+ */
+export const WORKER_CMD: string[] = (() => {
+  const override = process.env.CODE_TUI_WORKER?.trim();
+  if (override) return override.split(/\s+/);
+  for (const name of ["release", "debug"]) {
+    const bin = join(resolve(ROOT, ".."), "rust", "target", name, "cact");
+    if (existsSync(bin)) return [bin, "worker"];
+  }
+  return [join(resolve(ROOT, ".."), "rust", "target", "release", "cact"), "worker"];
+})();
 
 /** The workspace's checks, detected once at boot and refreshed per task start. */
 export const initialChecks: CheckSpec[] = detectChecks(workspace);

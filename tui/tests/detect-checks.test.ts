@@ -120,15 +120,6 @@ test("a Rust workspace keeps its cargo plan alongside a package script plan", ()
   ]);
 });
 
-test("bench/smoke.py is a cheap root check", () => {
-  const root = workspace();
-  mkdirSync(join(root, "bench"));
-  writeFileSync(join(root, "bench", "smoke.py"), "");
-  expect(detectChecks(root, {})).toEqual([
-    { name: "smoke", cmd: "python3 bench/smoke.py", cheap: true, scope: ["bench"] },
-  ]);
-});
-
 test("a tui subdirectory is scoped and prefixed", () => {
   const root = workspace();
   mkdirSync(join(root, "tui"));

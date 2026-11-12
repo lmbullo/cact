@@ -1,0 +1,16 @@
+[package]
+name = "cact"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "cact: an unattended coding agent, ported from the Python bench/ engine"
+
+[[bin]]
+name = "cact"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+regex = "1"

@@ -1,13 +1,13 @@
-/** worker-events.ts: one `@@TUI@@` line from python/worker.py becomes one journal record.
+/** worker-events.ts: one `@@TUI@@` line from the cact worker becomes one journal record.
  *
  * WHAT IT IS
  * The stateless half of server.ts's worker-message handling: parseWorkerLine turns a stdout line into a WorkerMessage;
  * journalWorkerEvent turns every kind that keeps no state on the Task (cell.start, cell.end, check, log, unknown) into
  * exactly one event for the caller's `append` (server.ts adds seq/ts and writes it); cell.end = {cell,tool,ok,verb_kind,
- * code,page,chars,duration_ms,notes}.
+ * code,error,page,chars,duration_ms,runs,notes}.
  *
  * ENTRY POINTS
- * EVENT_PREFIX = the marker python/worker.py prefixes its JSON lines with
+ * EVENT_PREFIX = the marker the cact worker prefixes its JSON lines with
  * parseWorkerLine(line) -> WorkerMessage | null;  journalWorkerEvent(msg, line, append) appends one JournalEvent for the pure kinds
  * capString(value, limit) = a string capped at limit chars, unchanged otherwise
  * capValue(value) = args/data capped by string length, item count and depth;  JournalEvent = Omit<TaskEvent, "seq" | "ts">
@@ -20,12 +20,12 @@
  * an unknown kind journals the raw line as `log`, so a newer worker still leaves a readable journal.
  *
  * WHERE TO CHANGE
- * a worker message kind ... python/worker.py (source of truth) + types.ts WorkerMessage   what a kind journals ... journalWorkerEvent
+ * a worker message kind ... the cact worker (source of truth) + types.ts WorkerMessage   what a kind journals ... journalWorkerEvent
  * a kind that mutates the task ... server.ts handleWorkerLine   the caps ... capString / capValue
  */
 import type { TaskEvent, WorkerMessage } from "./types";
 
-/** python/worker.py prefixes every machine-readable line with this; anything else is a log line. */
+/** the cact worker prefixes every machine-readable line with this; anything else is a log line. */
 export const EVENT_PREFIX = "@@TUI@@";
 
 /** One journal line without the fields appendEvent adds: what a message contributes to the journal. */
@@ -92,6 +92,8 @@ export function journalWorkerEvent(
         page: message.page ?? null,
         chars: message.chars,
         duration_ms: message.duration_ms,
+        error: message.error ? (capString(message.error, 600) as string) : undefined,
+        runs: (message.runs ?? []).map((run) => capString(run, 300) as string),
         notes: (message.notes ?? []).map((note) => capString(note, 500) as string),
       });
       return;

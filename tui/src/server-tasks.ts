@@ -3,7 +3,7 @@
  *
  * WHAT IT IS
  *  The task lifecycle. `createTask` queues, `pump` fills the free slots (concurrency 1-8),
- *  `startTask` spawns the one python worker a task gets and watches it exit, and `cancelTask`
+ *  `startTask` spawns the one cact worker a task gets and watches it exit, and `cancelTask`
  *  asks a queued task to stop or signals a running one.
  *
  * ENTRY POINTS
@@ -13,7 +13,7 @@
  *  cancelTask(task)             queued -> cancelled, running -> SIGTERM then SIGKILL after 5 s
  *
  * INVARIANTS
- *  - One python/worker.py per task, never shared; `running` is the slot ledger.
+ *  - One cact worker per task, never shared; `running` is the slot ledger.
  *  - A worker is detached in its own group, so cancel/shutdown signal its whole tree; pump
  *    starts SPAWN_BATCH per tick so 100 queued runs never exec 100 interpreters in one turn.
  *  - `final` decides the exit status (done/partial/failed); a cancelled task stays cancelled.
@@ -26,7 +26,7 @@
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import {
-  WORKER,
+  WORKER_CMD,
   allowRun,
   cellTimeout,
   concurrency,
@@ -36,7 +36,6 @@ import {
   maxWall,
   model,
   profile,
-  python,
   stateDir,
   workspace,
 } from "./server-config";
@@ -107,8 +106,7 @@ export function startTask(task: Task): void {
     proc = Bun.spawn(
       workerSpawn(
         [
-          python,
-          WORKER,
+          ...WORKER_CMD,
           "--workspace",
           workspace,
           "--prompt-file",

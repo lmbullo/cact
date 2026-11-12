@@ -1,23 +1,21 @@
 # tui — wire contract for coding agents
 
-`code` is a server-backed, fire-and-forget coding-agent TUI over the agent in `../bench` (the
-`state` loop by default; `CODE_TUI_MODE` switches it). This file is the reference for an agent that
-has to change or run it. The short contract is `../AGENTS.md`; the repository map is
-`../docs/README.md`; what runs where is `../README.md`, and the usage recipes (launch, checks, keys,
-reading a run) are `../docs/how-to.md`.
+`code` is a server-backed, fire-and-forget coding-agent TUI over the Rust engine in `../rust`
+(`cact worker`). This file is the reference for an agent that has to change or run it. The short
+contract is `../AGENTS.md`; the engine map is `../rust/README.md`; what runs where is
+`../README.md`.
 
-Read the source headers first:
+Build the engine first:
 
 ```bash
-python3 ../bench/guide.py --query tui
-python3 ../bench/guide.py --check     # fails when a module header loses a section
+make -C ../rust build
+cd .. && bun test --cwd tui
 ```
 
 The only files with no header are the two shell entry points, `bin/code` and `bin/code-stop`: they
-hold no logic, so `src/` and `python/` are the whole surface.
+hold no logic, so `src/` is the whole surface.
 
-Two contract checks live outside this directory: `python3 ../bench/smoke.py` (agent/kernel
-interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).
+The contract checks are `make -C ../rust check` (engine, no key) and `bun test` in this directory.
 
 ## 1. Process model
 
@@ -28,10 +26,9 @@ interface, no key) and `python3 ../bench/live.py` (one real end-to-end task).
 - `server.ts` is the entry point over `server-*.ts` (config, state, journals, queue, worker
   protocol, routes): it owns the queue, concurrency, cancellation, task JSON and event journals.
   It serves HTTP plus a WebSocket and skips the worker when no key is set.
-- `python/worker.py` builds the `bench` loop with `config.build(...)` over a `Kernel` with
-  `prelude="all"`, and streams each code cell, turn and observation to the server as
-  `@@TUI@@`-prefixed JSON lines. It also prepends a short history of previous tasks in the same
-  workspace (files they changed, one line each) as `[workspace history]`.
+- `cact worker` (the Rust engine) runs one task and streams each cell, turn and observation to
+  the server as `@@TUI@@`-prefixed JSON lines. It also prepends a short history of previous tasks
+  in the same workspace (files they changed, one line each) as `[workspace history]`.
 - `client.tsx` mounts `client-main.tsx` over the `client-*.ts(x)` modules (probe, socket, view,
   keys, actions, board maths, layout, panes); `board-view.tsx`/`board-task.tsx` and
   `log-view.tsx`/`log-rows.tsx` split rendering from row shape. Every TUI module is <=250 lines.
@@ -303,7 +300,7 @@ appears only where it means something.
 
 Turn events (the observation after each call, including stdout/stderr) are not rendered, with
 one exception: a turn carrying a `notice` — a rejected or staged `final_answer`, recorded by
-`bench/agent/tool_loop.py` — keeps its first line. The full payload is still in the journal and
+the Rust engine — keeps its first line. The full payload is still in the journal and
 the machine log, and reaches the model. The log keeps up to 1000 events in memory, seeded from
 the journal (last 800) on open.
 
@@ -377,7 +374,7 @@ the worker:
 | `CODE_TUI_LEGACY_TIMEOUT` | unset | `1` disables the in-child cell alarm |
 | `CODE_TUI_GIT_NAME` | `code-tui agent` | Git author/committer name for agent commits |
 | `CODE_TUI_GIT_EMAIL` | `agent@code-tui.local` | Git author/committer email for agent commits |
-| `CODE_TUI_PYTHON` | `python3` | Python that can import `bench` |
+| `CODE_TUI_PYTHON` | `python3` | Interpreter reported in the snapshot; the Rust worker uses its own `PYTHON` |
 | `CODE_TUI_STATE_ROOT` | `~/.local/state/code-tui` | Alternative state root |
 
 `launcher.ts` also sets `CODE_TUI_URL`, `CODE_TUI_WORKSPACE` and `CODE_TUI_VERSION` in the
@@ -395,8 +392,7 @@ available; a worker started without one fails immediately with a clear event.
 
 When a task starts the server detects a plan (an ordered list of named commands):
 `CODE_TUI_CHECKS` if set, else `CODE_TUI_CHECK` as a single entry, else
-`python3 bench/smoke.py`, `python3 -m ruff check .` (each when the workspace has the file), and
-for a `Cargo.toml` root `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
+`ruff.toml` (when present), and for a `Cargo.toml` root `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
 warnings` and `cargo test --workspace`, plus `lint`, `typecheck`, `format:check` and `test` (or
 `build` when neither exists) from the root and `tui/package.json`. `lint`, `typecheck` and
 `format:check` are cheap, so a mutating cell cannot leave the tree in a state the project itself
@@ -447,7 +443,7 @@ The detached server prints one JSON line when it starts, and nothing else at tha
 launcher or an agent reads it without parsing prose:
 
 ```json
-{"event":"listening","pid":14745,"port":39943,"profile":"fast-code","check":"python3 bench/smoke.py","log":"<state dir>/server.log"}
+{"event":"listening","pid":14745,"port":39943,"profile":"fast-code","check":"cargo test --workspace","log":"<state dir>/server.log"}
 ```
 
 `log` is the server's own stdout/stderr file (the launcher redirects there; `--log` overrides it);
@@ -467,8 +463,8 @@ Every `ServerInfo` also carries the code the process booted with:
 on every `/health`, `/api/snapshot` and WebSocket-snapshot read by re-hashing those files, at
 most once every 2 seconds, so they describe the running process and not the tree in general. Only
 the server's own modules — `src/server.ts`, `src/worker-events.ts`, `src/detect-checks.ts` — are
-covered: `client.tsx` is re-imported by every `code` launch and `bench/**` plus `python/worker.py`
-by every task's worker, so nothing else can be stale under a live pid. A missing file counts as
+covered: `client.tsx` is re-imported by every `code` launch and the Rust worker by every task, so nothing
+else can be stale under a live pid. A missing file counts as
 changed. The cure is `bin/code-stop`, then `code`: there is no reload path, and a running server
 never re-imports itself.
 
@@ -479,14 +475,13 @@ Kinds: `queued`, `started`, `pid`, `cell.start`, `cell.end`, `turn`, `check`, `l
 `error`, `final`, `finished`. The lifecycle kinds, `check` and the cell kinds are journal history
 only: the TUI draws them nowhere. Lifecycle state is `Task.status` (and `Task.pid`), which the
 board and the log status line render. `cell.start` is the call about to run and `cell.end` its
-compact result for analysis — `{cell, tool, ok, verb_kind, code, page, chars, duration_ms,
-notes}` with no payload body; `bench/task_journal.py` prefers it for `obs_chars`, `rejected` and
-`dupe_note_turn`. They are the loop's transcript, and the log body stays the prompt, a notice,
+compact result for analysis — `{cell, tool, ok, verb_kind, code, error, page, chars, duration_ms, runs,
+notes}` with no payload body. They are the loop's transcript, and the log body stays the prompt, a notice,
 an error and the final summary. The mapping from a worker message to its line is
 `src/worker-events.ts` (`journalWorkerEvent`), so one `cell.end` message is one event by
 construction, and a kind it does not know falls back to a `log` of the raw line. `check` is one
 verification run — `{ok, name, line}`, where `name` is the plan entry (`typecheck`, `test`, ...)
-and `line` is the first failing line of its output (empty on a pass); `python/worker.py` emits it
+and `line` is the first failing line of its output (empty on a pass); `cact worker` emits it
 right after the `turn` whose record carried a verdict, so the log status line names a failed check
 from the newest `check` event without re-running anything. `turn` keeps its existing shape (its
 `data.check` is still the bare `{ok, cmd}`), so a client that predates `cell.end` or `check`
@@ -534,8 +529,7 @@ bun test            # 0 fail over tests/: list, log, progress, prompt, views, se
 ```
 
 The rendering tests mount `<App>` against a fake Bun server and assert on captured character
-frames, so they exercise the same rows the terminal shows. A read-only cross-workspace view of
-the newest tasks (no server or key needed): `python3 ../bench/task_journal.py --recent 10`.
+frames, so they exercise the same rows the terminal shows. The task journals live under the state root; the log view is the read-only cross-run record.
 
 ## 12. Diagnosis
 

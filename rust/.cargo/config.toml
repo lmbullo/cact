@@ -1,0 +1,10 @@
+# Efficient builds: a hard cap on parallel rustc jobs (each one costs ~300-500MB) and the
+# dev profile already disables debuginfo. Override with `CARGO_BUILD_JOBS=8 cargo build`.
+[build]
+jobs = 4
+
+[net]
+retry = 3
+
+[term]
+verbose = false
