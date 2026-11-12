@@ -2,9 +2,8 @@
 
 ## Supported versions
 
-The public surface is the current default branch and the `rust` branch it ships from. There are no
-maintained release tags: build from the tip of the branch you use. The retired Python reference
-implementation on `main` is not supported.
+The public surface is the current default branch (`main`) and the `rust` branch, which carry the
+same Rust engine. There are no maintained release tags: build from the tip of the branch you use.
 
 ## Reporting a vulnerability
 
@@ -44,6 +43,6 @@ Out of scope by design:
 
 ## Handling secrets
 
-`DEEPSEEK_API_KEY` and any `DAYTONA_API_KEY` are read from the environment or
-`~/.config/code-tui/env`. They are never read from a tracked file in this repository. If you find
-one committed anyway, treat it as compromised, rotate it first, then report.
+`DEEPSEEK_API_KEY` is read from the environment or `~/.config/code-tui/env`. It is never read
+from a tracked file in this repository. If you find one committed anyway, treat it as compromised,
+rotate it first, then report.

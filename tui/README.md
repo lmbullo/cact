@@ -346,36 +346,27 @@ the worker:
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | API endpoint |
 | `CODE_TUI_MODEL` | `deepseek-flash` | Model name |
 | `CODE_TUI_EFFORT` | `low` | `reasoning_effort` (`none` disables it) |
-| `CODE_TUI_EFFORT_POLICY` | `fixed` | `adaptive` sends the effort only after a surprising turn; `fixed` always sends `CODE_TUI_EFFORT` |
-| `CODE_TUI_PROFILE` | `fast-code` | Measured arm: `fast-code` (lean typed set + python cell, effort `low`, inline finish, green-plan stop); also `fast` (same without `code`), `m3-plan`, `current`, `code-act` |
+| `CODE_TUI_PROFILE` | `fast-code` | Label recorded on the task; the Rust engine implements only `fast-code` |
 | `CODE_TUI_CONCURRENCY` | `1` | Max simultaneously running agents (clamped 1–256; 100 live runs is supported) |
 | `CODE_TUI_MAX_STEPS` | `300` | Step cap for every loop; `0` means unlimited |
-| `CODE_TUI_MAX_WALL` | `1800` | Seconds per task |
-| `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell |
-| `CODE_TUI_MAX_OUTPUT` | `393216` | Max completion tokens per reply (clamped to 393216) |
-| `CODE_TUI_MAX_CALLS_PER_TURN` | `8` | Tool calls one turn may carry |
-| `CODE_TUI_MAX_TURN_TOKENS` | `8192` | Completion-token ceiling for one turn; `0` uses the run's output cap |
+| `CODE_TUI_MAX_WALL` | `1800` | Seconds per task, floor 30 |
+| `CODE_TUI_CELL_TIMEOUT` | `120` | Seconds per kernel cell, floor 5 |
+| `CODE_TUI_MAX_OUTPUT` | `393216` | Per-reply completion-token cap, also the tool-output character cap; floor 1024 |
 | `CODE_TUI_CARD_BUDGET` | `5000` | Chars of state card one turn may deliver; a clipped card names the exact resume call |
-| `CODE_TUI_MAX_REPORT_CHARS` | `4000` | Final-report ceiling; the clip names the cut and points at the structured handoff |
+| `CODE_TUI_MAX_TOTAL_TOKENS` | `30000000` | The run's total token ceiling |
 | `CODE_TUI_CODE_MODE` | `0` | `1` exposes the orchestration cell as `code` instead of `python` |
-| `CODE_TUI_INLINE_FINISH` | profile | `1` accepts a passing silent `final_answer` in the same turn; `fast-code`/`fast`/`current`/`code-act` set it, `m3-plan` does not |
-| `CODE_TUI_MODE` | `state` | Loop to build: `state`, `tool` or `repl` |
-| `CODE_TUI_ALLOW_RUN` | `1` | `0` disables `exec`, `git`, `run()` and runs the kernel under bwrap |
-| `CODE_TUI_ALLOW_EXEC` | `1` | `0` removes the `exec` verb from the scope (the `ALLOW_RUN` kernel gate is separate) |
-| `CODE_TUI_ALLOWED_TOOLS` | unset | Comma-separated tool names that replaces the default scope; the only way to grant `serve` |
-| `CODE_TUI_AUTONOMY` | `1` | `0` disables the unattended-ask gate (`NEEDS_INPUT`) |
-| `CODE_TUI_DOCS` | `1` | `0` removes the `docs(url)` documentation tool |
-| `CODE_TUI_SUBAGENTS` | unset | `1` exposes `delegate` with a read-only child loop |
-| `CODE_TUI_SKEPTIC` | unset | `1` adds a read-only reviewer before a finish is accepted |
-| `CODE_TUI_TOOLS` | — | Path to a JSON custom-tool manifest |
+| `CODE_TUI_ALLOW_RUN` | `1` | `0` removes `exec` and `git` from the scope |
+| `CODE_TUI_ALLOWED_TOOLS` | unset | Comma-separated tool names that replaces the default scope |
 | `CODE_TUI_CHECK` | auto | Single verification command; empty string disables it |
 | `CODE_TUI_CHECKS` | auto | JSON check plan `[{name, cmd, cheap, scope?}]`; wins over `CODE_TUI_CHECK` |
-| `CODE_TUI_LEGACY_CHECK` | unset | `1` makes the goal return a bare pass/fail, not a parsed `Check` |
-| `CODE_TUI_LEGACY_TIMEOUT` | unset | `1` disables the in-child cell alarm |
 | `CODE_TUI_GIT_NAME` | `code-tui agent` | Git author/committer name for agent commits |
 | `CODE_TUI_GIT_EMAIL` | `agent@code-tui.local` | Git author/committer email for agent commits |
 | `CODE_TUI_PYTHON` | `python3` | Interpreter reported in the snapshot; the Rust worker uses its own `PYTHON` |
+| `PYTHON` | `python3` | Interpreter the worker spawns the kernel child with |
+| `BENCH_LLM_CACHE` | `<state>/.cache/llm` | The on-disk reply cache |
+| `CODE_TUI_WORKER` | unset | Worker argv override: the test and sandbox hook |
 | `CODE_TUI_STATE_ROOT` | `~/.local/state/code-tui` | Alternative state root |
+| `XDG_STATE_HOME` | `~/.local/state` | Parent of the default state root |
 
 `launcher.ts` also sets `CODE_TUI_URL`, `CODE_TUI_WORKSPACE` and `CODE_TUI_VERSION` in the
 client's environment; they are launcher outputs, not knobs.
@@ -399,7 +390,7 @@ warnings` and `cargo test --workspace`, plus `lint`, `typecheck`, `format:check`
 would reject. The plan is re-detected
 per task, so a script an earlier task added is picked up without restarting the server. The
 runner follows the lockfile (`bun.lock`/`bun.lockb` → bun, `package-lock.json` → npm). The plan
-is passed to the worker as `--checks <json>`, where one `check_plan.Verifier` owns it.
+is passed to the worker as `--checks <json>`, where one `checks.rs` plan owns it.
 
 An entry is `{name, cmd, cheap, scope?}`. `scope` is a list of path prefixes for the cheap
 health run: a scoped entry is skipped unless the cell changed a path under one of them. The goal
@@ -413,8 +404,7 @@ first.
 - **The whole plan is the goal.** `final_answer` is rejected (`GOAL_UNMET`) until every entry
   passes; then the task lands `done` with `verified: <names> passed`.
 
-`CODE_TUI_CHECK=` (empty) disables the plan. `CODE_TUI_LEGACY_CHECK=1` makes the goal answer
-with a bare pass/fail instead of a parsed `Check` (the old message, no failure lines).
+`CODE_TUI_CHECK=` (empty) disables the plan.
 
 ## 8. HTTP API
 
@@ -434,10 +424,10 @@ The server binds `127.0.0.1` on a random port (written to `server.json`):
 Cancelling a queued task marks it `cancelled` immediately. Cancelling a running task sends
 `SIGTERM` to the worker's process group, then `SIGKILL` after 5 seconds; the task ends
 `cancelled`. Each worker is spawned detached as its own group leader, so one signal reaches the
-python worker and the kernel child and `run()` children under it — a cancel or shutdown leaves no
+Rust worker and the kernel child and `run()` children under it — a cancel or shutdown leaves no
 orphan tree behind. A crashed server's workers are reaped on the next boot (only a pid whose
-`/proc` cmdline still names `worker.py`). Workers are started `SPAWN_BATCH` at a time so queuing 100
-runs does not exec 100 interpreters in one event-loop turn.
+`/proc` cmdline still names the worker binary, `WORKER_CMD[0]`). Workers are started `SPAWN_BATCH`
+at a time so queuing 100 runs does not exec 100 worker processes in one event-loop turn.
 
 The detached server prints one JSON line when it starts, and nothing else at that point, so a
 launcher or an agent reads it without parsing prose:

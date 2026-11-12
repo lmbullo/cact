@@ -1,9 +1,9 @@
 # rust: the cact engine
 
-`cact` is the same agent, in Rust: one model in a loop with a typed action space, the state-card
-observations, the check plan that gates every finish, and the same `@@TUI@@` worker protocol the
-TUI already reads. The TypeScript TUI is untouched except for the one line that resolves which
-worker to spawn (`tui/src/server-config.ts::WORKER_CMD`).
+`cact` is the engine: one model in a loop with a typed action space, the state-card observations,
+the check plan that gates every finish, and the `@@TUI@@` worker protocol the TypeScript TUI reads.
+The TUI spawns this binary through `tui/src/server-config.ts::WORKER_CMD`; there is no Python
+worker.
 
 ## Layout
 
@@ -59,10 +59,10 @@ The LLM client and cache, the `fast-code` tool set (`guide`, `skill`, `map`, `re
 the check plan and verifier, the green-plan stop, the finish protocol, the worker protocol and
 history, and the offline selfcheck.
 
-The Python reference implementation and its evals were removed from this branch and remain on
-`main`. The only Python here is the persistent cell child (`kernel_driver.py`); it is not the
-agent loop. The `plan`/`task`/`session_diff` verbs remain callable inside a cell but are not
-provider tools in the `fast-code` profile.
+The Python reference implementation and its evals are gone from every branch. The only Python
+here is the persistent cell child (`kernel_driver.py`); it is not the agent loop. The
+`plan`/`task`/`session_diff` verbs remain callable inside a cell but are not provider tools in the
+`fast-code` profile.
 
 ## The Python cell
 

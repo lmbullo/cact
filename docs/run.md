@@ -52,12 +52,13 @@ rust/target/release/cact selfcheck  # the offline contract gate
 rust/target/release/cact version    # the crate version
 ```
 
-`cact run` needs `--key` or `DEEPSEEK_API_KEY`. The defaults are the ones the TUI passes:
-`--model deepseek-flash`, `--effort low` (`--effort none` omits the field), `--max-steps 300`
-(`0` means unlimited), `--max-wall 1800`, `--cell-timeout 120`, `--max-output 32000`,
-`--allow-run 1`. `--allow-run 0` removes `exec` and `git` from the scope. An unknown subcommand,
-a missing key or an empty prompt exits 2 before any kernel is spawned. The worker's exit code is
-the verdict: 0 only for a `done` run.
+`cact run` needs `--key` or `DEEPSEEK_API_KEY`. Its defaults are `--model deepseek-flash`,
+`--effort low` (`--effort none` omits the field), `--max-steps 300` (`0` means unlimited),
+`--max-wall 1800`, `--cell-timeout 120`, `--max-output 32000` and `--allow-run 1`. The TUI passes
+the same flags with its own `CODE_TUI_*` defaults (`--max-output` is `393216` there). `--allow-run
+0` removes `exec` and `git` from the scope. An unknown subcommand, a missing key or an empty
+prompt exits 2 before any kernel is spawned. The worker's exit code is the verdict: 0 only for a
+`done` run.
 
 ## 4. Live
 
@@ -102,7 +103,6 @@ fallback, so build the engine before starting the TUI.
 | `CODE_TUI_MAX_TOTAL_TOKENS` | `30000000` | the run's total token ceiling |
 | `PYTHON` | `python3` | the interpreter the kernel child runs |
 | `BENCH_LLM_CACHE` | `<state>/.cache/llm` | the on-disk reply cache |
-| `RUST_LOG=1` | unset | worker events on stderr |
 | `CODE_TUI_CHECK` / `CODE_TUI_CHECKS` | unset | the plan override: one command, or the JSON list |
 | `CODE_TUI_WORKER` | unset | the worker argv override: a test and sandbox hook |
 

@@ -14,9 +14,9 @@ going after the window closes. The source of truth is the code and its `//!` mod
 
 ## Branches
 
-`rust` is the active engine: the Rust binary in `rust/` plus the TypeScript TUI in `tui/`. Base
-engine and TUI pull requests on `rust`. `main` still carries the retired Python reference
-implementation and its eval harness; it is kept for comparison and is not where new work lands.
+`main` is the default branch and carries the Rust engine in `rust/` plus the TypeScript TUI in
+`tui/`. The `rust` branch tracks the same engine and is where engine work is pushed. Base pull
+requests on `main`.
 
 ## Toolchain
 
@@ -75,4 +75,4 @@ Participation is covered by `CODE_OF_CONDUCT.md`. Report an incident privately t
 
 ## Security
 
-Do not report a vulnerability in a public issue. Follow `SECURITY.md`.
+Do not report a vulnerability in a public issue. Follow `.github/SECURITY.md`.
