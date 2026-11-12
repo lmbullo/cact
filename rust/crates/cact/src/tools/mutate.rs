@@ -138,7 +138,7 @@ pub fn edit(ctx: &Ctx, args: &Value) -> Env {
         let current = planned
             .iter()
             .find(|(p, _, _, _)| *p == shown)
-            .map(|(_, _, after, _)| after.clone())
+            .map(|(_, _, _, after)| after.clone())
             .unwrap_or(text);
         match replace(&current, old, new, replace_all) {
             Ok(updated) => planned.push((shown, old.to_string(), new.to_string(), updated)),

@@ -76,8 +76,10 @@ class Final(Exception):
         self.value = value
 
 
-def final_answer(value):
-    """End the cell with the task's answer; the loop stages or accepts it."""
+def final_answer(value=None, **fields):
+    """End the cell with the task's answer; keyword fields become a dict when value is absent."""
+    if value is None and fields:
+        value = fields
     raise Final(value)
 
 

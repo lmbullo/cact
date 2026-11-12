@@ -81,12 +81,12 @@ pub fn exec(ctx: &Ctx, args: &Value) -> Env {
         shell = Some(s.to_string());
     }
     if let Some(command) = &shell {
-        if let Some(reason) = gate_shell(&ctx.root, command) {
+        if let Some(reason) = gate_shell(&ctx.root, command, &env_map) {
             return wrong_call(reason);
         }
     }
     for argv in &runs {
-        if let Some(reason) = gate_argv(&ctx.root, argv) {
+        if let Some(reason) = gate_argv(&ctx.root, argv, &env_map) {
             return wrong_call(reason);
         }
     }
@@ -182,7 +182,11 @@ const MUTATORS: &[&str] = &[
 ];
 
 /// Refuse an argv that would write inside the workspace.
-fn gate_argv(root: &std::path::Path, argv: &[String]) -> Option<String> {
+fn gate_argv(
+    root: &std::path::Path,
+    argv: &[String],
+    env: &BTreeMap<String, String>,
+) -> Option<String> {
     if argv.is_empty() {
         return None;
     }
@@ -201,18 +205,49 @@ fn gate_argv(root: &std::path::Path, argv: &[String]) -> Option<String> {
     if targets.is_empty() {
         return None;
     }
-    let hit = targets.iter().find(|t| writes_inside(root, t));
+    let hit = targets.iter().find(|t| writes_inside(root, t, env));
     hit.map(|t| format!("`{program} {t}` would mutate a tracked file"))
 }
 
 /// Refuse a shell string that redirects into the workspace or calls a mutating program.
-fn gate_shell(root: &std::path::Path, command: &str) -> Option<String> {
+fn gate_shell(
+    root: &std::path::Path,
+    command: &str,
+    env: &BTreeMap<String, String>,
+) -> Option<String> {
+    let mut vars: BTreeMap<String, String> = std::env::vars().collect();
+    vars.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
     for token in command.split([';', '|', '&', '\n']) {
-        let words: Vec<String> = token.split_whitespace().map(|w| w.to_string()).collect();
-        if words.is_empty() {
+        let mut words: Vec<String> = token.split_whitespace().map(|w| w.to_string()).collect();
+        while words
+            .first()
+            .map(|w| w == "export" || w == "env")
+            .unwrap_or(false)
+        {
+            words.remove(0);
+        }
+        let mut command_words: Vec<String> = Vec::new();
+        for word in words {
+            let clean = word.trim_matches(|c| c == '"' || c == '\'');
+            if let Some((name, value)) = clean.split_once('=') {
+                if !name.is_empty()
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && !name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false)
+                {
+                    vars.insert(name.to_string(), value.to_string());
+                    continue;
+                }
+            }
+            command_words.push(word);
+        }
+        if command_words.is_empty() {
             continue;
         }
-        if let Some(reason) = gate_argv(root, &words) {
+        if let Some(reason) = gate_argv(root, &command_words, &vars) {
             return Some(reason);
         }
     }
@@ -224,7 +259,7 @@ fn gate_shell(root: &std::path::Path, command: &str) -> Option<String> {
             .chars()
             .take_while(|c| !c.is_whitespace() && *c != ';' && *c != '|')
             .collect();
-        if !target.is_empty() && !target.contains('$') && writes_inside(root, &target) {
+        if !target.is_empty() && writes_inside(root, &target, &vars) {
             return Some(format!(
                 "redirect into `{target}` would mutate a tracked file"
             ));
@@ -235,9 +270,13 @@ fn gate_shell(root: &std::path::Path, command: &str) -> Option<String> {
 }
 
 /// True when `target` resolves inside the workspace and is not an explicit scratch path.
-fn writes_inside(root: &std::path::Path, target: &str) -> bool {
-    let trimmed = target.trim().trim_matches('"').trim_matches('\'');
+fn writes_inside(root: &std::path::Path, target: &str, vars: &BTreeMap<String, String>) -> bool {
+    let expanded = expand(target.trim().trim_matches('"').trim_matches('\''), vars);
+    let trimmed = expanded.as_str();
     if trimmed.is_empty() || trimmed == "/dev/null" || trimmed == "-" {
+        return false;
+    }
+    if trimmed.contains('$') || trimmed.starts_with('~') {
         return false;
     }
     if trimmed.starts_with("/tmp")
@@ -252,6 +291,50 @@ fn writes_inside(root: &std::path::Path, target: &str) -> bool {
         }
     }
     inside(root, std::path::Path::new(trimmed))
+}
+
+/// Expand `~`, `$NAME` and `${NAME}` from `vars`; leave an unknown reference untouched.
+fn expand(text: &str, vars: &BTreeMap<String, String>) -> String {
+    if let Some(rest) = text.strip_prefix("~/") {
+        if let Some(home) = vars.get("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            out.push(ch);
+            continue;
+        }
+        let braced = chars.peek() == Some(&'{');
+        if braced {
+            chars.next();
+        }
+        let mut name = String::new();
+        while let Some(c) = chars.peek() {
+            if c.is_ascii_alphanumeric() || *c == '_' {
+                name.push(*c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if braced && chars.peek() == Some(&'}') {
+            chars.next();
+        }
+        match vars.get(&name) {
+            Some(value) if !name.is_empty() => out.push_str(value),
+            _ => {
+                out.push('$');
+                out.push_str(&name);
+                if braced {
+                    out.push('}');
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The program name without a directory prefix.

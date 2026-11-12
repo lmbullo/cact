@@ -11,6 +11,7 @@
 //!   a case that cannot run is a failed row with its reason, never a silent pass.
 
 use crate::checks;
+use crate::spec::Scope;
 use crate::tools::{self, Ctx};
 use serde_json::json;
 use std::path::Path;
@@ -137,6 +138,63 @@ pub fn run() -> i32 {
     ));
 
     rows.push(case(
+        "edit batches apply sequentially to the same file",
+        &root,
+        &mut n,
+        |dir| {
+            let ctx = Ctx::new(dir, Vec::new(), true, 32_000);
+            let _ = tools::call(
+                &ctx,
+                "write",
+                &json!({"path": "svc.py", "content": "from a import old_name\n\ndef f():\n    return old_name()\n"}),
+            );
+            let env = tools::call(
+                &ctx,
+                "edit",
+                &json!({"edits": [
+                    {"path": "svc.py", "old": "from a import old_name", "new": "from a import new_name"},
+                    {"path": "svc.py", "old": "return old_name()", "new": "return new_name()"}
+                ]}),
+            );
+            check(env.ok, "two edits on one file were rejected")?;
+            let text = std::fs::read_to_string(dir.join("svc.py")).unwrap_or_default();
+            check(
+                text.contains("from a import new_name") && text.contains("return new_name()"),
+                "second edit did not apply to the first edit's output",
+            )
+        },
+    ));
+
+    rows.push(case(
+        "shape repairs the generic call forms",
+        &root,
+        &mut n,
+        |_dir| {
+            let scope = Scope::production();
+            let shell = crate::shape::repair("exec", json!({"command": "pytest -q"}), &scope);
+            check(
+                shell.name == "exec" && shell.args["shell"] == "pytest -q",
+                "exec(command=...) was not rewritten to shell",
+            )?;
+            let single = crate::shape::repair(
+                "edit",
+                json!({"path": "a.txt", "old": "a", "new": "b"}),
+                &scope,
+            );
+            check(
+                single.name == "edit"
+                    && single.args["edits"].as_array().map(|a| a.len()) == Some(1),
+                "edit(path, old, new) was not wrapped in edits",
+            )?;
+            let handle = crate::shape::repair("read", json!({"path": "_OBS[3"}), &scope);
+            check(
+                handle.name == "page" && handle.args["handle"] == "_OBS[3]",
+                "read(_OBS[n]) was not rewritten to page",
+            )
+        },
+    ));
+
+    rows.push(case(
         "splice inserts and deletes by line",
         &root,
         &mut n,
@@ -238,7 +296,16 @@ pub fn run() -> i32 {
         check(allowed.body.clone().unwrap_or_default().contains("ok"), "scratch output missing")?;
         let _ = std::fs::remove_file("/tmp/cact-selfcheck-scratch.txt");
         let read_only = tools::call(&ctx, "exec", &json!({"argv": ["printf", "hello"]}));
-        check(read_only.ok && read_only.body.clone().unwrap_or_default().contains("hello"), "read-only argv refused")
+        check(read_only.ok && read_only.body.clone().unwrap_or_default().contains("hello"), "read-only argv refused")?;
+        let vars = tools::call(
+            &ctx,
+            "exec",
+            &json!({"shell": "export SCRATCH=/tmp/cact-selfcheck-var.txt; rm -f \"$SCRATCH\"; echo ok > \"$SCRATCH\"; cat \"$SCRATCH\""}),
+        );
+        check(
+            vars.ok && vars.body.clone().unwrap_or_default().contains("ok"),
+            "a scratch shell variable was treated as a workspace path",
+        )
     }));
 
     rows.push(case(
@@ -395,6 +462,11 @@ pub fn run() -> i32 {
             check(
                 finish.final_value == Some(json!("all done")),
                 "final_answer did not end the cell",
+            )?;
+            let fields = kernel.cell(&ctx, "final_answer(summary='keyword answer')", "code");
+            check(
+                fields.final_value == Some(json!({"summary": "keyword answer"})),
+                "final_answer keyword fields were not accepted",
             )?;
             kernel.stop();
             Ok(())
